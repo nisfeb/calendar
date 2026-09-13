@@ -158,7 +158,11 @@ ships until all three clients pass by hand and the script passes in CI.
 **Auth.** OAuth 2.0 authorization code flow, redirect to
 `https://<ship-host>/apps/calendar/google/callback`. The user brings their own
 OAuth client (client id and secret from Google Cloud console), pasted once into
-the settings page; the app has no shared client. Scope
+the settings page; the app has no shared client. This is decided, not open:
+the settings page walks the user through creating the client (project, OAuth
+consent screen in testing mode, a web application client with the ship's
+callback URL as the authorized redirect), because that is the part people get
+wrong. Scope
 `https://www.googleapis.com/auth/calendar`. The refresh token lives in
 `google/auth.json`, which is in the app's own tree and nowhere else. The ask
 names this: "hold a Google credential for the calendar you connect; refuse
@@ -226,9 +230,9 @@ Each phase is installable and useful on its own.
 
 ## 9. Open questions
 
-- One OAuth client per user is a chore. A shared client owned by nisfeb would
-  be smoother and means the refresh tokens of every user trust one secret.
-  Default here is per-user; say if you want the shared one.
+- ~~One OAuth client per user, or a shared one?~~ Decided 2026-09-13: each
+  user brings their own OAuth client. No shared secret, no app-owned
+  credential anywhere.
 - Multiple calendars in the UI (a calendar picker and per-calendar color) is
   UI work not costed here; phase 2 makes it necessary.
 - Whether `/.well-known/caldav` can be bound by a nexus on this ship depends
