@@ -468,7 +468,11 @@
         ^-  (list tape)
         ?~  due.ev  ~
         =/  d=@da  u.due.ev
-        =/  w=when  ?:(=(d (day-floor:rules d)) [%day d] [%utc d])
+        ::  a date only when there is no DATE-TIME start riding along
+        ::  (RFC 5545 3.8.2.3: DUE and DTSTART share a value type)
+        =/  st=(unit prop)  (get-prop props.e 'DTSTART')
+        =/  timed-start=?  &(?=(^ st) ?=(~ (find "VALUE=DATE" (trip k.u.st))))
+        =/  w=when  ?:(&(=(d (day-floor:rules d)) !timed-start) [%day d] [%utc d])
         =/  wt  (when-text w)
         ~[(line (weld "DUE" params.wt) value.wt)]
         ^-  (list tape)

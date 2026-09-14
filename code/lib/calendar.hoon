@@ -184,7 +184,7 @@
 ++  max-dead  400
 ++  max-live  10.000
 ::
-++  da-to-ms  |=(d=@da `@ud`(div (mul (sub d ~1970.1.1) 1.000) ~s1))
+++  da-to-ms  |=(d=@da `@ud`?:((lth d ~1970.1.1) 0 (div (mul (sub d ~1970.1.1) 1.000) ~s1)))
 ::
 ++  put-ref
   |=  [o=order at=@da r=ref]

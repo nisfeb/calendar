@@ -33,7 +33,10 @@ Tasks are iCalendar `VTODO` (RFC 5545): `DUE` (a zoned one becomes absolute),
 `DTSTART`+`DURATION` as the due when there is no `DUE`, `STATUS` and
 `COMPLETED` in and out. A start date alone, a repeat rule (`RRULE`),
 `STATUS:IN-PROCESS` with a percent, `PRIORITY` and the rest ride verbatim and
-go back out as they came; here such a task is one item, placed by its due. Over CalDAV the calendar
+go back out as they came; here such a task is one item, placed by its due
+(a recurring task's per-instance overrides are not kept). A relative alarm
+on a task counts from its due moment. A calendar shared with you read-only
+refuses edits from every side: the app, CalDAV clients, and import. Over CalDAV the calendar
 advertises `VTODO` in its component set, `calendar-query` honours a
 `comp-filter` for `VTODO` or `VEVENT`, and so Thunderbird's task list, Tasks.org
 and DAVx5 see them as tasks. Google Calendar has no tasks (they live in Google

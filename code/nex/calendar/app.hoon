@@ -150,11 +150,10 @@
           $
         ::  a read-only shared calendar takes no local edits; an action
         ::  that names only an id is judged by the calendar that owns it
-        =/  target=@ta
-          =/  t=@ta  (crip (trip (gs jon 'cal')))
-          ?.  =('' t)  t
-          (fall (~(get by (owners c)) (crip (trip (gs jon 'id')))) '')
-        ?:  &(!=('' target) (ship-read-only c target))  $
+        =/  named=@ta  (crip (trip (gs jon 'cal')))
+        =/  owner=@ta  (fall (~(get by (owners c)) (crip (trip (gs jon 'id')))) '')
+        ?:  &(!=('' named) (ship-read-only c named))  $
+        ?:  &(!=('' owner) (ship-read-only c owner))  $
         ?:  =('del-event' act)
           =/  id=@ta  (crip (trip (gs jon 'id')))
           ?:  =('' id)  $
@@ -192,11 +191,8 @@
           =/  color=@t  (gs jon 'color')
           =.  name.props.u.got  ?:(=('' nm) name.props.u.got nm)
           =.  color.props.u.got  ?:(=('' color) color.props.u.got color)
-          =.  kind.props.u.got
-            ?+  (gs jon 'kind')  kind.props.u.got
-              %local   %local
-              %google  %google
-            ==
+          ::  the kind is not editable here: a synced calendar becomes
+          ::  local through migrate, which also retires its sync row
           ;<  ~  bind:m  (replace:io c(cals (~(put by cals.c) id u.got)))
           $
         ?:  =('del-calendar' act)
@@ -409,15 +405,22 @@
           ;<  rows=json  bind:m  (read-json-grub './' 'ship-remotes.json')
           =/  rm=(map @t json)  ?:(?=(%o -.rows) p.rows ~)
           =/  hit=(list [id=@t row=json])  (skim ~(tap by rm) |=([* r=json] =(key (gs r 'key'))))
-          ?^  hit
-            =/  row=json  ?.(?=(%o -.row.i.hit) row.i.hit [%o (~(put by p.row.i.hit) 'mode' s+mode)])
-            ;<  ~  bind:m  (write-json-grub './' 'ship-remotes.json' [%o (~(put by rm) id.i.hit row)])
-            ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road './' 'calendar.calendar') ~)
-            =/  c=calendar:cal  (cal-of cal-view)
+          ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road './' 'calendar.calendar') ~)
+          =/  c=calendar:cal  (cal-of cal-view)
+          =/  live=(unit [id=@t row=json k=cal:cal])
+            ?~  hit  ~
             =/  k=(unit cal:cal)  (~(get by cals.c) id.i.hit)
-            ?~  k  $
-            =.  remote.props.u.k  `(crip "{(trip key)}#{(trip mode)}")
-            ;<  ~  bind:m  (dav-write './' c(cals (~(put by cals.c) id.i.hit u.k)))
+            ?~(k ~ `[id.i.hit row.i.hit u.k])
+          ::  a row whose calendar was deleted here is stale: it goes, and
+          ::  the offer is a fresh one
+          ;<  ~  bind:m
+            ?:  |(?=(~ hit) ?=(^ live))  (pure:(fiber:fiber:nexus ,~) ~)
+            (write-json-grub './' 'ship-remotes.json' [%o (~(del by rm) id.i.hit)])
+          ?^  live
+            =/  row=json  ?.(?=(%o -.row.u.live) row.u.live [%o (~(put by p.row.u.live) 'mode' s+mode)])
+            ;<  ~  bind:m  (write-json-grub './' 'ship-remotes.json' [%o (~(put by rm) id.u.live row)])
+            =.  remote.props.k.u.live  `(crip "{(trip key)}#{(trip mode)}")
+            ;<  ~  bind:m  (dav-write './' c(cals (~(put by cals.c) id.u.live k.u.live)))
             ~&  >  [%calendar-share-mode key mode]
             $
           ::  ponytail: a full inbox drops new offers; 200 is far past
@@ -866,6 +869,9 @@
           ;<  cal-view=view:nexus  bind:m
             (peek:io (cord-to-road:tarball '../calendar.calendar') ~)
           =/  c=calendar:cal  (cal-of cal-view)
+          ?:  (ship-read-only c target)
+            ;<  ~  bind:m  (send-simple:srv eyre-id [[403 ~] `(as-octs:mimes:html 'calendar: this calendar is shared with you read-only')])
+            (pure:m ~)
           =/  k=cal:cal  (fall (~(get by cals.c) target) fresh-cal:cal)
           =/  ves=(list vevent:ics)  ?:(=('' body) ~ (events:ics body))
           =/  res=[k=cal:cal imported=@ud skipped=@ud]
@@ -1182,6 +1188,7 @@
   ?.  ?=(%object -.res)  (fail 405 'calendar: PUT an object')
   =/  k=(unit cal:cal)  (~(get by cals.c) id.res)
   ?~  k  (fail 404 'calendar: no such calendar')
+  ?:  (ship-read-only c id.res)  (fail 403 'calendar: this calendar is shared with you read-only')
   =/  ves=(list vevent:ics)  (events:ics body)
   ?~  ves  (fail 400 'calendar: no VEVENT or VTODO in the body')
   =/  parent=(unit vevent:ics)
@@ -1227,7 +1234,10 @@
   ^-  (unit [k=cal:cal =uid:cal])
   =/  parents=(list vevent:ics)  (skip `(list vevent:ics)`ves |=(v=vevent:ics ?=(^ (dav-rid v))))
   ?~  parents  ~
-  =/  overrides=(list vevent:ics)  (skim `(list vevent:ics)`ves |=(v=vevent:ics ?=(^ (dav-rid v))))
+  ::  ponytail: a recurring task's instance overrides are dropped (a
+  ::  task is one item here); keep them when tasks get a series view
+  =/  overrides=(list vevent:ics)
+    (skim `(list vevent:ics)`ves |=(v=vevent:ics &(?=(^ (dav-rid v)) !=('todo' cat.v))))
   =/  u=@t  ?:(=('' uid.i.parents) uid-hint uid.i.parents)
   ::  children the new set no longer carries go; the rest are re-put
   ::  in place (an identical one is left alone)
@@ -1339,6 +1349,9 @@
       (pure:m ~)
     ;<  ~  bind:m  (dav-write '../' c(cals (~(del by cals.c) id.res)))
     ;<  ~  bind:m  (send-simple:srv eyre-id [[204 ~] ~])
+    (pure:m ~)
+  ?:  &(?=(%object -.res) (ship-read-only c id.res))
+    ;<  ~  bind:m  (send-simple:srv eyre-id [[403 ~] `(as-octs:mimes:html 'calendar: this calendar is shared with you read-only')])
     (pure:m ~)
   ?.  ?=(%object -.res)
     ;<  ~  bind:m  (send-simple:srv eyre-id [[405 ~] `(as-octs:mimes:html 'calendar: DELETE an object or a calendar')])
@@ -3263,9 +3276,10 @@
   ?.  ?=(%ship kind.props.u.k)  (pure:m row)
   ?.  (gth seq.u.k since)  (pure:m row)
   =/  sup=(set [@t @ud])  (suppressed row)
-  ::  read-only: nothing to push, so the watermark just follows the
-  ::  local seq and the pull's suppressed rows are pruned
-  ?.  =('edit' (gs row 'mode'))
+  ::  read-only (the calendar's remote string is the truth; the row's
+  ::  mode is for display): nothing to push, so the watermark just
+  ::  follows the local seq and the pull's suppressed rows are pruned
+  ?:  (ship-read-only c id)
     %-  pure:m
     ?.  ?=(%o -.row)  row
     [%o (~(gas by p.row) ~[['pushed_seq' (numb:enjs:format seq.u.k)] ['suppressed' (suppress-json sup seq.u.k)]])]
@@ -3281,6 +3295,10 @@
   ;<  now=@da  bind:m  get-time:io
   =/  cal-lane=lane:tarball  [%& base %'calendar.calendar']
   =/  stopped=?  |
+  ::  the row's etags follow what we push: etags are content hashes,
+  ::  so a host that later puts the old content back would otherwise
+  ::  look unchanged against the etag of our last pull and be skipped
+  =/  etags=(map @t json)  =/(e (obj:gcal row 'etags') ?:(?=(%o -.e) p.e ~))
   |-
   ?^  changes
     =/  [u=uid:cal what=?(%put %del)]  i.changes
@@ -3295,6 +3313,10 @@
     ?.  ok
       ~&  >>>  [%calendar-share-push-stopped u]
       $(changes ~, stopped &)
+    =.  etags
+      ?:  =(%del what)  (~(del by etags) u)
+      =/  e=(unit entry:cal)  (~(get by entries.u.k) u)
+      ?~(e etags (~(put by etags) u s+etag.u.e))
     $(changes t.changes)
   %-  pure:m
   ?.  ?=(%o -.row)  row
@@ -3302,6 +3324,7 @@
   %-  ~(gas by p.row)
   :~  ['pushed_seq' (numb:enjs:format ?:(stopped since seq.u.k))]
       ['suppressed' (suppress-json sup ?:(stopped since seq.u.k))]
+      ['etags' [%o etags]]
   ==
 ::  +google-prod: wake the sync fiber now
 ++  google-prod
@@ -3357,7 +3380,7 @@
   (rush p.u.j dem)
 ::
 ++  ms-to-da  |=(ms=@ud `@da`(add ~1970.1.1 (div (mul ms ~s1) 1.000)))
-++  da-to-ms  |=(d=@da `@ud`(div (mul (sub d ~1970.1.1) 1.000) ~s1))
+++  da-to-ms  |=(d=@da `@ud`?:((lth d ~1970.1.1) 0 (div (mul (sub d ~1970.1.1) 1.000) ~s1)))
 ::
 ++  ms-arg
   |=  [args=quay:eyre k=@t]
@@ -3411,7 +3434,10 @@
     =/  en=(unit entry:cal)  (~(get by entries) eid.r)
     ?~  en  ~
     =/  name=@t  (meta-str:cal (get-meta event.u.en) 'name')
-    =/  mins=@ud  (div ?:((gth l.span.r now) (sub l.span.r now) 0) ~m1)
+    ::  a task's relative alarm counts from its due moment (RFC 5545
+    ::  3.8.6.3), not from the day it sits on
+    =/  at=@da  ?:(?=(%todo -.event.u.en) (fall due.event.u.en l.span.r) l.span.r)
+    =/  mins=@ud  (div ?:((gth at now) (sub at now) 0) ~m1)
     =/  body=@t  (crip ?:(=(0 mins) "starting now" "in {(scow %ud mins)} min"))
     =/  als=(list alarm:cal)  alarms.u.en
     =/  n=@ud  0
@@ -3419,8 +3445,8 @@
     ?~  als  ~
     =/  rest  $(als t.als, n +(n))
     ?.  ?=(%rel -.trigger.i.als)  rest
-    ?.  (gte l.span.r before.trigger.i.als)  rest
-    ?.  (in-win (sub l.span.r before.trigger.i.als))  rest
+    ?.  (gte at before.trigger.i.als)  rest
+    ?.  (in-win (sub at before.trigger.i.als))  rest
     :_  rest
     :+  name
       ?:(=('' desc.i.als) body desc.i.als)

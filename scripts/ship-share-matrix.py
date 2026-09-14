@@ -120,6 +120,16 @@ run_round('edit')
 run_round('read')
 # the copy from the first round stayed (local) under the mug id; a fresh share must still be acceptable
 run_round('edit')
+# the peer deleted its copy (the edit rounds do); a fresh share must still offer and accept
+poke(HOST, HJ, {'action': 'add-event', 'cal': CAL, **ev('seed', 1795000000000)})
+curl(HOST, HJ, '/apps/calendar/share/share', {'id': CAL, 'ship': PEERNAME, 'mode': 'read'})
+wait('peer: offer arrives again after a local delete', lambda: any(o['cal'] == CAL for o in shares(PEER, PJ)['offers'].values()), 30)
+k2 = [k for k, o in shares(PEER, PJ)['offers'].items() if o['cal'] == CAL]
+if k2:
+    r = json.loads(curl(PEER, PJ, '/apps/calendar/share/accept', {'key': k2[0]}))
+    check('peer: accept works again', 'id' in r)
+    if 'id' in r: KEEP.append(r['id'])
+curl(HOST, HJ, '/apps/calendar/share/revoke', {'id': CAL, 'ship': PEERNAME})
 poke(HOST, HJ, {'action': 'del-calendar', 'id': CAL})
 for k in KEEP: poke(PEER, PJ, {'action': 'del-calendar', 'id': k})
 print('SHIP SHARE MATRIX ' + ('PASSED' if not fails else 'FAILED: ' + ', '.join(fails)))
