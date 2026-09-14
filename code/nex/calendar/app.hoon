@@ -135,7 +135,8 @@
           =/  k=(unit cal:cal)  (~(get by cals.c) cid)
           ?~  k  $
           ?:  =('share-put' act)
-            =/  put=(unit [k=cal:cal =uid:cal])  (put-object u.k (events:ics (gs jon 'ics')) zone.c '' ~)
+            =/  ves=(list vevent:ics)  (fall (mole |.((events:ics (gs jon 'ics')))) ~)
+            =/  put=(unit [k=cal:cal =uid:cal])  (put-object u.k ves zone.c '' ~)
             ?~  put  $
             ;<  ~  bind:m  (replace:io c(cals (~(put by cals.c) cid k.u.put)))
             $
@@ -147,8 +148,12 @@
             ;<  ~  bind:m  (replace:io c(cals (~(put by cals.c) cid (del-entry:cal kk u))))
             $
           $
-        ::  a read-only shared calendar takes no local edits
-        =/  target=@ta  (crip (trip (gs jon 'cal')))
+        ::  a read-only shared calendar takes no local edits; an action
+        ::  that names only an id is judged by the calendar that owns it
+        =/  target=@ta
+          =/  t=@ta  (crip (trip (gs jon 'cal')))
+          ?.  =('' t)  t
+          (fall (~(get by (owners c)) (crip (trip (gs jon 'id')))) '')
         ?:  &(!=('' target) (ship-read-only c target))  $
         ?:  =('del-event' act)
           =/  id=@ta  (crip (trip (gs jon 'id')))
@@ -163,7 +168,7 @@
           ?~  ev  $
           =/  new=(unit event:cal)
             ?-  -.u.ev
-              %date   ~                ::  a date can't be skipped
+              ?(%date %todo)  ~        ::  a date or a task can't be skipped
               %timed   `u.ev(except.bound (~(put in except.bound.u.ev) u.idx))
               %allday  `u.ev(except.bound (~(put in except.bound.u.ev) u.idx))
             ==
@@ -276,6 +281,18 @@
           ;<  new=event:cal  bind:m  (apply-until merged (gn jon 'until_ms'))
           ;<  ~  bind:m  (replace:io (put-ev-in c (cal-arg jon) id new))
           $
+        ?:  =('done-event' act)
+          ::  tick or untick a task
+          =/  id=@ta  (crip (trip (gs jon 'id')))
+          =/  old=(unit event:cal)  (~(get by (events-all:cal c)) id)
+          ?~  old  $
+          ?.  ?=(%todo -.u.old)  $
+          ;<  now=@da  bind:m  get-time:io
+          =/  done=(unit @da)
+            =/  j=(unit json)  (~(get by p.jon) 'done')
+            ?:(?=([~ %b %.n] j) ~ `now)
+          ;<  ~  bind:m  (replace:io (put-ev c id u.old(done done)))
+          $
         ?:  =('cap-event' act)
           ::  end the series before index dom (this-and-following edits)
           =/  id=@ta  (crip (trip (gs jon 'id')))
@@ -286,6 +303,7 @@
           =/  new=(unit event:cal)
             ?-  -.u.old
               %date   ~
+              %todo   ~
               %timed   `u.old(dom.bound `u.cap)
               %allday  `u.old(dom.bound `u.cap)
             ==
@@ -324,6 +342,7 @@
           ^-  (unit rail:tarball)
           ?-  -.e
             %date   ~
+            %todo   ~
             %timed   `kind.recur.e
             %allday  `kind.recur.e
           ==
@@ -384,13 +403,33 @@
         =/  cur=(map @t json)  ?:(?=(%o -.offers) p.offers ~)
         ?:  =('offer' act)
           ;<  now=@da  bind:m  get-time:io
+          =/  mode=@t  ?:(=('edit' (gs jon 'mode')) 'edit' 'read')
+          ::  already accepted: the host changed the mode; the row and the
+          ::  calendar follow, no second offer
+          ;<  rows=json  bind:m  (read-json-grub './' 'ship-remotes.json')
+          =/  rm=(map @t json)  ?:(?=(%o -.rows) p.rows ~)
+          =/  hit=(list [id=@t row=json])  (skim ~(tap by rm) |=([* r=json] =(key (gs r 'key'))))
+          ?^  hit
+            =/  row=json  ?.(?=(%o -.row.i.hit) row.i.hit [%o (~(put by p.row.i.hit) 'mode' s+mode)])
+            ;<  ~  bind:m  (write-json-grub './' 'ship-remotes.json' [%o (~(put by rm) id.i.hit row)])
+            ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road './' 'calendar.calendar') ~)
+            =/  c=calendar:cal  (cal-of cal-view)
+            =/  k=(unit cal:cal)  (~(get by cals.c) id.i.hit)
+            ?~  k  $
+            =.  remote.props.u.k  `(crip "{(trip key)}#{(trip mode)}")
+            ;<  ~  bind:m  (dav-write './' c(cals (~(put by cals.c) id.i.hit u.k)))
+            ~&  >  [%calendar-share-mode key mode]
+            $
+          ::  ponytail: a full inbox drops new offers; 200 is far past
+          ::  anything a person gets
+          ?:  &((gte ~(wyt by cur) 200) !(~(has by cur) key))  $
           =/  row=json
             %-  pairs:enjs:format
             :~  ['host' s+(scot %p u.src)]
                 ['cal' s+cal-id]
                 ['name' s+(gs jon 'name')]
                 ['color' s+(gs jon 'color')]
-                ['mode' s+?:(=('edit' (gs jon 'mode')) 'edit' 'read')]
+                ['mode' s+mode]
                 ['base' s+(gs jon 'base')]
                 ['at_ms' (numb:enjs:format (da-to-ms now))]
             ==
@@ -655,6 +694,7 @@
               ^-  (unit rail:tarball)
               ?-  -.e
                 %date    ~
+                %todo    ~
                 %timed   `kind.recur.e
                 %allday  `kind.recur.e
               ==
@@ -687,6 +727,7 @@
                 ['cat' s+-.u.ev]
                 ['kind' s+(ev-kind u.ev)]
                 ['all' b+(all-day:cal u.ev)]
+                ['done' b+?:(?=(%todo -.u.ev) ?=(^ done.u.ev) |)]
                 ['l' (numb:enjs:format (da-to-ms l.span.r))]
                 ['r' (numb:enjs:format (da-to-ms r.span.r))]
             ==
@@ -750,11 +791,18 @@
             |=  [id=@ta e=entry:cal]
             ^-  json
             %-  pairs:enjs:format
-            :~  ['id' s+id]
-                ['cal' s+(fall (~(get by owner) id) %default)]
-                ['etag' s+etag.e]
-                ['meta' [%o (get-meta event.e)]]
-                ['cat' s+-.event.e]
+            %+  weld
+              ^-  (list [@t json])
+              :~  ['id' s+id]
+                  ['cal' s+(fall (~(get by owner) id) %default)]
+                  ['etag' s+etag.e]
+                  ['meta' [%o (get-meta event.e)]]
+                  ['cat' s+-.event.e]
+              ==
+            ^-  (list [@t json])
+            ?.  ?=(%todo -.event.e)  ~
+            :~  ['due_ms' ?~(due.event.e ~ (numb:enjs:format (da-to-ms u.due.event.e)))]
+                ['done' b+?=(^ done.event.e)]
             ==
           (send-json eyre-id rows)
         ::  /feeds.json: the named external ICS feeds
@@ -960,7 +1008,7 @@
   |=  e=entry:cal
   ^-  (list @da)
   =/  ev=event:cal  event.e
-  ?:  ?=(%date -.ev)  ~
+  ?:  ?=(?(%date %todo) -.ev)  ~
   =/  rc=recur:cal  recur.ev
   =/  ex=(set @ud)  ?-(-.ev %timed except.bound.ev, %allday except.bound.ev)
   =/  k=(unit kind:rules)  (kind-for kind.rc)
@@ -975,7 +1023,7 @@
   ^-  entry:cal
   ?~  exdates  e
   =/  ev=event:cal  event.e
-  ?:  ?=(%date -.ev)  e
+  ?:  ?=(?(%date %todo) -.ev)  e
   =/  rc=recur:cal  recur.ev
   =/  k=(unit kind:rules)  (kind-for kind.rc)
   ?~  k  e
@@ -1135,10 +1183,7 @@
   =/  k=(unit cal:cal)  (~(get by cals.c) id.res)
   ?~  k  (fail 404 'calendar: no such calendar')
   =/  ves=(list vevent:ics)  (events:ics body)
-  ?~  ves
-    ?^  (find "BEGIN:VTODO" (trip body))
-      (fail 403 'calendar: tasks (VTODO) are not supported; events only')
-    (fail 400 'calendar: no VEVENT in the body')
+  ?~  ves  (fail 400 'calendar: no VEVENT or VTODO in the body')
   =/  parent=(unit vevent:ics)
     =/  ps=(list vevent:ics)  (skip `(list vevent:ics)`ves |=(v=vevent:ics ?=(^ (dav-rid v))))
     ?~(ps ~ `i.ps)
@@ -1226,9 +1271,9 @@
   ::  stays skipped when only the parent changed)
   =?  e  &(keep ?=(^ existing))
     =/  old=event:cal  event.u.existing
-    =/  ex=(set @ud)  ?-(-.old %date ~, %timed except.bound.old, %allday except.bound.old)
+    =/  ex=(set @ud)  ?-(-.old ?(%date %todo) ~, %timed except.bound.old, %allday except.bound.old)
     ?-  -.event.e
-      %date    e
+      ?(%date %todo)  e
       %timed   e(event event.e(except.bound (~(uni in except.bound.event.e) ex)))
       %allday  e(event event.e(except.bound (~(uni in except.bound.event.e) ex)))
     ==
@@ -1533,7 +1578,32 @@
         =/  par=(list [@t @t])  (skim props.u.e |=([key=@t *] =('X-GRUBBERY-PARENT' key)))
         ?~  par  `eid.r
         `+.i.par
-      (pure:(fiber:fiber:nexus ,(list uid:cal)) ~(tap in seen))
+      =/  undated=(list uid:cal)
+        %+  murn  ~(tap by entries.u.k)
+        |=([u=uid:cal e=entry:cal] ?:(&(?=(%todo -.event.e) ?=(~ due.event.e)) `u ~))
+      (pure:(fiber:fiber:nexus ,(list uid:cal)) ~(tap in (~(gas in seen) undated)))
+    ::  a comp-filter naming only VTODO (or only VEVENT) narrows to
+    ::  tasks (or events); anything else answers both
+    =/  comps=(list tape)
+      =/  walk
+        |=  m=manx
+        ^-  (list tape)
+        %-  zing
+        %+  turn  c.m
+        |=  k=manx
+        ^-  (list tape)
+        =/  nm=(unit tape)  ?.(=(%'comp-filter' (local:dav n.g.k)) ~ (attr:dav k %name))
+        (weld ?~(nm ~ ~[u.nm]) ^$(m k))
+      (walk u.root)
+    =/  want-todo=?  ?=(^ (find ~["VTODO"] comps))
+    =/  want-event=?  ?=(^ (find ~["VEVENT"] comps))
+    =.  uids
+      ?:  =(want-todo want-event)  uids
+      %+  skim  uids
+      |=  u=uid:cal
+      =/  e=(unit entry:cal)  (~(get by entries.u.k) u)
+      ?~  e  |
+      =(want-todo ?=(%todo -.event.u.e))
     =/  responses=marl
       (turn uids |=(u=uid:cal (dav-obj-response c id u now &)))
     (dav-send-xml eyre-id 207 (multistatus:dav responses ~))
@@ -1619,7 +1689,7 @@
     :~  [%resourcetype (d-el:dav %resourcetype ~[(d-el:dav %collection ~) (c-el:dav %calendar ~)])]
         [%displayname (d-el:dav %displayname ~[(tx:dav (trip name.props.u.k))])]
         [%'calendar-color' (el:dav [%'A' %'calendar-color'] ~[(tx:dav (trip color.props.u.k))])]
-        [%'supported-calendar-component-set' (c-el:dav %'supported-calendar-component-set' ~[[[[%'C' %comp] [[%name "VEVENT"] ~]] ~]])]
+        [%'supported-calendar-component-set' (c-el:dav %'supported-calendar-component-set' ~[[[[%'C' %comp] [[%name "VEVENT"] ~]] ~] [[[%'C' %comp] [[%name "VTODO"] ~]] ~]])]
         [%getctag (el:dav [%'CS' %getctag] ~[(tx:dav (a-co:co seq.u.k))])]
         [%'sync-token' (d-el:dav %'sync-token' ~[(tx:dav tok)])]
         [%'current-user-principal' (d-el:dav %'current-user-principal' ~[(href:dav dav-root)])]
@@ -1640,7 +1710,7 @@
     ?~  e  ~
     :~  [%resourcetype (d-el:dav %resourcetype ~)]
         [%getetag (d-el:dav %getetag ~[(tx:dav "\"{(trip etag.u.e)}\"")])]
-        [%getcontenttype (d-el:dav %getcontenttype ~[(tx:dav "text/calendar; charset=utf-8; component=VEVENT")])]
+        [%getcontenttype (d-el:dav %getcontenttype ~[(tx:dav "text/calendar; charset=utf-8; component={?:(?=(%todo -.event.u.e) "VTODO" "VEVENT")}")])]
     ==
   ==
 ::  +dav-response: one <response> for a resource, filtered to the asked props
@@ -2260,6 +2330,9 @@
       $(changes t.changes, ids (~(del by ids) u))
     =/  e=(unit entry:cal)  (~(get by entries.u.k) u)
     ?~  e  $(changes t.changes)
+    ::  ponytail: Google Calendar has no tasks (they live in Google
+    ::  Tasks, another API); a task stays on this side
+    ?:  ?=(%todo -.event.u.e)  $(changes t.changes)
     =/  body=json  (json-of:gcal u.e (exdates-of u.e))
     =/  have=@t
       ?.  =('' known)  known
@@ -2693,7 +2766,10 @@
           :-  ['content-type' 'text/calendar; charset=utf-8']
           ?:(=('' etag) ~ ~[['if-match' (crip "\"{(trip etag)}\"")]])
       ==
-    ?:  |(=(0 status) (gte status 500) =(401 status) =(403 status))
+    ::  a remote without VTODO in its component set answers a task with
+    ::  403 (RFC 4791 5.3.2.1): that task's refusal, not a stop
+    =/  task=?  =/(e (~(get by entries.u.k) u) &(?=(^ e) ?=(%todo -.event.u.e)))
+    ?:  |(=(0 status) (gte status 500) =(401 status) &(=(403 status) !task))
       ~&  >>>  [%calendar-caldav-push-stopped u status]
       $(changes ~, stopped &)
     ?:  (gte status 400)
@@ -2784,9 +2860,9 @@
   =/  r=(unit @t)  remote.props.u.k
   ?~  r  |
   ::  the mode rides in remote as "<host>/<cal>#<mode>"
-  =/  t=tape  (trip u.r)
+  =/  t=tape  (flop (trip u.r))
   =/  at=(unit @ud)  (find "#" t)
-  ?~(at | =("read" (slag +(u.at) t)))
+  ?~(at | =("read" (flop (scag u.at t))))
 ::  +build-share-json: what a peer sees of one calendar
 ++  build-share-json
   |=  [c=calendar:cal id=@ta now=@da]
@@ -2938,8 +3014,13 @@
     ?~  offer  (send-err 404 'calendar: no such offer')
     ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road '../' 'calendar.calendar') ~)
     =/  c=calendar:cal  (cal-of cal-view)
-    =/  id=@ta  (crip "s-{(trip (scot %uw (mug key)))}")
-    ?:  (~(has by cals.c) id)  (send-err 409 'calendar: already accepted')
+    ;<  now=@da  bind:m  get-time:io
+    =/  id=@ta
+      =/  first=@ta  (crip "s-{(trip (scot %uw (mug key)))}")
+      ::  a copy from an earlier share of the same calendar (revoked, now
+      ::  local) keeps its id; the new one gets its own
+      ?.  (~(has by cals.c) first)  first
+      (crip "s-{(trip (scot %uw (mug [key now])))}")
     =/  mode=@t  (gs u.offer 'mode')
     =/  k=cal:cal  fresh-cal:cal
     =/  nm=@t  (gs u.offer 'name')
@@ -3170,7 +3251,6 @@
   |=  [pre=@t id=@ta row=json]
   =/  m  (fiber:fiber:nexus ,json)
   ^-  form:m
-  ?.  =('edit' (gs row 'mode'))  (pure:m row)
   =/  host=(unit @p)  (slaw %p (gs row 'host'))
   ?~  host  (pure:m row)
   =/  base=path  (fall (mole |.((stab (gs row 'base')))) cal-instance)
@@ -3183,6 +3263,12 @@
   ?.  ?=(%ship kind.props.u.k)  (pure:m row)
   ?.  (gth seq.u.k since)  (pure:m row)
   =/  sup=(set [@t @ud])  (suppressed row)
+  ::  read-only: nothing to push, so the watermark just follows the
+  ::  local seq and the pull's suppressed rows are pruned
+  ?.  =('edit' (gs row 'mode'))
+    %-  pure:m
+    ?.  ?=(%o -.row)  row
+    [%o (~(gas by p.row) ~[['pushed_seq' (numb:enjs:format seq.u.k)] ['suppressed' (suppress-json sup seq.u.k)]])]
   =/  changes=(list [uid:cal ?(%put %del)])
     =/  latest=(map uid:cal ?(%put %del))
       %+  roll  (tap:on-log:cal log.u.k)
@@ -3232,13 +3318,13 @@
 ++  get-meta
   |=  e=event:cal
   ^-  meta:cal
-  ?-(-.e %timed meta.e, %allday meta.e, %date meta.e)
+  ?-(-.e %timed meta.e, %allday meta.e, %date meta.e, %todo meta.e)
 ::  +ev-kind: the recurrence kind name, or 'date'
 ::
 ++  ev-kind
   |=  e=event:cal
   ^-  @t
-  ?-(-.e %date 'date', %timed name.kind.recur.e, %allday name.kind.recur.e)
+  ?-(-.e %date 'date', %todo 'todo', %timed name.kind.recur.e, %allday name.kind.recur.e)
 ::  +carry-except: preserve the old event's skipped indices onto the
 ::  freshly-parsed replacement (only where both have a bound)
 ::
@@ -3246,10 +3332,10 @@
   |=  [old=event:cal new=event:cal]
   ^-  event:cal
   =/  ex=(set @ud)
-    ?-(-.old %date ~, %timed except.bound.old, %allday except.bound.old)
+    ?-(-.old ?(%date %todo) ~, %timed except.bound.old, %allday except.bound.old)
   ?~  ex  new
   ?-  -.new
-    %date   new
+    ?(%date %todo)  new
     %timed   new(except.bound ex)
     %allday  new(except.bound ex)
   ==
@@ -3549,7 +3635,7 @@
   ?~  until  (pure:m e)
   =/  rd=(unit [=recur:cal dom=(unit @ud)])
     ?-  -.e
-      %date   ~
+      ?(%date %todo)  ~
       %timed   `[recur.e dom.bound.e]
       %allday  `[recur.e dom.bound.e]
     ==
@@ -3571,7 +3657,7 @@
     $(idx +(idx), dead 0)
   %-  pure:m
   ?-  -.e
-    %date   e
+    ?(%date %todo)  e
     %timed   e(dom.bound `cap)
     %allday  e(dom.bound `cap)
   ==
@@ -3610,6 +3696,9 @@
     =/  dy=(unit @ud)  (gn jon 'day')
     ?:  |(?=(~ mo) ?=(~ dy))  ~
     `[%date u.mo u.dy meta]
+  ::  todo: a task, due (optional) and done (optional) as moments
+  ?:  =('todo' cat)
+    `[%todo (bind (gn jon 'due_ms') ms-to-da) (bind (gn jon 'done_ms') ms-to-da) meta]
   ::  timed / allday both wrap a recur
   =/  rec=(unit recur:cal)  (parse-recur jon)
   ?~  rec  ~

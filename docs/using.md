@@ -19,6 +19,31 @@ where each comes from:
   ways. See `docs/google.md`.
 - **ICS feeds** — read-only subscriptions to any `.ics` address.
 
+## Tasks
+
+The **Tasks** view (or `k`) lists what is to do, soonest due first and undated
+last, with the done ones folded underneath. Tick a task there or in its popup;
+type a name at the top to add one, with an optional due date and calendar.
+A task with a due date also sits on that day in the month, week and day views,
+with a box that shows whether it is done. The event form has a **Task** kind
+with the same two fields, so a task can carry a note, tags and a color like
+any event.
+
+Tasks are iCalendar `VTODO` (RFC 5545): `DUE` (a zoned one becomes absolute),
+`DTSTART`+`DURATION` as the due when there is no `DUE`, `STATUS` and
+`COMPLETED` in and out. A start date alone, a repeat rule (`RRULE`),
+`STATUS:IN-PROCESS` with a percent, `PRIORITY` and the rest ride verbatim and
+go back out as they came; here such a task is one item, placed by its due. Over CalDAV the calendar
+advertises `VTODO` in its component set, `calendar-query` honours a
+`comp-filter` for `VTODO` or `VEVENT`, and so Thunderbird's task list, Tasks.org
+and DAVx5 see them as tasks. Google Calendar has no tasks (they live in Google
+Tasks, a separate API), so a task in a Google-linked calendar stays on this
+ship. Sharing with ships and following over CalDAV carry tasks like events.
+
+API: `add-event` with `cat: "todo"`, `due_ms` and `done_ms` (both optional);
+`done-event {id, done}` ticks or unticks; `events.json` rows carry `due_ms`
+and `done`, `window.json` rows `done`. Gate: `scripts/todo-matrix.py`.
+
 ## Tags
 
 An event takes tags in its form (comma separated). The popup shows them, and
@@ -56,7 +81,9 @@ No passwords: the host lays two usergroups per shared calendar,
 decide who may read the share file and who may poke edits in. The peer keeps
 its own copy; a host that is down just means a stale copy until it is back.
 
-**Revoke** on the host stops the sync and drops the groups. The peer's copy
+Sharing again with the same ship changes its mode (read to edit, or back)
+in place; the peer's row follows without a new offer. **Revoke** on the host
+stops the sync and drops the groups. The peer's copy
 stays, as a local calendar of theirs (the same flip as *migrate*); nothing
 here ever deletes a calendar for anyone.
 

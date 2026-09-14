@@ -52,8 +52,10 @@ them. The nexus needs no change for that.
 
 ## What it does not do
 
-Scheduling (iTIP), free-busy, tasks (VTODO answers 403), journals, ACLs,
-shared calendars between users. An event with modified instances
+Scheduling (iTIP), free-busy, journals, ACLs, shared calendars between
+users (sharing with other ships is native, see `docs/using.md`). Tasks
+(VTODO) are supported: DUE, STATUS, COMPLETED, a comp-filter on
+calendar-query, and VTODO in the component set. An event with modified instances
 (RECURRENCE-ID) is stored as a parent plus override children (uid
 `<parent>#<recurrence-id>`); the ship's own views show the moved instance and
 skip the original occurrence.

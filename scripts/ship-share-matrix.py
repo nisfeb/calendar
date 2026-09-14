@@ -8,6 +8,7 @@ HOST, HJ, PEER, PJ, PEERNAME = sys.argv[1:6]
 P = '/apps/shell.shell/desks/calendar.desk/desk/data/calendar.calendar_app'
 CAL = 'ssm'
 fails = []
+KEEP = []
 
 def curl(host, jar, path, body=None, timeout=90):
     cmd = ['curl', '-s', '-m', str(timeout), '-b', jar, host + path]
@@ -83,6 +84,19 @@ def run_round(mode):
         time.sleep(8)
         check('peer: read-only edit dropped', names(PEER, PJ, sid) == ['seed'])
         check('host: nothing pushed', names(HOST, HJ, CAL) == ['seed'])
+        poke(PEER, PJ, {'action': 'del-event', 'id': uids(PEER, PJ, sid)['seed']})
+        poke(PEER, PJ, {'action': 'done-event', 'id': uids(PEER, PJ, sid)['seed'], 'done': True})
+        time.sleep(3)
+        check('peer: read-only delete by id dropped', names(PEER, PJ, sid) == ['seed'])
+        # the host upgrades the share to edit: the row follows, no second offer
+        curl(HOST, HJ, '/apps/calendar/share/share', {'id': CAL, 'ship': PEERNAME, 'mode': 'edit'})
+        wait('peer: mode upgrade lands on the row', lambda: shares(PEER, PJ)['accepted'].get(sid, {}).get('mode') == 'edit' and not shares(PEER, PJ)['offers'], 30)
+        poke(PEER, PJ, {'action': 'add-event', 'cal': sid, **ev('peer after upgrade', 1795150000000)})
+        wait('host: push works after the upgrade', lambda: 'peer after upgrade' in names(HOST, HJ, CAL))
+        poke(PEER, PJ, {'action': 'del-event', 'id': uids(PEER, PJ, sid)['peer after upgrade']})
+        wait('host: and so does a delete', lambda: names(HOST, HJ, CAL) == ['seed'])
+        curl(HOST, HJ, '/apps/calendar/share/share', {'id': CAL, 'ship': PEERNAME, 'mode': 'read'})
+        wait('peer: downgrade lands too', lambda: shares(PEER, PJ)['accepted'].get(sid, {}).get('mode') == 'read', 30)
     poke(HOST, HJ, {'action': 'add-event', 'cal': CAL, **ev('host added', 1795200000000)})
     sync(PEER, PJ)
     wait('peer: host add pulled', lambda: names(PEER, PJ, sid) == ['host added', 'seed'])
@@ -99,10 +113,14 @@ def run_round(mode):
     wait('peer: copy became local', lambda: cals(PEER, PJ).get(sid, {}).get('kind') == 'local', 30)
     check('peer: data kept', names(PEER, PJ, sid) == ['host edited'])
     check('peer: sync row gone', sid not in shares(PEER, PJ)['accepted'])
-    poke(PEER, PJ, {'action': 'del-calendar', 'id': sid})
+    if mode == 'edit': poke(PEER, PJ, {'action': 'del-calendar', 'id': sid})
+    else: KEEP.append(sid)
 
 run_round('edit')
 run_round('read')
+# the copy from the first round stayed (local) under the mug id; a fresh share must still be acceptable
+run_round('edit')
 poke(HOST, HJ, {'action': 'del-calendar', 'id': CAL})
+for k in KEEP: poke(PEER, PJ, {'action': 'del-calendar', 'id': k})
 print('SHIP SHARE MATRIX ' + ('PASSED' if not fails else 'FAILED: ' + ', '.join(fails)))
 sys.exit(1 if fails else 0)

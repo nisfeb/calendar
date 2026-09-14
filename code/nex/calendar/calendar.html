@@ -38,6 +38,7 @@
         <button id="v-month" class="nav-btn view-btn">Month</button>
         <button id="v-week" class="nav-btn view-btn">Week</button>
         <button id="v-day" class="nav-btn view-btn">Day</button>
+        <button id="v-tasks" class="nav-btn view-btn">Tasks</button>
       </div>
       <a id="export-btn" class="nav-btn" href="/apps/calendar/export.ics" title="Download every calendar as an .ics file">Export</a>
       <button id="add-btn" class="nav-btn icon-btn" title="New event">
@@ -48,6 +49,17 @@
     <div id="month-view">
       <div id="dow-row"></div>
       <div id="grid"></div>
+    </div>
+
+    <div id="tasks-view">
+      <div id="task-add">
+        <input id="task-name" type="text" placeholder="New task…">
+        <input id="task-due" type="date" title="Due date (optional)">
+        <select id="task-cal"></select>
+        <button id="task-save" class="nav-btn">Add</button>
+      </div>
+      <div id="task-open"></div>
+      <details id="task-done-wrap"><summary id="task-done-sum">Done</summary><div id="task-done"></div></details>
     </div>
 
     <div id="time-view">
@@ -71,6 +83,7 @@
       <div id="pop-tags"></div>
       <div id="pop-actions">
         <button id="pop-edit" class="pop-act">Edit</button>
+        <button id="pop-done" class="pop-act">Done</button>
         <button id="pop-skip" class="pop-act">Skip this one</button>
         <button id="pop-del" class="pop-act danger">Delete series</button>
       </div>
@@ -96,6 +109,19 @@
           <button type="button" class="seg-btn on" data-cat="timed">Timed</button>
           <button type="button" class="seg-btn" data-cat="allday">All day</button>
           <button type="button" class="seg-btn" data-cat="date">Birthday</button>
+          <button type="button" class="seg-btn" data-cat="todo">Task</button>
+        </div>
+
+        <!-- task (%todo): an optional due date, done or not -->
+        <div class="df nth-row">
+          <div>
+            <label class="f">Due (optional)</label>
+            <input id="f-due" type="date">
+          </div>
+          <div>
+            <label class="f">Status</label>
+            <label class="chk"><input id="f-done" type="checkbox"> Done</label>
+          </div>
         </div>
 
         <!-- birthday (%date): month + day only -->

@@ -169,6 +169,9 @@
           ''
           ''
           ''
+          ~
+          ~
+          ''
           extra
       ==
       gid
@@ -205,7 +208,7 @@
   |=  [e=entry:cal exdates=(list @da)]
   ^-  json
   =/  ev=event:cal  event.e
-  =/  m=meta:cal  ?-(-.ev %timed meta.ev, %allday meta.ev, %date meta.ev)
+  =/  m=meta:cal  ?-(-.ev %timed meta.ev, %allday meta.ev, %date meta.ev, %todo meta.ev)
   =/  name=@t  (meta-str:cal m 'name')
   =/  base=(list [@t json])
     :~  ['summary' s+?:(=('' name) 'Untitled' name)]
@@ -234,6 +237,11 @@
     ==
   =/  timing=(list [@t json])
     ?-    -.ev
+        %todo
+      =/  d=@da  (fall due.ev ~2000.1.1)
+      :~  ['start' (time-json d ~ &)]
+          ['end' (time-json (add d ~d1) ~ &)]
+      ==
         %date
       =/  d=@da  (fall (on-date:rules 2.000 month.ev day.ev) *@da)
       :~  ['start' (time-json d ~ &)]
@@ -257,7 +265,7 @@
       ==
     ==
   =/  recurrence=(list [@t json])
-    ?:  ?=(%date -.ev)  ~
+    ?:  ?=(?(%date %todo) -.ev)  ~
     =/  rc=recur:cal  recur.ev
     =/  dom=(unit @ud)  ?-(-.ev %timed dom.bound.ev, %allday dom.bound.ev)
     =/  rt=(unit @t)  (preset-rrule:ics name.kind.rc args.rc start.rc dom)

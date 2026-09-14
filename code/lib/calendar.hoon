@@ -57,6 +57,7 @@
   $%  [%timed =recur zone=(unit @t) =fin =bound =meta]
       [%allday =recur days=@ud =bound =meta]
       [%date month=@ud day=@ud =meta]
+      [%todo due=(unit @da) done=(unit @da) =meta]   ::  a task: VTODO
   ==
 ::
 ::  the phase 1 noun: one calendar, events by id. Kept so a stored one
@@ -245,6 +246,11 @@
     ?-    -.ev
         %date
       [(inflate-date out id month.ev day.ev thru) ~]
+    ::  a task sits on the day it is due; undated, it is only in the list
+        %todo
+      ?~  due.ev  [out ~]
+      =/  l=@da  (day-floor:rules u.due.ev)
+      [(add-spans out id 0 ~[[l (add l ~d1)]]) ~]
     ::
         %timed
       =/  k=(unit kind:rules)  (~(get by kinds) kind.recur.ev)
@@ -344,7 +350,7 @@
   ==  ==
 ::  +all-day: does this event render in date-space (no zone)?
 ::
-++  all-day  |=(e=event ?=(?(%allday %date) -.e))
+++  all-day  |=(e=event ?=(?(%allday %date %todo) -.e))
 ::  +meta-str: a string key from a meta map, '' when absent
 ::
 ::  +meta-tags: the tags on an event (meta `tags`, a list of strings)
@@ -375,7 +381,7 @@
 ++  event-json
   |=  [id=@ta e=event]
   ^-  json
-  =/  m=meta  ?-(-.e %timed meta.e, %allday meta.e, %date meta.e)
+  =/  m=meta  ?-(-.e %timed meta.e, %allday meta.e, %date meta.e, %todo meta.e)
   =/  common=(list [@t json])
     :~  ['id' s+id]
         ['cat' s+-.e]
@@ -386,6 +392,12 @@
         %date
       :~  ['month' (numb:enjs:format month.e)]
           ['day' (numb:enjs:format day.e)]
+      ==
+    ::
+        %todo
+      :~  ['due_ms' ?~(due.e ~ (numb:enjs:format (da-to-ms u.due.e)))]
+          ['done_ms' ?~(done.e ~ (numb:enjs:format (da-to-ms u.done.e)))]
+          ['done' b+?=(^ done.e)]
       ==
     ::
         %timed

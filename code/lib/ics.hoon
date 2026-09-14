@@ -33,7 +33,10 @@
       sequence=@ud
       kind=@t                   ::  X-GRUBBERY-KIND, '' when foreign
       args=@t                   ::  X-GRUBBERY-ARGS, json text
-      cat=@t                    ::  X-GRUBBERY-CAT
+      cat=@t                    ::  X-GRUBBERY-CAT; 'todo' for a VTODO
+      due=(unit when)           ::  VTODO DUE
+      completed=(unit @da)      ::  VTODO COMPLETED
+      status=@t                 ::  VTODO STATUS
       extra=(list prop)         ::  everything else, verbatim
   ==
 ::  the keys this reader consumes; anything else is `extra`
@@ -76,18 +79,20 @@
 ::  parameters ('DTSTART;TZID=...').
 ++  vevents
   |=  lines=(list @t)
-  ^-  (list [props=(list prop) alarms=(list (list prop))])
-  =|  out=(list [props=(list prop) alarms=(list (list prop))])
-  =|  cur=(unit [props=(list prop) alarms=(list (list prop))])
+  ^-  (list [props=(list prop) alarms=(list (list prop)) todo=?])
+  =|  out=(list [props=(list prop) alarms=(list (list prop)) todo=?])
+  =|  cur=(unit [props=(list prop) alarms=(list (list prop)) todo=?])
   =|  alarm=(unit (list prop))
   |-
   ?~  lines  (flop out)
   =/  l=@t  i.lines
   ?:  =('BEGIN:VEVENT' l)
-    $(lines t.lines, cur `[~ ~], alarm ~)
-  ?:  =('END:VEVENT' l)
+    $(lines t.lines, cur `[~ ~ |], alarm ~)
+  ?:  =('BEGIN:VTODO' l)
+    $(lines t.lines, cur `[~ ~ &], alarm ~)
+  ?:  |(=('END:VEVENT' l) =('END:VTODO' l))
     ?~  cur  $(lines t.lines)
-    =/  fin  [(flop props.u.cur) (flop alarms.u.cur)]
+    =/  fin  [(flop props.u.cur) (flop alarms.u.cur) todo.u.cur]
     $(lines t.lines, cur ~, alarm ~, out [fin out])
   ?~  cur  $(lines t.lines)
   ?:  =('BEGIN:VALARM' l)
@@ -120,10 +125,20 @@
   ^-  (list prop)
   (skim props |=(p=prop =(name (base-key k.p))))
 ++  parse-vevent
-  |=  [props=(list prop) alarms=(list (list prop))]
+  |=  [props=(list prop) alarms=(list (list prop)) todo=?]
   ^-  vevent
   =/  gv  |=(k=@t ^-(@t (fall (bind (get-prop props k) |=(p=prop (unescape v.p))) '')))
   =/  gr  |=(k=@t ^-(@t (fall (bind (get-prop props k) |=(p=prop v.p)) '')))
+  ::  a VTODO: DUE, DURATION and COMPLETED are modeled; STATUS and
+  ::  PERCENT-COMPLETE only when it is complete (an open task keeps its
+  ::  IN-PROCESS and percent verbatim); DTSTART, RRULE and EXDATE ride
+  ::  verbatim too, so a recurring or start-dated task goes back out
+  ::  as it came. On a VEVENT STATUS stays extra.
+  =/  eaten=(set @t)
+    ?.  todo  consumed
+    =/  base=(set @t)  (~(dif in consumed) (sy ~['DTSTART' 'RRULE' 'EXDATE']))
+    =/  done=?  =('COMPLETED' (gr 'STATUS'))
+    (~(gas in base) ?:(done ~['DUE' 'DURATION' 'COMPLETED' 'STATUS' 'PERCENT-COMPLETE'] ~['DUE' 'DURATION' 'COMPLETED']))
   :*  (gr 'UID')
       (gv 'SUMMARY')
       (gv 'LOCATION')
@@ -137,8 +152,12 @@
       (fall (rush (gr 'SEQUENCE') dem) 0)
       (gr 'X-GRUBBERY-KIND')
       (gr 'X-GRUBBERY-ARGS')
-      (gr 'X-GRUBBERY-CAT')
-      (skip props |=(p=prop (~(has in consumed) (base-key k.p))))
+      ?:(todo 'todo' (gr 'X-GRUBBERY-CAT'))
+      (parse-when props 'DUE')
+      =/  c=(unit when)  (parse-when props 'COMPLETED')
+      ?~(c ~ `?-(-.u.c %utc d.u.c, %local d.u.c, %day d.u.c))
+      (gr 'STATUS')
+      (skip props |=(p=prop (~(has in eaten) (base-key k.p))))
   ==
 ++  parse-alarm
   |=  props=(list prop)
@@ -420,8 +439,9 @@
   |=  [e=entry:cal exdates=(list @da) now=@da]
   ^-  tape
   =/  ev=event:cal  event.e
-  =/  m=meta:cal  ?-(-.ev %timed meta.ev, %allday meta.ev, %date meta.ev)
-  =/  bd=bound:cal  ?-(-.ev %timed bound.ev, %allday bound.ev, %date *bound:cal)
+  =/  m=meta:cal  ?-(-.ev %timed meta.ev, %allday meta.ev, %date meta.ev, %todo meta.ev)
+  =/  bd=bound:cal  ?-(-.ev %timed bound.ev, %allday bound.ev, ?(%date %todo) *bound:cal)
+  =/  comp=tape  ?:(?=(%todo -.ev) "VTODO" "VEVENT")
   =/  ms  |=(k=@t (meta-str:cal m k))
   =/  timing=(list tape)
     ?-    -.ev
@@ -441,9 +461,29 @@
         %date
       =/  st  (when-text [%day (fall (on-date:rules 2.000 month.ev day.ev) *@da)])
       ~[(line (weld "DTSTART" params.st) value.st)]
+    ::  a task: DUE as a date when it sits on midnight, else a moment;
+    ::  STATUS and COMPLETED say whether it is done
+        %todo
+      ;:  weld
+        ^-  (list tape)
+        ?~  due.ev  ~
+        =/  d=@da  u.due.ev
+        =/  w=when  ?:(=(d (day-floor:rules d)) [%day d] [%utc d])
+        =/  wt  (when-text w)
+        ~[(line (weld "DUE" params.wt) value.wt)]
+        ^-  (list tape)
+        ?~  done.ev
+          ::  an open task keeps the STATUS it came with
+          ?^((get-prop props.e 'STATUS') ~ ~[(line "STATUS" "NEEDS-ACTION")])
+        ::  ~1970.1.1 marks STATUS:COMPLETED read without a COMPLETED stamp
+        :-  (line "STATUS" "COMPLETED")
+        :-  (line "PERCENT-COMPLETE" "100")
+        ?:(=(~1970.1.1 u.done.ev) ~ ~[(line "COMPLETED" (weld (dt-text u.done.ev) "Z"))])
+      ==
     ==
   =/  recur-lines=(list tape)
     ?-    -.ev
+        %todo  ~
         %date
       ~[(line "RRULE" "FREQ=YEARLY") (line "X-GRUBBERY-CAT" "date")]
         ?(%timed %allday)
@@ -478,7 +518,7 @@
     ==
   %-  zing
   ;:  weld
-    ~[(weld "BEGIN:VEVENT" crlf)]
+    ~[(weld "BEGIN:" (weld comp crlf))]
     ::  an override child carries its parent's UID, as RFC 5545 wants
     =/  parent=(list prop)  (skim props.e |=(p=prop =('X-GRUBBERY-PARENT' k.p)))
     ~[(line "UID" (trip ?~(parent uid.e v.i.parent)))]
@@ -493,9 +533,15 @@
     timing
     recur-lines
     alarm-lines
-    %+  turn  (skip props.e |=(p=prop =('X-GRUBBERY-PARENT' k.p)))
+    %+  turn
+      %+  skip  props.e
+      |=  p=prop
+      ?|  =('X-GRUBBERY-PARENT' k.p)
+          ?&  ?=(%todo -.ev)  ?=(^ done.ev)
+              ?=(^ (find ~[(base-key k.p)] ~['STATUS' 'PERCENT-COMPLETE' 'COMPLETED']))
+      ==  ==
     |=(p=prop (line (trip k.p) (trip v.p)))
-    ~[(weld "END:VEVENT" crlf)]
+    ~[(weld "END:" (weld comp crlf))]
   ==
 ++  write-calendar
   |=  [name=@t bodies=(list tape)]
@@ -514,9 +560,50 @@
 ::  +to-entry: a read VEVENT as an entry (uid kept, etag and seq left for
 ::  +put-entry) plus its EXDATEs as naive moments for the caller to map to
 ::  indices through the kind. ~ when there is no usable start.
+::  +todo-meta: name, note, location, tags of a read component
+++  todo-meta
+  |=  ve=vevent
+  ^-  meta:cal
+  =/  tags=(list @t)
+    %-  zing
+    %+  turn  (skim extra.ve |=(p=prop =('CATEGORIES' (key-name k.p))))
+    |=(p=prop (split-categories v.p))
+  %-  ~(gas by *(map @t json))
+  ^-  (list [@t json])
+  ;:  weld
+    ^-  (list [@t json])
+    ~[['name' s+?:(=('' summary.ve) 'Untitled' summary.ve)]]
+    ^-  (list [@t json])
+    ?:(=('' location.ve) ~ ~[['location' s+location.ve]])
+    ^-  (list [@t json])
+    ?:(=('' description.ve) ~ ~[['note' s+description.ve]])
+    ^-  (list [@t json])
+    ?~(tags ~ ~[['tags' [%a (turn tags |=(t=@t `json`s+t))]]])
+  ==
 ++  to-entry
   |=  [ve=vevent dz=(unit @t)]
   ^-  (unit [e=entry:cal exdates=(list @da)])
+  ::  a task: DUE (or DTSTART) is the due moment; COMPLETED or
+  ::  STATUS:COMPLETED marks it done
+  ?:  =('todo' cat.ve)
+    ::  DUE, or DTSTART+DURATION (RFC 5545 3.6.2); a start alone is a
+    ::  start, not a deadline. A zoned moment becomes absolute.
+    =/  abs
+      |=  w=when
+      ^-  @da
+      ?-  -.w
+        %utc    d.w
+        %day    d.w
+        %local  ?.((known-zone:rules zone.w) d.w (fall (mole |.((snag 0 (realize:rules `zone.w d.w)))) d.w))
+      ==
+    =/  due=(unit @da)
+      ?^  due.ve  `(abs u.due.ve)
+      ?:  &(?=(^ start.ve) ?=(^ duration.ve))  `(add (abs u.start.ve) u.duration.ve)
+      ~
+    =/  done=(unit @da)
+      ?^  completed.ve  completed.ve
+      ?:(=('COMPLETED' status.ve) `~1970.1.1 ~)
+    `[[[%todo due done (todo-meta ve)] uid.ve '' 0 alarms.ve (skip extra.ve |=(p=prop =('CATEGORIES' (key-name k.p))))] ~]
   ?~  start.ve  ~
   =/  s=when  u.start.ve
   =/  sd=@da  ?-(-.s %utc d.s, %local d.s, %day d.s)

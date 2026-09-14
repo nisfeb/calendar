@@ -40,7 +40,8 @@ shows the count; `GET /apps/calendar/google/conflicts.json` lists them,
 
 ## Not synced
 
-Attendees and invitations, calendar sharing and ACLs, Google Tasks, colors
+Attendees and invitations, calendar sharing and ACLs, Google Tasks (a task
+in a Google-linked calendar stays on the ship; Google Calendar has no VTODO), colors
 beyond the calendar's own, a local edit of a single instance of a Google
 series (the parent goes; the override child stays local).
 
