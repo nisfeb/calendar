@@ -68,3 +68,26 @@ python3 scripts/dav-matrix.py http://127.0.0.1:8091/apps/calendar/dav/ wex <pass
 Add, edit, a stale If-Match, an alarm, a recurring event with an exception,
 calendar-query, sync-collection, deletes, MKCALENDAR, PROPPATCH, and an event
 added on the ship reaching the client. Thunderbird, DAVx5 and iOS by hand.
+
+## Following a remote calendar (the client side)
+
+Settings → *Following a CalDAV calendar*: the collection URL (for another
+ship, `https://<host>/apps/calendar/dav/cal/<id>/`), a username and a
+password (on another ship, a client password minted under *Sharing*). The
+remote's events arrive as a calendar of their own; edits here go back to the
+source as PUT and DELETE at once, the source's changes arrive on the next
+pass (every `tick_min` minutes, or **Sync now**).
+
+The pull uses `sync-collection`, and falls back to a PROPFIND etag diff on a
+server without it. Because the runtime's outbound HTTP has the same closed
+verb set as its inbound, REPORT and PROPFIND leave the ship as POST with
+`X-HTTP-Method-Override`. Servers that honour it: our own calendars,
+SabreDAV-based ones (Nextcloud, Baïkal, ownCloud). Servers that do not:
+iCloud, Google's CalDAV endpoint (use the Google section instead), Radicale.
+
+The remote credentials are stored in `caldav-remotes.json` in the calendar's
+own tree, in the clear — they are what authenticates each request. Use a
+per-app password on the remote, never your account password.
+
+A 412 on push (the remote changed the same object) is logged as a conflict
+with the local copy; the next pull brings the remote's version.
