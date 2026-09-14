@@ -29,19 +29,37 @@ and TRACE to the ship; PROPFIND, PROPPATCH, REPORT and MKCALENDAR are answered
 ship rewrites the verb:
 
 ```nginx
+# http context (the top of a sites-enabled file is fine)
+map $request_method $dav_method {
+    default    $request_method;
+    PROPFIND   POST;
+    PROPPATCH  POST;
+    REPORT     POST;
+    MKCALENDAR POST;
+}
+map $request_method $dav_override {
+    default    "";
+    PROPFIND   PROPFIND;
+    PROPPATCH  PROPPATCH;
+    REPORT     REPORT;
+    MKCALENDAR MKCALENDAR;
+}
+
+# in the ship's server block, before location /
 location /apps/calendar/dav/ {
     proxy_pass http://127.0.0.1:8080;
+    proxy_method $dav_method;
+    proxy_set_header X-HTTP-Method-Override $dav_override;
     proxy_set_header Host $host;
-    if ($request_method ~ ^(PROPFIND|PROPPATCH|REPORT|MKCALENDAR)$) {
-        proxy_method POST;
-        proxy_set_header X-HTTP-Method-Override $request_method;
-    }
+    proxy_http_version 1.1;
+    proxy_buffering off;
 }
 location = /.well-known/caldav { return 301 /apps/calendar/dav/; }
 ```
 
-(`proxy_set_header` inside `if` needs the outer `proxy_set_header Host`
-repeated inside the block on some nginx versions.)
+(`proxy_method` is not allowed inside an `if` block, hence the maps; nginx
+1.24 refuses the `if` form at config test. Live on urbit.sneagan.com since
+2026-09-14.)
 
 For a ship with nothing in front of it, `scripts/dav-proxy.py PORT SHIP_URL`
 does the same on localhost.
