@@ -10,6 +10,7 @@
 /<  pytz   /lib/pytz.hoon
 /<  ics    /lib/ics.hoon
 /<  rr     /lib/rrule.hoon
+/<  dav    /lib/dav.hoon
 ::  the rule kinds, compiled in. The ball-era calendar loaded them at run
 ::  time from /code/lib/rules/ through a granted road; a desk install has
 ::  no such road to grant, and the kinds are ours, so they are part of the
@@ -839,7 +840,172 @@
   ?.  ?=(?(%'PROPFIND' %'PROPPATCH' %'REPORT' %'MKCALENDAR' %'GET' %'PUT' %'DELETE' %'HEAD') verb)
     ;<  ~  bind:m  (send-simple:srv eyre-id [[405 ~] `(as-octs:mimes:html 'calendar: unknown DAV verb')])
     (pure:m ~)
+  ::  the resource: principal, home, a calendar, or an object
+  =/  body=@t  ?~(body.request.req '' q.u.body.request.req)
+  =/  res=dav-res  (dav-resolve rest)
+  ;<  cal-view=view:nexus  bind:m
+    (peek:io (cord-to-road:tarball '../calendar.calendar') ~)
+  =/  c=calendar:cal  (cal-of cal-view)
+  ?:  =('PROPFIND' verb)
+    (dav-propfind eyre-id req our c res body)
   ;<  ~  bind:m  (send-simple:srv eyre-id [[501 ~] `(as-octs:mimes:html 'calendar: not yet')])
+  (pure:m ~)
+::  +dav-res: what a dav path names
++$  dav-res
+  $%  [%principal ~]
+      [%home ~]
+      [%calendar id=@ta]
+      [%object id=@ta =uid:cal]
+      [%none ~]
+  ==
+++  dav-resolve
+  |=  rest=path
+  ^-  dav-res
+  ::  a trailing slash parses as an empty last segment
+  =.  rest  (skip rest |=(s=@ta =('' s)))
+  ?~  rest  [%principal ~]
+  ?.  =(%cal i.rest)  [%none ~]
+  ?~  t.rest  [%home ~]
+  =/  id=@ta  i.t.rest
+  ?~  t.t.rest  [%calendar id]
+  ?^  t.t.t.rest  [%none ~]
+  =/  nm=tape  (dec-seg:dav (trip i.t.t.rest))
+  ::  strip a trailing .ics
+  =/  n=@ud  (lent nm)
+  =/  uid=tape  ?:(&((gte n 4) =(".ics" (slag (sub n 4) nm))) (scag (sub n 4) nm) nm)
+  [%object id (crip uid)]
+::  hrefs
+++  dav-root  "/apps/calendar/dav/"
+++  dav-cal-href  |=(id=@ta ^-(tape "{dav-root}cal/{(trip id)}/"))
+++  dav-obj-href
+  |=  [id=@ta =uid:cal]
+  ^-  tape
+  "{(dav-cal-href id)}{(enc-seg:dav (trip uid))}.ics"
+::  +dav-props-for: the props of a resource, by local name
+++  dav-props-for
+  |=  [our=@p c=calendar:cal res=dav-res]
+  ^-  (list [n=@tas p=prop:dav])
+  ?-    -.res
+      %none  ~
+      %principal
+    :~  [%resourcetype (d-el:dav %resourcetype ~[(d-el:dav %collection ~) (d-el:dav %principal ~)])]
+        [%displayname (d-el:dav %displayname ~[(tx:dav (scow %p our))])]
+        [%'current-user-principal' (d-el:dav %'current-user-principal' ~[(href:dav dav-root)])]
+        [%'principal-URL' (d-el:dav %'principal-URL' ~[(href:dav dav-root)])]
+        [%'calendar-home-set' (c-el:dav %'calendar-home-set' ~[(href:dav "{dav-root}cal/")])]
+        [%'calendar-user-address-set' (c-el:dav %'calendar-user-address-set' ~[(href:dav dav-root)])]
+    ==
+      %home
+    :~  [%resourcetype (d-el:dav %resourcetype ~[(d-el:dav %collection ~)])]
+        [%displayname (d-el:dav %displayname ~[(tx:dav "Calendars")])]
+        [%'current-user-principal' (d-el:dav %'current-user-principal' ~[(href:dav dav-root)])]
+    ==
+      %calendar
+    =/  k=(unit cal:cal)  (~(get by cals.c) id.res)
+    ?~  k  ~
+    =/  tok=tape  "{dav-root}sync/{(a-co:co seq.u.k)}"
+    :~  [%resourcetype (d-el:dav %resourcetype ~[(d-el:dav %collection ~) (c-el:dav %calendar ~)])]
+        [%displayname (d-el:dav %displayname ~[(tx:dav (trip name.props.u.k))])]
+        [%'calendar-color' (el:dav [%'A' %'calendar-color'] ~[(tx:dav (trip color.props.u.k))])]
+        [%'supported-calendar-component-set' (c-el:dav %'supported-calendar-component-set' ~[[[[%'C' %comp] [[%name "VEVENT"] ~]] ~]])]
+        [%getctag (el:dav [%'CS' %getctag] ~[(tx:dav (a-co:co seq.u.k))])]
+        [%'sync-token' (d-el:dav %'sync-token' ~[(tx:dav tok)])]
+        [%'current-user-principal' (d-el:dav %'current-user-principal' ~[(href:dav dav-root)])]
+        [%owner (d-el:dav %owner ~[(href:dav dav-root)])]
+        :-  %'supported-report-set'
+        %+  d-el:dav  %'supported-report-set'
+        %+  turn  `(list @tas)`~[%'calendar-query' %'calendar-multiget' %'sync-collection']
+        |=  r=@tas
+        (d-el:dav %'supported-report' ~[(d-el:dav %report ~[?:(=(%'sync-collection' r) (d-el:dav r ~) (c-el:dav r ~))])])
+        :-  %'current-user-privilege-set'
+        %+  d-el:dav  %'current-user-privilege-set'
+        ~[(d-el:dav %privilege ~[(d-el:dav %read ~)]) (d-el:dav %privilege ~[(d-el:dav %write ~)])]
+    ==
+      %object
+    =/  k=(unit cal:cal)  (~(get by cals.c) id.res)
+    ?~  k  ~
+    =/  e=(unit entry:cal)  (~(get by entries.u.k) uid.res)
+    ?~  e  ~
+    :~  [%resourcetype (d-el:dav %resourcetype ~)]
+        [%getetag (d-el:dav %getetag ~[(tx:dav "\"{(trip etag.u.e)}\"")])]
+        [%getcontenttype (d-el:dav %getcontenttype ~[(tx:dav "text/calendar; charset=utf-8; component=VEVENT")])]
+    ==
+  ==
+::  +dav-response: one <response> for a resource, filtered to the asked props
+++  dav-response
+  |=  [our=@p c=calendar:cal res=dav-res h=tape asked=(list @tas)]
+  ^-  manx
+  =/  have=(list [n=@tas p=prop:dav])  (dav-props-for our c res)
+  ?~  asked
+    (response:dav h (turn have |=([* p=prop:dav] p)) ~)
+  =/  found=(list prop:dav)
+    %+  murn  `(list @tas)`asked
+    |=  n=@tas
+    =/  got=(list [n=@tas p=prop:dav])  (skim have |=([m=@tas *] =(m n)))
+    ?~(got ~ `p.i.got)
+  =/  missing=(list @tas)
+    (skip `(list @tas)`asked |=(n=@tas (lien have |=([m=@tas *] =(m n)))))
+  (response:dav h found missing)
+::  +dav-is-child: an override entry; never listed on its own
+++  dav-is-child
+  |=  e=entry:cal
+  ^-  ?
+  (lien props.e |=([k=@t *] =('X-GRUBBERY-PARENT' k)))
+::  +dav-propfind
+++  dav-propfind
+  |=  [eyre-id=@ta req=inbound-request:eyre our=@p c=calendar:cal res=dav-res body=@t]
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  ?:  ?=(%none -.res)
+    ;<  ~  bind:m  (send-simple:srv eyre-id [[404 ~] `(as-octs:mimes:html 'calendar: no such resource')])
+    (pure:m ~)
+  =/  depth=@ud
+    =/  d=(unit @t)  (get-header:http 'depth' header-list.request.req)
+    ?:(|(?=(~ d) =('0' u.d)) 0 1)
+  =/  asked=(list @tas)  (prop-names:dav (parse:dav body))
+  =/  self-href=tape
+    ?-  -.res
+      %principal  dav-root
+      %home       "{dav-root}cal/"
+      %calendar   (dav-cal-href id.res)
+      %object     (dav-obj-href id.res uid.res)
+    ==
+  =/  known=?
+    ?-  -.res
+      %principal  &
+      %home       &
+      %calendar   (~(has by cals.c) id.res)
+      %object     ?~(k=(~(get by cals.c) id.res) | (~(has by entries.u.k) uid.res))
+    ==
+  ?.  known
+    ;<  ~  bind:m  (send-simple:srv eyre-id [[404 ~] `(as-octs:mimes:html 'calendar: no such resource')])
+    (pure:m ~)
+  =/  self=manx  (dav-response our c res self-href asked)
+  =/  children=marl
+    ?:  =(0 depth)  ~
+    ?-    -.res
+        %principal  ~
+        %object     ~
+        %home
+      %+  turn  (sort ~(tap by cals.c) |=([a=[@ta *] b=[@ta *]] (aor -.a -.b)))
+      |=  [id=@ta *]
+      (dav-response our c [%calendar id] (dav-cal-href id) asked)
+        %calendar
+      =/  k=cal:cal  (fall (~(get by cals.c) id.res) fresh-cal:cal)
+      %+  murn  ~(tap by entries.k)
+      |=  [u=uid:cal e=entry:cal]
+      ^-  (unit manx)
+      ?:  (dav-is-child e)  ~
+      `(dav-response our c [%object id.res u] (dav-obj-href id.res u) asked)
+    ==
+  (dav-send-xml eyre-id 207 (multistatus:dav [self children] ~))
+++  dav-send-xml
+  |=  [eyre-id=@ta code=@ud body=@t]
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  ;<  ~  bind:m
+    %+  send-simple:srv  eyre-id
+    [[code ['content-type' 'application/xml; charset=utf-8'] ~] `(as-octs:mimes:html body)]
   (pure:m ~)
 ++  get-meta
   |=  e=event:cal
