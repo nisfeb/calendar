@@ -14,7 +14,7 @@ Endpoints (a subset of the real ones, same shapes):
 """
 import sys, json, uuid, time, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, unquote
 
 PORT = int(sys.argv[1])
 TOKEN = 'fake-access-token'
@@ -56,7 +56,7 @@ class H(BaseHTTPRequestHandler):
     def log_message(self, fmt, *a): sys.stderr.write('%s %s\n' % (self.command, self.path))
 
     def do_GET(self):
-        u = urlparse(self.path); q = parse_qs(u.query); p = u.path
+        u = urlparse(self.path); q = parse_qs(u.query); p = unquote(u.path)
         if p == '/o/oauth2/v2/auth':
             r = q['redirect_uri'][0]; self.send(302, None, {'Location': r + '?code=fake-code&state=' + q.get('state', [''])[0]}); return
         if not self.authed(): self.send(401, {'error': {'code': 401, 'message': 'no bearer'}}); return
@@ -85,7 +85,7 @@ class H(BaseHTTPRequestHandler):
         self.send(404, {'error': {'code': 404}})
 
     def do_POST(self):
-        u = urlparse(self.path); p = u.path; raw = self.body()
+        u = urlparse(self.path); p = unquote(u.path); raw = self.body()
         if p == '/token':
             form = parse_qs(raw.decode())
             if form.get('grant_type') == ['authorization_code'] and form.get('code') != ['fake-code']:
@@ -117,7 +117,7 @@ class H(BaseHTTPRequestHandler):
         self.send(404, {'error': {'code': 404}})
 
     def do_PUT(self):
-        p = urlparse(self.path).path; raw = self.body()
+        p = unquote(urlparse(self.path).path); raw = self.body()
         if not self.authed(): self.send(401, {'error': {'code': 401}}); return
         parts = p.split('/')
         if len(parts) == 7 and parts[5] == 'events':
@@ -129,7 +129,7 @@ class H(BaseHTTPRequestHandler):
         self.send(404, {'error': {'code': 404}})
 
     def do_DELETE(self):
-        p = urlparse(self.path).path
+        p = unquote(urlparse(self.path).path)
         if not self.authed(): self.send(401, {'error': {'code': 401}}); return
         parts = p.split('/')
         if len(parts) == 7 and parts[5] == 'events':

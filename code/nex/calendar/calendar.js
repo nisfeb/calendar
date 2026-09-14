@@ -911,7 +911,8 @@ function loadCdav() {
     subs.forEach(function(sub) {
       var row = document.createElement('div'); row.className = 'feed-row';
       var nm = document.createElement('span'); nm.className = 'fn'; nm.textContent = sub.user + ' @ ' + sub.url;
-      var u = document.createElement('span'); u.className = 'fu'; u.textContent = sub.last_ms ? 'synced ' + new Date(sub.last_ms).toLocaleString() : 'not synced yet';
+      var u = document.createElement('span'); u.className = 'fu'; u.textContent = sub.error ? sub.error : (sub.last_ms ? 'synced ' + new Date(sub.last_ms).toLocaleString() : 'not synced yet');
+      if (sub.error) u.style.color = '#f87171';
       var x = document.createElement('button'); x.className = 'fx'; x.textContent = 'Unfollow'; x.style.fontSize = '12px';
       x.onclick = function() {
         fetch(CAL + '/caldav/unsubscribe', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: sub.id }) })

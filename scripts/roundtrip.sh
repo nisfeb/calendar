@@ -16,6 +16,8 @@ sleep 3
 echo "import: $(curl -s -m 300 -b "$J" -X POST --data-binary "@$T/a.ics" "$B/import?cal=roundtrip")"
 sleep 5
 curl -s -m 120 -b "$J" "$B/export.ics?cal=roundtrip" > "$T/b.ics"
-norm() { tr -d '\r' < "$1" | awk '/^BEGIN:VEVENT/{b=1;blk=""} b{ if ($0 !~ /^(DTSTAMP|SEQUENCE)/) blk=blk $0 "\n" } /^END:VEVENT/{b=0; print blk "----"}' | sort; }
+# one line per VEVENT (its lines joined with a separator), sorted, so blocks are
+# compared whole rather than as a multiset of lines across the file
+norm() { tr -d '\r' < "$1" | awk '/^BEGIN:VEVENT/{b=1;blk=""} b{ if ($0 !~ /^(DTSTAMP|SEQUENCE)/) blk=blk $0 "\x1f" } /^END:VEVENT/{b=0; print blk}' | sort | tr '\x1f' '\n' | sed 's/^END:VEVENT$/&\n----/'; }
 if diff <(norm "$T/a.ics") <(norm "$T/b.ics") > "$T/diff.txt"; then echo "ROUNDTRIP PASSED ($(grep -c '^BEGIN:VEVENT' "$T/b.ics") events)"; rc=0; else echo "ROUNDTRIP FAILED"; head -40 "$T/diff.txt"; rc=1; fi
 delcal; exit $rc
