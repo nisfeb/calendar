@@ -1,0 +1,108 @@
+#!/usr/bin/env python3
+"""ship-share-matrix.py HOST HJAR PEER PJAR PEERNAME
+Native @p sharing gate: HOST shares a calendar with PEER (edit), the peer
+accepts, both sides edit, the host revokes; then the same read-only.
+PEERNAME is the peer's @p as the host names it (e.g. ~feb)."""
+import json, subprocess, sys, time
+HOST, HJ, PEER, PJ, PEERNAME = sys.argv[1:6]
+P = '/apps/shell.shell/desks/calendar.desk/desk/data/calendar.calendar_app'
+CAL = 'ssm'
+fails = []
+
+def curl(host, jar, path, body=None, timeout=90):
+    cmd = ['curl', '-s', '-m', str(timeout), '-b', jar, host + path]
+    if body is not None:
+        cmd += ['-X', 'POST', '-H', 'content-type: application/json', '-d', json.dumps(body)]
+    return subprocess.run(cmd, capture_output=True, text=True).stdout
+
+def poke(host, jar, body):
+    return curl(host, jar, f'/grubbery/api/poke{P}/calendar.calendar?blot=/json', body)
+
+def names(host, jar, cal):
+    ev = json.loads(curl(host, jar, '/apps/calendar/events.json') or '[]')
+    return sorted(e['meta']['name'] for e in ev if e['cal'] == cal)
+
+def uids(host, jar, cal):
+    ev = json.loads(curl(host, jar, '/apps/calendar/events.json') or '[]')
+    return {e['meta']['name']: e['id'] for e in ev if e['cal'] == cal}
+
+def wait(label, fn, secs=75):
+    t0 = time.time()
+    while time.time() - t0 < secs:
+        if fn():
+            print(f'  ok   {label} ({time.time()-t0:.0f}s)'); return True
+        time.sleep(3)
+    print(f'  FAIL {label}'); fails.append(label); return False
+
+def check(label, cond):
+    print(('  ok   ' if cond else '  FAIL ') + label)
+    if not cond: fails.append(label)
+
+def shares(host, jar):
+    return json.loads(curl(host, jar, '/apps/calendar/share/shares.json'))
+
+def cals(host, jar):
+    return {c['id']: c for c in json.loads(curl(host, jar, '/apps/calendar/calendars.json'))}
+
+def sync(host, jar):
+    curl(host, jar, '/apps/calendar/share/sync', {})
+
+def ev(name, start, dur=30, tags=None):
+    return {'cat': 'timed', 'kind': 'once', 'start_ms': start, 'fin': 'dur', 'dur_min': dur,
+            'meta': {'name': name, 'tags': tags or []}}
+
+def run_round(mode):
+    print(f'== {mode} share')
+    poke(HOST, HJ, {'action': 'del-calendar', 'id': CAL})
+    poke(HOST, HJ, {'action': 'add-calendar', 'id': CAL, 'name': 'ssm', 'color': '#336699'})
+    poke(HOST, HJ, {'action': 'add-event', 'cal': CAL, **ev('seed', 1795000000000)})
+    r = json.loads(curl(HOST, HJ, '/apps/calendar/share/share', {'id': CAL, 'ship': PEERNAME, 'mode': mode}))
+    check('host: share accepted', r.get('ok') is True)
+    check('host: peer notified', r.get('notified') is True)
+    key = None
+    def offered():
+        nonlocal key
+        for k, o in shares(PEER, PJ)['offers'].items():
+            if o['cal'] == CAL: key = k; return True
+        return False
+    wait('peer: offer arrived', offered, 30)
+    if key is None: return
+    sid = json.loads(curl(PEER, PJ, '/apps/calendar/share/accept', {'key': key}))['id']
+    sync(PEER, PJ)
+    wait('peer: pulled seed', lambda: names(PEER, PJ, sid) == ['seed'])
+    check('peer: calendar kind ship', cals(PEER, PJ).get(sid, {}).get('kind') == 'ship')
+    poke(PEER, PJ, {'action': 'add-event', 'cal': sid, **ev('peer added', 1795100000000, tags=['pushed'])})
+    if mode == 'edit':
+        wait('host: peer add pushed', lambda: 'peer added' in names(HOST, HJ, CAL))
+        u = uids(PEER, PJ, sid).get('peer added')
+        poke(PEER, PJ, {'action': 'edit-event', 'cal': sid, 'id': u, **ev('peer edited', 1795100000000, 45)})
+        wait('host: peer edit pushed', lambda: names(HOST, HJ, CAL) == ['peer edited', 'seed'])
+        poke(PEER, PJ, {'action': 'del-event', 'cal': sid, 'id': u})
+        wait('host: peer delete pushed', lambda: names(HOST, HJ, CAL) == ['seed'])
+    else:
+        time.sleep(8)
+        check('peer: read-only edit dropped', names(PEER, PJ, sid) == ['seed'])
+        check('host: nothing pushed', names(HOST, HJ, CAL) == ['seed'])
+    poke(HOST, HJ, {'action': 'add-event', 'cal': CAL, **ev('host added', 1795200000000)})
+    sync(PEER, PJ)
+    wait('peer: host add pulled', lambda: names(PEER, PJ, sid) == ['host added', 'seed'])
+    hu = uids(HOST, HJ, CAL)
+    poke(HOST, HJ, {'action': 'edit-event', 'cal': CAL, 'id': hu['host added'], **ev('host edited', 1795200000000)})
+    poke(HOST, HJ, {'action': 'del-event', 'cal': CAL, 'id': hu['seed']})
+    sync(PEER, PJ)
+    wait('peer: host edit and delete pulled', lambda: names(PEER, PJ, sid) == ['host edited'])
+    row = shares(PEER, PJ)['accepted'].get(sid, {})
+    check('peer: row clean', row.get('error', '') == '')
+    r = json.loads(curl(HOST, HJ, '/apps/calendar/share/revoke', {'id': CAL, 'ship': PEERNAME}))
+    check('host: revoke ok', r.get('ok') is True)
+    check('host: share row gone', CAL not in shares(HOST, HJ)['shares'])
+    wait('peer: copy became local', lambda: cals(PEER, PJ).get(sid, {}).get('kind') == 'local', 30)
+    check('peer: data kept', names(PEER, PJ, sid) == ['host edited'])
+    check('peer: sync row gone', sid not in shares(PEER, PJ)['accepted'])
+    poke(PEER, PJ, {'action': 'del-calendar', 'id': sid})
+
+run_round('edit')
+run_round('read')
+poke(HOST, HJ, {'action': 'del-calendar', 'id': CAL})
+print('SHIP SHARE MATRIX ' + ('PASSED' if not fails else 'FAILED: ' + ', '.join(fails)))
+sys.exit(1 if fails else 0)

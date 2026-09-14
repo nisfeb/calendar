@@ -849,7 +849,7 @@ function openSettings() {
   document.getElementById('dav-url').textContent = location.origin + CAL + '/dav/';
   document.getElementById('dav-new').classList.add('hidden');
   document.getElementById('google-redirect').textContent = location.origin + CAL + '/google/callback';
-  loadCalsList(); loadDav(); loadCdav(); loadGoogle(); loadFeeds();
+  loadCalsList(); loadShares(); loadDav(); loadCdav(); loadGoogle(); loadFeeds();
   settingsBack.classList.add('open');
 }
 document.getElementById('settings-btn').onclick = openSettings;
@@ -865,7 +865,7 @@ function loadCalsList() {
       var color = document.createElement('input'); color.type = 'color'; color.value = c.color || '#101541';
       var nm = document.createElement('input'); nm.value = c.name; nm.style.flex = '1';
       var badge = document.createElement('span'); badge.className = 'kind-badge';
-      badge.textContent = c.kind === 'google' ? 'google' : c.kind === 'caldav' ? 'followed' : 'local';
+      badge.textContent = c.kind === 'google' ? 'google' : c.kind === 'caldav' ? 'followed' : c.kind === 'ship' ? 'shared with you' : 'local';
       var n = document.createElement('span'); n.className = 'fu'; n.style.flex = '0 0 auto'; n.textContent = c.count + (c.count === 1 ? ' event' : ' events');
       var save = document.createElement('button'); save.className = 'fx'; save.textContent = '✓'; save.title = 'Save name and color'; save.style.display = 'none';
       function dirty() { save.style.display = ''; }
@@ -873,6 +873,18 @@ function loadCalsList() {
       save.onclick = function() { poke({ action: 'edit-calendar', id: c.id, name: nm.value.trim(), color: color.value }, function() { setTimeout(loadCalsList, 300); }); };
       var del = document.createElement('button'); del.className = 'fx'; del.textContent = '✕'; del.title = 'Delete this calendar and its events';
       if (c.id === 'default' || c.kind !== 'local') del.style.visibility = 'hidden';
+      var sh = document.createElement('button'); sh.className = 'fx'; sh.style.fontSize = '12px'; sh.textContent = 'Share…'; sh.title = 'Share this calendar with another ship';
+      if (c.kind !== 'local') sh.style.display = 'none';
+      sh.onclick = function() {
+        var ship = prompt('Share "' + c.name + '" with which ship? (e.g. ~sampel-palnet)');
+        if (!ship) return;
+        ship = ship.trim(); if (ship[0] !== '~') ship = '~' + ship;
+        var edit = confirm('Let ' + ship + ' edit it too?\nOK = read and edit, Cancel = read only');
+        fetch(CAL + '/share/share', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: c.id, ship: ship, mode: edit ? 'edit' : 'read' }) })
+          .then(function(r) { if (!r.ok) return r.text().then(function(t) { throw new Error(t); }); return r.json(); })
+          .then(function(d) { loadShares(); if (!d.notified) alert(ship + ' could not be reached right now (down, or it has no calendar app yet). The share is recorded here; share again once it is up to send the offer.'); })
+          .catch(function(e) { alert('could not share: ' + e.message); });
+      };
       var mig = document.createElement('button'); mig.className = 'fx'; mig.style.fontSize = '12px'; mig.textContent = 'Make local'; mig.title = 'Copy everything once and stop syncing; the source is left as it is';
       if (c.kind === 'local') mig.style.display = 'none';
       mig.onclick = function() {
@@ -884,7 +896,7 @@ function loadCalsList() {
           .catch(function() { mig.textContent = 'failed'; });
       };
       del.onclick = function() { if (!confirm('Delete "' + c.name + '" and its ' + c.count + ' events?')) return; poke({ action: 'del-calendar', id: c.id }, function() { setTimeout(loadCalsList, 300); }); };
-      row.appendChild(color); row.appendChild(nm); row.appendChild(badge); row.appendChild(n); row.appendChild(save); row.appendChild(mig); row.appendChild(del);
+      row.appendChild(color); row.appendChild(nm); row.appendChild(badge); row.appendChild(n); row.appendChild(save); row.appendChild(sh); row.appendChild(mig); row.appendChild(del);
       list.appendChild(row);
     });
   }).catch(function() {});
@@ -901,6 +913,53 @@ document.getElementById('cal-new-add').onclick = function() {
     setTimeout(loadCalsList, 300);
   });
 };
+
+// sharing with ships: what we share, and what was shared with us
+function loadShares() {
+  fetch(CAL + '/share/shares.json').then(function(r) { return r.json(); }).then(function(d) {
+    var list = document.getElementById('shares-list');
+    list.innerHTML = '';
+    var shares = d.shares || {}, any = false;
+    Object.keys(shares).forEach(function(cid) {
+      Object.keys(shares[cid]).forEach(function(ship) {
+        any = true;
+        var row = document.createElement('div'); row.className = 'feed-row';
+        var nm = document.createElement('span'); nm.className = 'fn'; nm.textContent = (CALS[cid] ? CALS[cid].name : cid);
+        var u = document.createElement('span'); u.className = 'fu'; u.textContent = ship + ' · ' + (shares[cid][ship] === 'edit' ? 'can edit' : 'read only');
+        var x = document.createElement('button'); x.className = 'fx'; x.textContent = 'Revoke'; x.style.fontSize = '12px';
+        x.onclick = function() {
+          if (!confirm('Stop sharing "' + nm.textContent + '" with ' + ship + '? Their copy stays with them as a calendar of their own; it just stops syncing.')) return;
+          fetch(CAL + '/share/revoke', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: cid, ship: ship }) }).then(loadShares);
+        };
+        row.appendChild(nm); row.appendChild(u); row.appendChild(x); list.appendChild(row);
+      });
+    });
+    if (!any) list.innerHTML = '<div class="feed-row" style="border:none;color:#666">Nothing shared yet. Use Share… on a local calendar above.</div>';
+    var ol = document.getElementById('offers-list');
+    ol.innerHTML = '';
+    var offers = d.offers || {}, accepted = d.accepted || {}, anyO = false;
+    Object.keys(offers).forEach(function(key) {
+      anyO = true; var o = offers[key];
+      var row = document.createElement('div'); row.className = 'feed-row';
+      var nm = document.createElement('span'); nm.className = 'fn'; nm.textContent = (o.name || o.cal) + ' from ' + o.host;
+      var u = document.createElement('span'); u.className = 'fu'; u.textContent = o.mode === 'edit' ? 'read and edit' : 'read only';
+      var a = document.createElement('button'); a.className = 'fx'; a.style.fontSize = '12px'; a.textContent = 'Accept';
+      a.onclick = function() { fetch(CAL + '/share/accept', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key: key }) }).then(function() { setTimeout(function() { loadShares(); loadCalsList(); loadCals(); }, 1500); }); };
+      var dcl = document.createElement('button'); dcl.className = 'fx'; dcl.textContent = '✕'; dcl.title = 'Decline';
+      dcl.onclick = function() { fetch(CAL + '/share/decline', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key: key }) }).then(loadShares); };
+      row.appendChild(nm); row.appendChild(u); row.appendChild(a); row.appendChild(dcl); ol.appendChild(row);
+    });
+    Object.keys(accepted).forEach(function(id) {
+      anyO = true; var r = accepted[id];
+      var row = document.createElement('div'); row.className = 'feed-row';
+      var nm = document.createElement('span'); nm.className = 'fn'; nm.textContent = (CALS[id] ? CALS[id].name : id) + ' (' + r.key.split('/')[0] + ')';
+      var u = document.createElement('span'); u.className = 'fu'; u.textContent = r.error ? r.error : ((r.mode === 'edit' ? 'read and edit' : 'read only') + (r.last_ms ? ', synced ' + new Date(r.last_ms).toLocaleString() : ', not synced yet'));
+      if (r.error) u.style.color = '#f87171';
+      row.appendChild(nm); row.appendChild(u); ol.appendChild(row);
+    });
+    if (!anyO) ol.innerHTML = '<div class="feed-row" style="border:none;color:#666">No calendar has been shared with you.</div>';
+  }).catch(function() {});
+}
 
 // following: a remote CalDAV calendar
 function loadCdav() {

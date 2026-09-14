@@ -79,6 +79,16 @@
           ::  follows — url, credentials, sync token, href and etag per
           ::  uid, the push watermark. Never answered to the browser.
           [%fall %& [/ %'caldav-remotes.json'] [[/ %json] [%o ~]]]
+          ::  sharing with ships. shares.json: which ship may see which
+          ::  calendar, and how; /shares/<id>.json: the derived file a
+          ::  peer reads; shares.sig: the inbox other ships poke offers
+          ::  into; share-offers.json: what was offered to us; 
+          ::  ship-remotes.json: the calendars we accepted, one row each
+          [%fall %& [/ %'shares.json'] [[/ %json] [%o ~]]]
+          [%fall %| /shares empty-dir:loader]
+          [%fall %& [/ %'shares.sig'] [[/ %sig] ~]]
+          [%fall %& [/ %'share-offers.json'] [[/ %json] [%o ~]]]
+          [%fall %& [/ %'ship-remotes.json'] [[/ %json] [%o ~]]]
           [%fall %& [/ %'google.sig'] [[/ %sig] ~]]
           [%fall %| /requests empty-dir:loader]
       ==
@@ -98,6 +108,8 @@
         ::  first rise after the move; the old copy is left untouched.
         ;<  ~  bind:m  carry-old-data
         ;<  ~  bind:m  (bind-http-self:io [~ /apps/calendar])
+        ::  any ship may poke our share inbox: the road rides on /public
+        ;<  ~  bind:m  lay-inbox-road
         (http-dispatch:io %cal)
           ::
           ::  /calendar.calendar: poke CRUD on events
@@ -105,12 +117,39 @@
           [~ %'calendar.calendar']
         ;<  ~  bind:m  (rise-wait:io prod "%calendar events: failed")
         |-
-        ;<  [* =sage:tarball]  bind:m  take-poke-from:io
+        ;<  [=from:fiber:nexus =sage:tarball]  bind:m  take-poke-from:io
         =/  jon=json  (fall (mole |.(!<(json q.sage))) *json)
         ?.  ?=(%o -.jon)  $
         =/  act=@t  (gs jon 'action')
         ;<  raw=*  bind:m  (get-state-as:io ,*)
         =/  c=calendar:cal  (lift:cal raw)
+        ::  a foreign ship: only an edit to a calendar shared with it
+        =/  src=(unit @p)  (get-poke-src:io from)
+        ?^  src
+          =/  cid=@ta  (crip (trip (gs jon 'cal')))
+          ;<  shares=json  bind:m  (read-json-grub './' 'shares.json')
+          =/  mode=@t  (gs (obj:gcal shares cid) (scot %p u.src))
+          ?.  =('edit' mode)
+            ~&  >>>  [%calendar-share-poke-refused u.src cid act]
+            $
+          =/  k=(unit cal:cal)  (~(get by cals.c) cid)
+          ?~  k  $
+          ?:  =('share-put' act)
+            =/  put=(unit [k=cal:cal =uid:cal])  (put-object u.k (events:ics (gs jon 'ics')) zone.c '' ~)
+            ?~  put  $
+            ;<  ~  bind:m  (replace:io c(cals (~(put by cals.c) cid k.u.put)))
+            $
+          ?:  =('share-del' act)
+            =/  u=@t  (gs jon 'uid')
+            =/  kk=cal:cal
+              %+  roll  (dav-children u.k u)
+              |=([ch=entry:cal acc=_u.k] (del-entry:cal acc uid.ch))
+            ;<  ~  bind:m  (replace:io c(cals (~(put by cals.c) cid (del-entry:cal kk u))))
+            $
+          $
+        ::  a read-only shared calendar takes no local edits
+        =/  target=@ta  (crip (trip (gs jon 'cal')))
+        ?:  &(!=('' target) (ship-read-only c target))  $
         ?:  =('del-event' act)
           =/  id=@ta  (crip (trip (gs jon 'id')))
           ?:  =('' id)  $
@@ -319,6 +358,62 @@
         ;<  ~  bind:m  (cancel-timer:io /tick)
         ;<  ~  bind:m  (google-pass =(%poke what))
         ;<  ~  bind:m  (caldav-pass =(%poke what))
+        ;<  ~  bind:m  share-pass
+        ;<  ~  bind:m  (ship-pass =(%poke what))
+        ::  a grant approved after the rise: the inbox road lands here
+        ;<  ~  bind:m  lay-inbox-road
+        $
+          ::
+          ::  /shares.sig: other ships poke offers (and revocations) of
+          ::  calendars they share with us. The sender is the transport's;
+          ::  the payload is data. An offer waits until the owner accepts.
+          ::
+          [~ %'shares.sig']
+        ;<  ~  bind:m  (rise-wait:io prod "%calendar shares inbox: failed")
+        |-
+        ;<  [=from:fiber:nexus =sage:tarball]  bind:m  take-poke-from:io
+        =/  src=(unit @p)  (get-poke-src:io from)
+        ?~  src  $
+        =/  jon=json  (fall (mole |.(!<(json q.sage))) *json)
+        ?.  ?=(%o -.jon)  $
+        =/  act=@t  (gs jon 'action')
+        =/  cal-id=@t  (gs jon 'cal')
+        ?:  =('' cal-id)  $
+        =/  key=@t  (crip "{(scow %p u.src)}/{(trip cal-id)}")
+        ;<  offers=json  bind:m  (read-json-grub './' 'share-offers.json')
+        =/  cur=(map @t json)  ?:(?=(%o -.offers) p.offers ~)
+        ?:  =('offer' act)
+          ;<  now=@da  bind:m  get-time:io
+          =/  row=json
+            %-  pairs:enjs:format
+            :~  ['host' s+(scot %p u.src)]
+                ['cal' s+cal-id]
+                ['name' s+(gs jon 'name')]
+                ['color' s+(gs jon 'color')]
+                ['mode' s+?:(=('edit' (gs jon 'mode')) 'edit' 'read')]
+                ['base' s+(gs jon 'base')]
+                ['at_ms' (numb:enjs:format (da-to-ms now))]
+            ==
+          ;<  ~  bind:m  (write-json-grub './' 'share-offers.json' [%o (~(put by cur) key row)])
+          ~&  >  [%calendar-share-offered key]
+          $
+        ?:  =('revoke' act)
+          ;<  ~  bind:m  (write-json-grub './' 'share-offers.json' [%o (~(del by cur) key)])
+          ::  an accepted calendar stays, with its data: it becomes a
+          ::  local calendar of ours, the same flip migrate does
+          ;<  rows=json  bind:m  (read-json-grub './' 'ship-remotes.json')
+          =/  rm=(map @t json)  ?:(?=(%o -.rows) p.rows ~)
+          =/  hit=(list [id=@t row=json])  (skim ~(tap by rm) |=([* r=json] =(key (gs r 'key'))))
+          ?~  hit  $
+          ;<  ~  bind:m  (write-json-grub './' 'ship-remotes.json' [%o (~(del by rm) id.i.hit)])
+          ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road './' 'calendar.calendar') ~)
+          =/  c=calendar:cal  (cal-of cal-view)
+          =/  k=(unit cal:cal)  (~(get by cals.c) id.i.hit)
+          ?~  k  $
+          =.  props.u.k  props.u.k(kind %local, remote ~)
+          ;<  ~  bind:m  (dav-write './' c(cals (~(put by cals.c) id.i.hit u.k)))
+          ~&  >  [%calendar-share-revoked key]
+          $
         $
           [~ %'reminders.json']
         ;<  ~  bind:m  (rise-wait:io prod "%calendar reminders: failed")
@@ -389,6 +484,8 @@
           (google-request eyre-id req our t.suffix args)
         ?:  ?=([%caldav *] suffix)
           (caldav-request eyre-id req t.suffix)
+        ?:  ?=([%share *] suffix)
+          (share-request eyre-id req our t.suffix)
         ::  POST /migrate {id}: a followed or Google calendar becomes a
         ::  local one — one last pull, then the sync row goes and the
         ::  remote ids come off the events. The source is never touched;
@@ -403,19 +500,27 @@
           ?~  k
             ;<  ~  bind:m  (send-simple:srv eyre-id [[404 ~] `(as-octs:mimes:html 'calendar: no such calendar')])
             (pure:m ~)
-          =/  kind=?(%local %google %caldav)  kind.props.u.k
+          =/  kind=?(%local %google %caldav %ship)  kind.props.u.k
           ?:  ?=(%local kind)
             ;<  ~  bind:m  (send-simple:srv eyre-id [[400 ~] `(as-octs:mimes:html 'calendar: already local')])
             (pure:m ~)
           ::  1. one last pull, so nothing on the remote is missed
-          =/  rows-name=@t  ?:(?=(%google kind) 'google-sync.json' 'caldav-remotes.json')
+          =/  rows-name=@t
+            ?-  kind
+              %google  'google-sync.json'
+              %caldav  'caldav-remotes.json'
+              %ship    'ship-remotes.json'
+            ==
           ;<  rows=json  bind:m  (read-json-grub '../' rows-name)
           =/  row=(unit json)  ?:(?=(%o -.rows) (~(get by p.rows) id) ~)
           ;<  ~  bind:m
             ?~  row  (pure:(fiber:fiber:nexus ,~) ~)
             ;<  *  bind:(fiber:fiber:nexus ,~)
-              ?:  ?=(%google kind)  (google-pull '../' id u.row)
-              (caldav-pull '../' id u.row)
+              ?-  kind
+                %google  (google-pull '../' id u.row)
+                %caldav  (caldav-pull '../' id u.row)
+                %ship    (ship-pull '../' id u.row)
+              ==
             (pure:(fiber:fiber:nexus ,~) ~)
           ::  2. the sync row goes: nothing pulls or pushes it again (a
           ::  fresh read: the pull above may have moved other rows)
@@ -2608,6 +2713,510 @@
       ['pushed_seq' (numb:enjs:format ?:(stopped since seq.u.k))]
       ['suppressed' (suppress-json sup ?:(stopped since seq.u.k))]
   ==
+::  ---- sharing a calendar with a ship ----
+::  the calendar desk's instance lives at the same path on every ship
+++  cal-instance  `path`/apps/'shell.shell'/desks/'calendar.desk'/desk/data/'calendar.calendar_app'
+++  ug-base  `path`/sys/ames/usergroups
+++  public-grp  `path`/sys/ames/usergroups/'public.grp'
+::  +group-name: a usergroup per shared calendar and mode; the id is
+::  made safe for a term
+++  group-name
+  |=  [id=@ta mode=@t]
+  ^-  @t
+  =/  safe=tape
+    %+  turn  (trip id)
+    |=(c=@t ?:(|(&((gte c 'a') (lte c 'z')) &((gte c '0') (lte c '9')) =('-' c)) c '-'))
+  (crip "cal-{safe}-{(trip mode)}")
+::  +ug-read-weir / +ug-read-ships: a group's how and who
+++  ug-read-weir
+  |=  gdir=path
+  =/  m  (fiber:fiber:nexus ,weir:nexus)
+  ^-  form:m
+  ;<  hv=(unit view:nexus)  bind:m  (peek-soft:io [%& %& gdir %'how.weir'] ~)
+  ?~  hv  (pure:m *weir:nexus)
+  ?.  ?=([%file *] u.hv)  (pure:m *weir:nexus)
+  (pure:m (fall (mole |.(;;(weir:nexus (sang-noun:tarball sang.u.hv)))) *weir:nexus))
+++  ug-read-ships
+  |=  gdir=path
+  =/  m  (fiber:fiber:nexus ,(set @p))
+  ^-  form:m
+  ;<  wv=(unit view:nexus)  bind:m  (peek-soft:io [%& %& gdir %'who.ships'] ~)
+  ?~  wv  (pure:m ~)
+  ?.  ?=([%file *] u.wv)  (pure:m ~)
+  (pure:m (fall (mole |.(;;((set @p) (sang-noun:tarball sang.u.wv)))) ~))
+::  +ug-set: a group's members and its weir, written whole
+++  ug-set
+  |=  [gname=@t ships=(set @p) pk=(set road:tarball) pok=(set road:tarball)]
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  =/  gdir=path  (snoc ug-base (crip (weld (trip gname) ".grp")))
+  ;<  old=weir:nexus  bind:m  (ug-read-weir gdir)
+  =/  =weir:nexus  [make.old pok pk]
+  ;<  ~  bind:m  (over:io [%& %& gdir %'who.ships'] [[/ %ships] ships])
+  ;<  ~  bind:m  (over:io [%& %& gdir %'how.weir'] [[/ %weir] weir])
+  (pure:m ~)
+::  +lay-inbox-road: our shares.sig takes pokes from any ship, through
+::  the /public group's weir — the same shape lattice uses for share
+::  notices. Quiet when the roads are refused: sharing is optional.
+++  lay-inbox-road
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  ;<  base=(unit path)  bind:m  self-base
+  ?~  base  (pure:m ~)
+  ;<  old=weir:nexus  bind:m  (ug-read-weir public-grp)
+  =/  road=road:tarball  [%& %& u.base %'shares.sig']
+  ?:  (~(has in poke.old) road)  (pure:m ~)
+  ;<  reg=(unit tang)  bind:m  (reg-register-at-soft:io [u.base %'shares.sig'])
+  ?^  reg  ~&(>> %calendar-no-registry-road (pure:m ~))
+  ::  the registry names a group by its short name and takes only OUR
+  ::  roads: a %how replaces every road under our prefix in that group
+  ::  and leaves the other apps' roads alone
+  ;<  err=(unit tang)  bind:m  (reg-how-soft:io /public [~ (sy road ~) ~])
+  ~?  >>  ?=(^ err)  %calendar-inbox-road-not-laid
+  (pure:m ~)
+::  +ship-read-only: a calendar shared with us read-only takes no edits here
+++  ship-read-only
+  |=  [c=calendar:cal id=@ta]
+  ^-  ?
+  =/  k=(unit cal:cal)  (~(get by cals.c) id)
+  ?~  k  |
+  ?.  ?=(%ship kind.props.u.k)  |
+  =/  r=(unit @t)  remote.props.u.k
+  ?~  r  |
+  ::  the mode rides in remote as "<host>/<cal>#<mode>"
+  =/  t=tape  (trip u.r)
+  =/  at=(unit @ud)  (find "#" t)
+  ?~(at | =("read" (slag +(u.at) t)))
+::  +build-share-json: what a peer sees of one calendar
+++  build-share-json
+  |=  [c=calendar:cal id=@ta now=@da]
+  ^-  json
+  =/  k=cal:cal  (fall (~(get by cals.c) id) fresh-cal:cal)
+  %-  pairs:enjs:format
+  :~  ['seq' (numb:enjs:format seq.k)]
+      ['name' s+name.props.k]
+      ['color' s+color.props.k]
+      :-  'objects'
+      :-  %o
+      %-  ~(gas by *(map @t json))
+      %+  murn  ~(tap by entries.k)
+      |=  [u=uid:cal e=entry:cal]
+      ^-  (unit [@t json])
+      ?:  (dav-is-child e)  ~
+      =/  ics=(unit @t)  (dav-object-ics c id u now)
+      ?~  ics  ~
+      `[u (pairs:enjs:format ~[['etag' s+etag.e] ['ics' s+u.ics]])]
+  ==
+::  +share-pass: the host side — every shared calendar's file is brought
+::  up to its seq
+++  share-pass
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  ;<  shares=json  bind:m  (read-json-grub './' 'shares.json')
+  =/  ids=(list @t)  ?:(?=(%o -.shares) (turn ~(tap by p.shares) |=([id=@t *] id)) ~)
+  ?:  =(~ ids)  (pure:m ~)
+  ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road './' 'calendar.calendar') ~)
+  =/  c=calendar:cal  (cal-of cal-view)
+  ;<  now=@da  bind:m  get-time:io
+  |-
+  ?~  ids  (pure:m ~)
+  =/  id=@ta  (crip (trip i.ids))
+  =/  k=(unit cal:cal)  (~(get by cals.c) id)
+  ?~  k  $(ids t.ids)
+  =/  road=road:tarball  (cord-to-road:tarball (crip "./shares/{(trip id)}.json"))
+  ;<  cur=(unit view:nexus)  bind:m  (peek-soft:io road ~)
+  =/  have-seq=@ud
+    ?~  cur  0
+    ?.  ?=([%file *] u.cur)  0
+    (fall (gn (fall (mole |.(!<(json (need-vase:tarball sang.u.cur)))) *json) 'seq') 0)
+  ?:  &(?=(^ cur) ?=([%file *] u.cur) =(have-seq seq.u.k))  $(ids t.ids)
+  =/  jon=json  (build-share-json c id now)
+  ;<  ~  bind:m
+    ?:  &(?=(^ cur) ?=([%file *] u.cur))  (over:io road [[/ %json] jon])
+    (make:io road |+[[[/ %json] jon] ~])
+  $(ids t.ids)
+::  +share-request: the owner's routes under /apps/calendar/share/
+++  share-request
+  |=  [eyre-id=@ta req=inbound-request:eyre our=@p rest=path]
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  =/  jon=json
+    (fall (de:json:html ?~(body.request.req '' q.u.body.request.req)) *json)
+  =/  post=?  =('POST' method.request.req)
+  =/  send-err
+    |=  [code=@ud why=@t]
+    =/  m  (fiber:fiber:nexus ,~)
+    ^-  form:m
+    ;<  ~  bind:m  (send-simple:srv eyre-id [[code ~] `(as-octs:mimes:html why)])
+    (pure:m ~)
+  ?:  ?=([%'shares.json' ~] rest)
+    ;<  shares=json  bind:m  (read-json-grub '../' 'shares.json')
+    ;<  offers=json  bind:m  (read-json-grub '../' 'share-offers.json')
+    ;<  rows=json  bind:m  (read-json-grub '../' 'ship-remotes.json')
+    =/  accepted=json
+      :-  %o
+      %-  ~(gas by *(map @t json))
+      %+  turn  ?:(?=(%o -.rows) ~(tap by p.rows) ~)
+      |=  [id=@t r=json]
+      :-  id
+      %-  pairs:enjs:format
+      :~  ['key' s+(gs r 'key')]
+          ['mode' s+(gs r 'mode')]
+          ['last_ms' (numb:enjs:format (fall (gn r 'last_ms') 0))]
+          ['error' s+(gs r 'error')]
+      ==
+    (send-json eyre-id (pairs:enjs:format ~[['shares' shares] ['offers' offers] ['accepted' accepted]]))
+  ::  share {id, ship, mode}: the ship joins the calendar's group and is
+  ::  told. read: peek on the share file. edit: that and poke on the
+  ::  calendar, which the handler limits to this calendar.
+  ?:  &(post ?=([%share ~] rest))
+    =/  id=@ta  (crip (trip (gs jon 'id')))
+    =/  shp=(unit @p)  (slaw %p (gs jon 'ship'))
+    =/  mode=@t  ?:(=('edit' (gs jon 'mode')) 'edit' 'read')
+    ?~  shp  (send-err 400 'calendar: bad ship name')
+    ?:  =(u.shp our)  (send-err 400 'calendar: that is this ship')
+    ;<  base=(unit path)  bind:m  self-base
+    ?~  base  (send-err 500 'calendar: cannot find where this app is installed')
+    ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road '../' 'calendar.calendar') ~)
+    =/  c=calendar:cal  (cal-of cal-view)
+    =/  k=(unit cal:cal)  (~(get by cals.c) id)
+    ?~  k  (send-err 404 'calendar: no such calendar')
+    ?.  ?=(%local kind.props.u.k)  (send-err 400 'calendar: only a local calendar can be shared')
+    ::  1. the record
+    ;<  shares=json  bind:m  (read-json-grub '../' 'shares.json')
+    =/  all=(map @t json)  ?:(?=(%o -.shares) p.shares ~)
+    =/  mine=(map @t json)  =/(j (~(get by all) id) ?:(?=([~ %o *] j) p.u.j ~))
+    =.  mine  (~(put by mine) (scot %p u.shp) s+mode)
+    ;<  ~  bind:m  (write-json-grub '../' 'shares.json' [%o (~(put by all) id [%o mine])])
+    ::  2. the share file, now
+    ;<  now=@da  bind:m  get-time:io
+    =/  froad=road:tarball  (cord-to-road:tarball (crip "../shares/{(trip id)}.json"))
+    ;<  cur=(unit view:nexus)  bind:m  (peek-soft:io froad ~)
+    =/  fj=json  (build-share-json c id now)
+    ;<  ~  bind:m
+      ?:  &(?=(^ cur) ?=([%file *] u.cur))  (over:io froad [[/ %json] fj])
+      (make:io froad |+[[[/ %json] fj] ~])
+    ::  3. the groups: read-only ships and editing ships
+    ;<  ~  bind:m  (set-share-groups u.base id mine)
+    ::  4. the offer, to the peer's inbox
+    ;<  told=?  bind:m
+      %^  remote-poke-wait  u.shp
+        [%& cal-instance %'shares.sig']
+      %-  pairs:enjs:format
+      :~  ['action' s+'offer']
+          ['cal' s+id]
+          ['name' s+name.props.u.k]
+          ['color' s+color.props.u.k]
+          ['mode' s+mode]
+          ['base' s+(spat u.base)]
+      ==
+    (send-json eyre-id (pairs:enjs:format ~[['ok' b+&] ['notified' b+told]]))
+  ?:  &(post ?=([%revoke ~] rest))
+    =/  id=@ta  (crip (trip (gs jon 'id')))
+    =/  shp=(unit @p)  (slaw %p (gs jon 'ship'))
+    ?~  shp  (send-err 400 'calendar: bad ship name')
+    ;<  base=(unit path)  bind:m  self-base
+    ?~  base  (send-err 500 'calendar: cannot find where this app is installed')
+    ;<  shares=json  bind:m  (read-json-grub '../' 'shares.json')
+    =/  all=(map @t json)  ?:(?=(%o -.shares) p.shares ~)
+    =/  mine=(map @t json)  =/(j (~(get by all) id) ?:(?=([~ %o *] j) p.u.j ~))
+    =.  mine  (~(del by mine) (scot %p u.shp))
+    ;<  ~  bind:m
+      (write-json-grub '../' 'shares.json' [%o ?:(=(~ mine) (~(del by all) id) (~(put by all) id [%o mine]))])
+    ;<  ~  bind:m  (set-share-groups u.base id mine)
+    ;<  *  bind:m
+      %^  remote-poke-wait  u.shp
+        [%& cal-instance %'shares.sig']
+      (pairs:enjs:format ~[['action' s+'revoke'] ['cal' s+id]])
+    (send-json eyre-id (pairs:enjs:format ~[['ok' b+&]]))
+  ::  accept {key}: the offered calendar becomes ours to read (or edit)
+  ?:  &(post ?=([%accept ~] rest))
+    =/  key=@t  (gs jon 'key')
+    ;<  offers=json  bind:m  (read-json-grub '../' 'share-offers.json')
+    =/  cur=(map @t json)  ?:(?=(%o -.offers) p.offers ~)
+    =/  offer=(unit json)  (~(get by cur) key)
+    ?~  offer  (send-err 404 'calendar: no such offer')
+    ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road '../' 'calendar.calendar') ~)
+    =/  c=calendar:cal  (cal-of cal-view)
+    =/  id=@ta  (crip "s-{(trip (scot %uw (mug key)))}")
+    ?:  (~(has by cals.c) id)  (send-err 409 'calendar: already accepted')
+    =/  mode=@t  (gs u.offer 'mode')
+    =/  k=cal:cal  fresh-cal:cal
+    =/  nm=@t  (gs u.offer 'name')
+    =.  props.k  [?:(=('' nm) key nm) ?:(=('' (gs u.offer 'color')) '#101541' (gs u.offer 'color')) %ship `(crip "{(trip key)}#{(trip mode)}")]
+    ;<  ~  bind:m  (dav-write '../' c(cals (~(put by cals.c) id k)))
+    ;<  rows=json  bind:m  (read-json-grub '../' 'ship-remotes.json')
+    =/  row=json
+      %-  pairs:enjs:format
+      :~  ['key' s+key]
+          ['host' s+(gs u.offer 'host')]
+          ['cal' s+(gs u.offer 'cal')]
+          ['base' s+(gs u.offer 'base')]
+          ['mode' s+mode]
+          ['etags' [%o ~]]
+          ['seq' (numb:enjs:format 0)]
+          ['pushed_seq' (numb:enjs:format 0)]
+          ['last_ms' (numb:enjs:format 0)]
+      ==
+    ;<  ~  bind:m  (write-json-grub '../' 'ship-remotes.json' [%o (~(put by ?:(?=(%o -.rows) p.rows ~)) id row)])
+    ;<  ~  bind:m  (write-json-grub '../' 'share-offers.json' [%o (~(del by cur) key)])
+    ;<  ~  bind:m  (google-prod '../')
+    (send-json eyre-id (pairs:enjs:format ~[['id' s+id]]))
+  ?:  &(post ?=([%decline ~] rest))
+    =/  key=@t  (gs jon 'key')
+    ;<  offers=json  bind:m  (read-json-grub '../' 'share-offers.json')
+    ;<  ~  bind:m  (write-json-grub '../' 'share-offers.json' [%o (~(del by ?:(?=(%o -.offers) p.offers ~)) key)])
+    (send-json eyre-id (pairs:enjs:format ~[['ok' b+&]]))
+  ?:  &(post ?=([%sync ~] rest))
+    ;<  ~  bind:m  (google-prod '../')
+    (send-json eyre-id (pairs:enjs:format ~[['ok' b+&]]))
+  (send-err 404 'calendar: no such share route')
+::  +set-share-groups: the two groups of one calendar, from its record
+++  set-share-groups
+  |=  [base=path id=@ta mine=(map @t json)]
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  =/  file=road:tarball  [%& %& (snoc base %shares) (crip "{(trip id)}.json")]
+  =/  cal-road=road:tarball  [%& %& base %'calendar.calendar']
+  =/  readers=(set @p)
+    %-  ~(gas in *(set @p))
+    %+  murn  ~(tap by mine)
+    |=([s=@t v=json] ?:(?=(%s -.v) (slaw %p s) ~))
+  =/  editors=(set @p)
+    %-  ~(gas in *(set @p))
+    %+  murn  ~(tap by mine)
+    |=([s=@t v=json] ?:(&(?=(%s -.v) =('edit' p.v)) (slaw %p s) ~))
+  ;<  ~  bind:m  (ug-set (group-name id 'read') readers (sy ~[file]) ~)
+  (ug-set (group-name id 'edit') editors (sy ~[file]) (sy ~[cal-road]))
+::  +remote-poke-wait: a poke to another ship's grubbery, answered or
+::  timed out (a peer that is down must not park the fiber)
+++  remote-poke-wait
+  |=  [target=@p =lane:tarball jon=json]
+  =/  m  (fiber:fiber:nexus ,?)
+  ^-  form:m
+  ;<  now=@da  bind:m  get-time:io
+  =/  req=load:remo:nexus  [[/share-poke lane] %poke [[/ %json] jon]]
+  ;<  w=wire  bind:m  (nonce:io /share-poke)
+  ::  the /sys/gall grub consumes the request first (%pack on our wire);
+  ::  the far ship's ack comes back later as a [/ %poke-ack] poke keyed
+  ::  by the same wire. A veto or our timer ends the wait with %.n.
+  ;<  ~  bind:m
+    %-  send-dart:io
+    [%node w &+&+[/sys/gall %'main.sig'] %poke [[/ %gall-poke] [[target %grubbery] grubbery-load+req]]]
+  ;<  ~  bind:m  (set-timer:io /remote (add now ~s30))
+  ;<  ok=?  bind:m
+    |=  input:fiber:nexus
+    :+  ~  q.state
+    ?+  in  [%skip ~]
+        ~  [%wait ~]
+        [~ %veto %node * * *]
+      ?.(=(w wire.dart.u.in) [%skip ~] [%done %.n])
+        [~ %pack * *]
+      ?.  =(w wire.u.in)  [%skip ~]
+      ?~(err.u.in [%wait ~] [%done %.n])
+        [~ %poke * *]
+      ?:  =([/ %timer-wake] p.sage.u.in)
+        ?.(?=([%remote *] !<(path q.sage.u.in)) [%skip ~] [%done %.n])
+      ?.  =([/ %poke-ack] p.sage.u.in)  [%skip ~]
+      =/  [aw=wire err=(unit tang)]  !<([wire (unit tang)] q.sage.u.in)
+      ?.  =(w aw)  [%skip ~]
+      ~?  >>>  ?=(^ err)  [%calendar-remote-nack u.err]
+      [%done ?=(~ err)]
+    ==
+  ;<  ~  bind:m  (cancel-timer:io /remote)
+  (pure:m ok)
+::  +peek-remote-wait: a peek of another ship's file, ~ on veto, miss or
+::  timeout
+++  peek-remote-wait
+  |=  [target=@p road=road:tarball]
+  =/  m  (fiber:fiber:nexus ,(unit view:nexus))
+  ^-  form:m
+  ;<  now=@da  bind:m  get-time:io
+  =/  until=@da  (add now ~s30)
+  ;<  pw=wire  bind:m  (nonce:io /peek)
+  =/  rr=road:tarball
+    ?-  -.road
+      %|  road
+      %&
+        =/  prefix=path  /sys/ames/ships/[(scot %p target)]/root
+        ?-  -.p.road
+          %&  [%& %& (weld prefix path.p.p.road) name.p.p.road]
+          %|  [%& %| (weld prefix p.p.road)]
+        ==
+    ==
+  ;<  ~  bind:m  (send-dart:io %node pw rr %peek ~ ~ %.y)
+  ;<  ~  bind:m  (set-timer:io /remote until)
+  ;<  got=(unit view:nexus)  bind:m
+    |=  input:fiber:nexus
+    :+  ~  q.state
+    ?+  in  [%skip ~]
+        ~  [%wait ~]
+        [~ %veto %node * * *]
+      ?.(=(pw wire.dart.u.in) [%skip ~] [%done ~])
+        [~ %peek * *]
+      ?.(=(pw wire.u.in) [%skip ~] [%done `view.u.in])
+        [~ %poke * *]
+      ?.  =([/ %timer-wake] p.sage.u.in)  [%skip ~]
+      ?.(?=([%remote *] !<(path q.sage.u.in)) [%skip ~] [%done ~])
+    ==
+  ;<  ~  bind:m  (cancel-timer:io /remote)
+  (pure:m got)
+::  +ship-pass: the peer side — every accepted calendar: pull (when
+::  asked), then push
+++  ship-pass
+  |=  pull=?
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  =/  pre=@t  './'
+  ;<  rows-j=json  bind:m  (read-json-grub pre 'ship-remotes.json')
+  =/  rows=(list [id=@t row=json])  ?:(?=(%o -.rows-j) ~(tap by p.rows-j) ~)
+  =|  done=(map @t json)
+  |-
+  ?~  rows
+    ?:  =(~ done)  (pure:m ~)
+    ;<  fresh=json  bind:m  (read-json-grub pre 'ship-remotes.json')
+    =/  cur=(map @t json)  ?:(?=(%o -.fresh) p.fresh ~)
+    =/  merged=(map @t json)
+      %+  roll  ~(tap by done)
+      |=  [[id=@t row=json] acc=_cur]
+      ?.((~(has by acc) id) acc (~(put by acc) id row))
+    (write-json-grub pre 'ship-remotes.json' [%o merged])
+  ;<  row=json  bind:m
+    ?.  pull  (pure:(fiber:fiber:nexus ,json) row.i.rows)
+    (ship-pull pre (crip (trip id.i.rows)) row.i.rows)
+  ;<  row=json  bind:m  (ship-push pre (crip (trip id.i.rows)) row)
+  ?:  =(row row.i.rows)  $(rows t.rows)
+  $(rows t.rows, done (~(put by done) id.i.rows row))
+::  +ship-pull: the host's share file, diffed by etag against what we
+::  hold; changed objects are applied, missing ones deleted
+++  ship-pull
+  |=  [pre=@t id=@ta row=json]
+  =/  m  (fiber:fiber:nexus ,json)
+  ^-  form:m
+  =/  host=(unit @p)  (slaw %p (gs row 'host'))
+  ?~  host  (pure:m row)
+  =/  base=path  (fall (mole |.((stab (gs row 'base')))) cal-instance)
+  =/  hcal=@t  (gs row 'cal')
+  ;<  vw=(unit view:nexus)  bind:m
+    (peek-remote-wait u.host [%& %& (snoc base %shares) (crip "{(trip hcal)}.json")])
+  ?~  vw
+    %-  pure:m
+    ?.(?=(%o -.row) row [%o (~(put by p.row) 'error' s+'the host did not answer (down, or the share was revoked)')])
+  ?.  ?=([%file *] u.vw)
+    %-  pure:m
+    ?.(?=(%o -.row) row [%o (~(put by p.row) 'error' s+'the host has no such shared calendar any more')])
+  =/  share=json  (fall (mole |.(!<(json (need-vase:tarball sang.u.vw)))) *json)
+  =/  rseq=@ud  (fall (gn share 'seq') 0)
+  ?:  =(rseq (fall (gn row 'seq') 0))
+    (pure:m ?.(?=(%o -.row) row [%o (~(put by p.row) 'error' s+'')]))
+  =/  objects=(map @t json)  =/(o (obj:gcal share 'objects') ?:(?=(%o -.o) p.o ~))
+  =/  etags=(map @t json)  =/(e (obj:gcal row 'etags') ?:(?=(%o -.e) p.e ~))
+  ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road pre 'calendar.calendar') ~)
+  =/  c=calendar:cal  (cal-of cal-view)
+  =/  k=cal:cal  (fall (~(get by cals.c) id) fresh-cal:cal)
+  ?.  ?=(%ship kind.props.k)  (pure:m row)
+  =/  k=cal:cal  k
+  =/  sup=(set [@t @ud])  (suppressed row)
+  =/  pending=(set uid:cal)  (pending-uids k (fall (gn row 'pushed_seq') 0) sup)
+  =/  seq-at-peek=@ud  seq.k
+  =/  res=[k=cal:cal etags=(map @t json) clashes=(list [uid:cal (unit entry:cal)])]
+    %+  roll  ~(tap by objects)
+    |=  [[u=@t o=json] acc=_[k=k etags=*(map @t json) clashes=*(list [uid:cal (unit entry:cal)])]]
+    =/  et=@t  (gs o 'etag')
+    =.  etags.acc  (~(put by etags.acc) u s+et)
+    ?:  =(et (gs [%o etags] u))  acc
+    =/  put=(unit [k=cal:cal =uid:cal])  (put-object k.acc (events:ics (gs o 'ics')) zone.c u ~)
+    ?~  put  acc
+    =/  old=(unit entry:cal)  (~(get by entries.k.acc) uid.u.put)
+    =?  clashes.acc  &(?=(^ old) (~(has in pending) uid.u.put) !=(k.acc k.u.put))  [[uid.u.put old] clashes.acc]
+    acc(k k.u.put)
+  ::  what the host no longer has, goes
+  =/  res2=[k=cal:cal clashes=(list [uid:cal (unit entry:cal)])]
+    %+  roll  ~(tap by etags)
+    |=  [[u=@t *] acc=_[k=k.res clashes=clashes.res]]
+    ?:  (~(has by objects) u)  acc
+    =/  old=(unit entry:cal)  (~(get by entries.k.acc) u)
+    ?~  old  acc
+    =?  clashes.acc  (~(has in pending) u)  [[u old] clashes.acc]
+    =.  k.acc
+      %+  roll  (dav-children k.acc u)
+      |=([ch=entry:cal a=_k.acc] (del-entry:cal a uid.ch))
+    acc(k (del-entry:cal k.acc u))
+  ;<  ~  bind:m
+    =/  m  (fiber:fiber:nexus ,~)
+    =/  todo=(list [uid:cal (unit entry:cal)])  clashes.res2
+    |-  ^-  form:m
+    ?~  todo  (pure:m ~)
+    ;<  ~  bind:m
+      (google-conflict pre id -.i.todo +.i.todo '' 'changed on both sides; the host kept')
+    $(todo t.todo)
+  ;<  ~  bind:m
+    ?:  =(k.res2 k)  (pure:(fiber:fiber:nexus ,~) ~)
+    (dav-write pre c(cals (~(put by cals.c) id k.res2)))
+  ;<  now=@da  bind:m  get-time:io
+  %-  pure:m
+  ?.  ?=(%o -.row)  row
+  :-  %o
+  %-  ~(gas by p.row)
+  :~  ['seq' (numb:enjs:format rseq)]
+      ['etags' [%o etags.res]]
+      ['last_ms' (numb:enjs:format (da-to-ms now))]
+      ['error' s+'']
+      ['suppressed' (suppress-json (~(uni in sup) (wrote-between k.res2 seq-at-peek seq.k.res2)) (fall (gn row 'pushed_seq') 0))]
+  ==
+::  +ship-push: our changes to an edit-mode shared calendar, as pokes to
+::  the host
+++  ship-push
+  |=  [pre=@t id=@ta row=json]
+  =/  m  (fiber:fiber:nexus ,json)
+  ^-  form:m
+  ?.  =('edit' (gs row 'mode'))  (pure:m row)
+  =/  host=(unit @p)  (slaw %p (gs row 'host'))
+  ?~  host  (pure:m row)
+  =/  base=path  (fall (mole |.((stab (gs row 'base')))) cal-instance)
+  =/  hcal=@t  (gs row 'cal')
+  =/  since=@ud  (fall (gn row 'pushed_seq') 0)
+  ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road pre 'calendar.calendar') ~)
+  =/  c=calendar:cal  (cal-of cal-view)
+  =/  k=(unit cal:cal)  (~(get by cals.c) id)
+  ?~  k  (pure:m row)
+  ?.  ?=(%ship kind.props.u.k)  (pure:m row)
+  ?.  (gth seq.u.k since)  (pure:m row)
+  =/  sup=(set [@t @ud])  (suppressed row)
+  =/  changes=(list [uid:cal ?(%put %del)])
+    =/  latest=(map uid:cal ?(%put %del))
+      %+  roll  (tap:on-log:cal log.u.k)
+      |=  [[key=@ud val=logent:cal] acc=(map uid:cal ?(%put %del))]
+      ?.  (gth key since)  acc
+      ?^  (find "#" (trip uid.val))  acc
+      ?:  (~(has in sup) [uid.val key])  acc
+      (~(put by acc) uid.val kind.val)
+    ~(tap by latest)
+  ;<  now=@da  bind:m  get-time:io
+  =/  cal-lane=lane:tarball  [%& base %'calendar.calendar']
+  =/  stopped=?  |
+  |-
+  ?^  changes
+    =/  [u=uid:cal what=?(%put %del)]  i.changes
+    =/  body=json
+      ?:  =(%del what)
+        (pairs:enjs:format ~[['action' s+'share-del'] ['cal' s+hcal] ['uid' s+u]])
+      =/  ics=(unit @t)  (dav-object-ics c id u now)
+      ?~  ics  [%o ~]
+      (pairs:enjs:format ~[['action' s+'share-put'] ['cal' s+hcal] ['ics' s+u.ics]])
+    ?:  =([%o ~] body)  $(changes t.changes)
+    ;<  ok=?  bind:m  (remote-poke-wait u.host cal-lane body)
+    ?.  ok
+      ~&  >>>  [%calendar-share-push-stopped u]
+      $(changes ~, stopped &)
+    $(changes t.changes)
+  %-  pure:m
+  ?.  ?=(%o -.row)  row
+  :-  %o
+  %-  ~(gas by p.row)
+  :~  ['pushed_seq' (numb:enjs:format ?:(stopped since seq.u.k))]
+      ['suppressed' (suppress-json sup ?:(stopped since seq.u.k))]
+  ==
 ::  +google-prod: wake the sync fiber now
 ++  google-prod
   |=  pre=@t
@@ -2875,11 +3484,20 @@
           (line '/sys/behn/' 'the reminders fiber ticks on 5-minute marks to fire due reminders')
           (line '/sys/push/' 'send a reminder as a notification when an event is about to start. Refuse this and the calendar still works; reminders just do not fire')
           (line '/sys/iris/' 'fetch the Google calendar feeds you add, by their secret address. Refuse this and feeds are unavailable; your own events are unaffected')
+          (line '/sys/gall/' 'tell another ship you shared a calendar with it, and send it your edits to a calendar it shared with you. Refuse this and sharing with ships is unavailable; everything else works')
+          (line '/sys/ames/registry' 'let the ships you share a calendar with read it. Refuse this and sharing with ships is unavailable')
+          (line '/sys/ames/usergroups/' 'keep one group per shared calendar: the ships that may read it, and whether they may edit it')
       ==
       :-  'peek'
       :-  %a
       :~  (line '/sys/link/' 'look up where this app is installed, so the page can address its own writer. Refuse this and the page cannot save events')
           (line '/apps/calendar.calendar/' 'copy your existing events, reminders and feeds across from where the calendar used to live. Read-only, once, and the old copy is left untouched. Refuse it and this install starts empty')
+          (line '/sys/ames/usergroups/' 'see which ships a calendar is shared with')
+          (line '/sys/ames/ships/' 'read a calendar another ship shared with you, and keep it current. Refuse this and calendars shared with you are unavailable')
+      ==
+      :-  'make'
+      :-  %a
+      :~  (line '/sys/ames/usergroups/' 'make the group for a calendar the first time it is shared')
       ==
   ==
 ::  +resolve-kinds: load kind gates from the code namespace
