@@ -852,8 +852,219 @@
     (dav-get eyre-id c res)
   ?:  =('REPORT' verb)
     (dav-report eyre-id req our c res body)
+  ?:  =('PUT' verb)
+    (dav-put eyre-id req c res body)
+  ?:  =('DELETE' verb)
+    (dav-delete eyre-id c res)
+  ?:  =('MKCALENDAR' verb)
+    (dav-mkcalendar eyre-id c res body)
+  ?:  =('PROPPATCH' verb)
+    (dav-proppatch eyre-id c res body)
   ;<  ~  bind:m  (send-simple:srv eyre-id [[501 ~] `(as-octs:mimes:html 'calendar: not yet')])
   (pure:m ~)
+::  +dav-write: the calendar back to its grub
+++  dav-write
+  |=  c=calendar:cal
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  (over:io (cord-to-road:tarball '../calendar.calendar') [[/ %calendar] c])
+::  +dav-rid: an override's RECURRENCE-ID prop, if it has one
+++  dav-rid
+  |=  ve=vevent:ics
+  ^-  (unit [key=@t val=@t])
+  =/  hit=(list [key=@t val=@t])
+    %+  skim  extra.ve
+    |=  [key=@t *]
+    =/  t=tape  (trip key)
+    &((gte (lent t) 13) =("RECURRENCE-ID" (scag 13 t)))
+  ?~(hit ~ `i.hit)
+::  +dav-put: create or replace one object. The VEVENT without a
+::  RECURRENCE-ID is the parent; each other becomes an override child
+::  (uid <parent>#<recurrence-id>, once, at its own time) and the parent
+::  skips that occurrence. A PUT replaces the whole override set.
+++  dav-put
+  |=  [eyre-id=@ta req=inbound-request:eyre c=calendar:cal res=dav-res body=@t]
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  =/  fail
+    |=  [code=@ud why=@t]
+    =/  m  (fiber:fiber:nexus ,~)
+    ^-  form:m
+    ;<  ~  bind:m  (send-simple:srv eyre-id [[code ~] `(as-octs:mimes:html why)])
+    (pure:m ~)
+  ?.  ?=(%object -.res)  (fail 405 'calendar: PUT an object')
+  =/  k=(unit cal:cal)  (~(get by cals.c) id.res)
+  ?~  k  (fail 404 'calendar: no such calendar')
+  =/  ves=(list vevent:ics)  (events:ics body)
+  ?~  ves
+    ?^  (find "BEGIN:VTODO" (trip body))
+      (fail 403 'calendar: tasks (VTODO) are not supported; events only')
+    (fail 400 'calendar: no VEVENT in the body')
+  =/  parent=(unit vevent:ics)
+    =/  ps=(list vevent:ics)  (skip `(list vevent:ics)`ves |=(v=vevent:ics ?=(^ (dav-rid v))))
+    ?~(ps ~ `i.ps)
+  ?~  parent  (fail 400 'calendar: no VEVENT without a RECURRENCE-ID')
+  =/  got=(unit [e=entry:cal exdates=(list @da)])  (to-entry:ics u.parent zone.c)
+  ?~  got  (fail 400 'calendar: could not read the VEVENT')
+  =/  e=entry:cal  e.u.got
+  =?  uid.e  =('' uid.e)  uid.res
+  =/  existing=(unit entry:cal)  (~(get by entries.u.k) uid.e)
+  =/  hs  header-list.request.req
+  =/  if-none=(unit @t)  (get-header:http 'if-none-match' hs)
+  =/  if-match=(unit @t)  (get-header:http 'if-match' hs)
+  ?:  &(?=(^ if-none) =('*' u.if-none) ?=(^ existing))
+    (fail 412 'calendar: an object with this UID exists')
+  ?:  ?&  ?=(^ if-match)
+          ?|  ?=(~ existing)
+              !=(etag.u.existing (dav-unquote u.if-match))
+          ==
+      ==
+    (fail 412 'calendar: the object changed; fetch it again')
+  ::  an existing entry keeps its identity; only what the file says moves
+  =?  e  ?=(^ existing)  e(seq seq.u.existing)
+  =/  overrides=(list vevent:ics)  (skim `(list vevent:ics)`ves |=(v=vevent:ics ?=(^ (dav-rid v))))
+  ::  the skipped occurrences: the file's EXDATEs and each override's moment
+  =/  rid-moments=(list @da)
+    %+  murn  overrides
+    |=  v=vevent:ics
+    ^-  (unit @da)
+    =/  rid=(unit [key=@t val=@t])  (dav-rid v)
+    ?~  rid  ~
+    =/  w=(unit when:ics)  (when-of:ics key.u.rid val.u.rid)
+    ?~  w  ~
+    `?-(-.u.w %utc d.u.w, %local d.u.w, %day d.u.w)
+  =.  e  (with-exdates e (weld exdates.u.got rid-moments))
+  ::  the children: the old set goes, the file's set comes
+  =/  kk=cal:cal  u.k
+  =.  kk
+    %+  roll  (dav-children kk uid.e)
+    |=([ch=entry:cal acc=_kk] (del-entry:cal acc uid.ch))
+  =.  kk  (put-entry:cal kk e)
+  =.  kk
+    %+  roll  overrides
+    |=  [v=vevent:ics acc=_kk]
+    =/  rid=(unit [key=@t val=@t])  (dav-rid v)
+    ?~  rid  acc
+    =/  cg=(unit [e=entry:cal exdates=(list @da)])  (to-entry:ics v zone.c)
+    ?~  cg  acc
+    =/  ch=entry:cal  e.u.cg
+    =.  uid.ch  (crip "{(trip uid.e)}#{(trip val.u.rid)}")
+    =.  props.ch  [['X-GRUBBERY-PARENT' uid.e] props.ch]
+    (put-entry:cal acc ch)
+  ;<  ~  bind:m  (dav-write c(cals (~(put by cals.c) id.res kk)))
+  =/  new-etag=@t
+    =/  ne=(unit entry:cal)  (~(get by entries.kk) uid.e)
+    ?~(ne '' etag.u.ne)
+  ;<  ~  bind:m
+    %+  send-simple:srv  eyre-id
+    :_  ~
+    :~  ?~(existing 201 204)
+        ['etag' (crip "\"{(trip new-etag)}\"")]
+    ==
+  (pure:m ~)
+++  dav-unquote
+  |=  t=@t
+  ^-  @t
+  =/  s=tape  (trip t)
+  =.  s  ?:(=("W/" (scag 2 s)) (slag 2 s) s)
+  =.  s  ?:(&(!=(0 (lent s)) =('"' (snag 0 s))) (slag 1 s) s)
+  =.  s  ?:(&(!=(0 (lent s)) =('"' (rear s))) (snip s) s)
+  (crip s)
+::  +dav-delete: an object (with its override children), or a calendar
+++  dav-delete
+  |=  [eyre-id=@ta c=calendar:cal res=dav-res]
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  ?:  ?=(%calendar -.res)
+    ?:  =(%default id.res)
+      ;<  ~  bind:m  (send-simple:srv eyre-id [[403 ~] `(as-octs:mimes:html 'calendar: the default calendar stays')])
+      (pure:m ~)
+    ?.  (~(has by cals.c) id.res)
+      ;<  ~  bind:m  (send-simple:srv eyre-id [[404 ~] `(as-octs:mimes:html 'calendar: no such calendar')])
+      (pure:m ~)
+    ;<  ~  bind:m  (dav-write c(cals (~(del by cals.c) id.res)))
+    ;<  ~  bind:m  (send-simple:srv eyre-id [[204 ~] ~])
+    (pure:m ~)
+  ?.  ?=(%object -.res)
+    ;<  ~  bind:m  (send-simple:srv eyre-id [[405 ~] `(as-octs:mimes:html 'calendar: DELETE an object or a calendar')])
+    (pure:m ~)
+  =/  k=(unit cal:cal)  (~(get by cals.c) id.res)
+  ?:  |(?=(~ k) !(~(has by entries.u.k) uid.res))
+    ;<  ~  bind:m  (send-simple:srv eyre-id [[404 ~] `(as-octs:mimes:html 'calendar: no such object')])
+    (pure:m ~)
+  =/  kk=cal:cal
+    %+  roll  (dav-children u.k uid.res)
+    |=([ch=entry:cal acc=_u.k] (del-entry:cal acc uid.ch))
+  =.  kk  (del-entry:cal kk uid.res)
+  ;<  ~  bind:m  (dav-write c(cals (~(put by cals.c) id.res kk)))
+  ;<  ~  bind:m  (send-simple:srv eyre-id [[204 ~] ~])
+  (pure:m ~)
+::  +dav-mkcalendar: a new local calendar from the body's displayname
+::  and calendar-color
+++  dav-mkcalendar
+  |=  [eyre-id=@ta c=calendar:cal res=dav-res body=@t]
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  ?.  ?=(%calendar -.res)
+    ;<  ~  bind:m  (send-simple:srv eyre-id [[405 ~] `(as-octs:mimes:html 'calendar: MKCALENDAR under cal/')])
+    (pure:m ~)
+  ?:  (~(has by cals.c) id.res)
+    ;<  ~  bind:m  (send-simple:srv eyre-id [[405 ~] `(as-octs:mimes:html 'calendar: that calendar exists')])
+    (pure:m ~)
+  =/  root=(unit manx)  (parse:dav body)
+  =/  name=@t
+    ?~  root  id.res
+    =/  el=(unit manx)  (find-el:dav u.root %displayname)
+    ?~(el id.res (crip (text:dav u.el)))
+  =/  color=@t
+    ?~  root  '#1e3a5f'
+    =/  el=(unit manx)  (find-el:dav u.root %'calendar-color')
+    ?~(el '#1e3a5f' (crip (scag 7 (text:dav u.el))))
+  =/  k=cal:cal  fresh-cal:cal
+  =.  props.k  [?:(=('' name) id.res name) ?:(=('' color) '#1e3a5f' color) %local ~]
+  ;<  ~  bind:m  (dav-write c(cals (~(put by cals.c) id.res k)))
+  ;<  ~  bind:m  (send-simple:srv eyre-id [[201 ~] ~])
+  (pure:m ~)
+::  +dav-proppatch: displayname and calendar-color on a calendar
+++  dav-proppatch
+  |=  [eyre-id=@ta c=calendar:cal res=dav-res body=@t]
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  ?.  ?=(%calendar -.res)
+    ;<  ~  bind:m  (send-simple:srv eyre-id [[405 ~] `(as-octs:mimes:html 'calendar: PROPPATCH a calendar')])
+    (pure:m ~)
+  =/  k=(unit cal:cal)  (~(get by cals.c) id.res)
+  ?~  k
+    ;<  ~  bind:m  (send-simple:srv eyre-id [[404 ~] `(as-octs:mimes:html 'calendar: no such calendar')])
+    (pure:m ~)
+  =/  root=(unit manx)  (parse:dav body)
+  =/  set-el=(unit manx)  ?~(root ~ (find-el:dav u.root %set))
+  =/  asked=marl
+    ?~  set-el  ~
+    =/  pr=(unit manx)  (kid:dav u.set-el %prop)
+    ?~(pr ~ c.u.pr)
+  =/  kk=cal:cal  u.k
+  =/  done=(list prop:dav)  ~
+  =/  refused=(list @tas)  ~
+  =/  todo=marl  asked
+  |-
+  ?^  todo
+    =/  n=@tas  (local:dav n.g.i.todo)
+    ?:  =(%displayname n)
+      =.  name.props.kk  (crip (text:dav i.todo))
+      $(todo t.todo, done [(d-el:dav %displayname ~) done])
+    ?:  =(%'calendar-color' n)
+      =.  color.props.kk  (crip (scag 7 (text:dav i.todo)))
+      $(todo t.todo, done [(el:dav [%'A' %'calendar-color'] ~) done])
+    $(todo t.todo, refused [n refused])
+  ;<  ~  bind:m  (dav-write c(cals (~(put by cals.c) id.res kk)))
+  =/  h=tape  (dav-cal-href id.res)
+  =/  stats=marl
+    :-  (propstat:dav 200 done)
+    ?~  refused  ~
+    ~[(propstat:dav 403 (turn refused |=(n=@tas (d-el:dav n ~))))]
+  =/  resp=manx  (d-el:dav %response [(href:dav h) stats])
+  (dav-send-xml eyre-id 207 (multistatus:dav ~[resp] ~))
 ::  +dav-children: the override entries of a parent, in one calendar
 ++  dav-children
   |=  [k=cal:cal parent=uid:cal]
