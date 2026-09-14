@@ -1,16 +1,31 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
-  <rect width="256" height="256" rx="56" fill="#1e3a5f"/>
-  <rect x="48" y="64" width="160" height="136" rx="18" fill="#f3f0e9"/>
-  <rect x="48" y="64" width="160" height="42" rx="18" fill="#c0392b"/>
-  <rect x="48" y="88" width="160" height="18" fill="#c0392b"/>
-  <rect x="82" y="44" width="14" height="36" rx="7" fill="#f3f0e9"/>
-  <rect x="160" y="44" width="14" height="36" rx="7" fill="#f3f0e9"/>
-  <g fill="#1e3a5f" opacity="0.25">
-    <circle cx="84" cy="132" r="9"/>
-    <circle cx="128" cy="132" r="9"/>
-    <circle cx="172" cy="132" r="9"/>
-    <circle cx="84" cy="168" r="9"/>
-    <circle cx="172" cy="168" r="9"/>
+<!-- the calendar logo — a page of days, in the shared palette of sneagan's
+     apps (lattice, auspex, talon): amber (#f9a804) on deep navy (#101541,
+     vignetting to #080b25), with lattice's stroke weight, round caps and
+     its dots, so the icons sit together on a home screen. Square and
+     full-bleed: the tile that shows it does its own rounding. This file is
+     the single source; code/icon.svg is a copy and docs/logo.svg is the
+     mark alone. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 512 512">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="50%" r="72%">
+      <stop offset="0" stop-color="#171c52"/>
+      <stop offset="0.6" stop-color="#101541"/>
+      <stop offset="1" stop-color="#080b25"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <g fill="none" stroke="#f9a804" stroke-width="22" stroke-linecap="round" stroke-linejoin="round">
+    <!-- the page -->
+    <rect x="104" y="128" width="304" height="264" rx="30"/>
+    <!-- the header rule -->
+    <line x1="104" y1="212" x2="408" y2="212"/>
+    <!-- the two rings that hang it -->
+    <line x1="178" y1="88" x2="178" y2="166"/>
+    <line x1="334" y1="88" x2="334" y2="166"/>
   </g>
-  <circle cx="128" cy="168" r="13" fill="#c0392b"/>
+  <!-- the days, lattice's dots; the big one is today -->
+  <g fill="#f9a804">
+    <circle cx="180" cy="270" r="19"/><circle cx="256" cy="270" r="19"/><circle cx="332" cy="270" r="19"/>
+    <circle cx="180" cy="340" r="19"/><circle cx="256" cy="340" r="30"/><circle cx="332" cy="340" r="19"/>
+  </g>
 </svg>
