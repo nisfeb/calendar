@@ -11,6 +11,7 @@
 /<  ics    /lib/ics.hoon
 /<  rr     /lib/rrule.hoon
 /<  dav    /lib/dav.hoon
+/<  gcal   /lib/gcal.hoon
 ::  the rule kinds, compiled in. The ball-era calendar loaded them at run
 ::  time from /code/lib/rules/ through a granted road; a desk install has
 ::  no such road to grant, and the kinds are ours, so they are part of the
@@ -300,8 +301,19 @@
           ::
           [~ %'google.sig']
         ;<  ~  bind:m  (rise-wait:io prod "%calendar google: failed")
+        ::  a pass on every tick and prod (pull then push); on calendar
+        ::  news, push only — a pass's own writes wake it, and a push-only
+        ::  pass with nothing past the watermark does nothing
+        =/  cal-road  (cord-to-road:tarball './calendar.calendar')
+        ;<  *  bind:m  (keep:io /cal cal-road ~)
         |-
-        ;<  *  bind:m  take-poke:io
+        ;<  cfg=json  bind:m  (google-config './')
+        =/  tick=@dr  (mul ~m1 (max 1 (fall (gn cfg 'tick_min') 5)))
+        ;<  now=@da  bind:m  get-time:io
+        ;<  ~  bind:m  (set-timer:io /tick (add now tick))
+        ;<  what=?(%news %poke)  bind:m  (take-any /cal)
+        ;<  ~  bind:m  (cancel-timer:io /tick)
+        ;<  ~  bind:m  (google-pass =(%poke what))
         $
           [~ %'reminders.json']
         ;<  ~  bind:m  (rise-wait:io prod "%calendar reminders: failed")
@@ -371,9 +383,9 @@
         ?:  ?=([%google *] suffix)
           (google-request eyre-id req our t.suffix args)
         ?:  ?=([%'google.json' ~] suffix)
-          ;<  cfg=json  bind:m  google-config
-          ;<  auth=json  bind:m  google-auth
-          ;<  sync=json  bind:m  google-sync
+          ;<  cfg=json  bind:m  (google-config '../')
+          ;<  auth=json  bind:m  (google-auth '../')
+          ;<  sync=json  bind:m  (google-sync '../')
           =/  masked=json
             ?.  ?=(%o -.cfg)  cfg
             =/  sec=@t  (gs cfg 'client_secret')
@@ -901,10 +913,10 @@
   (pure:m ~)
 ::  +dav-write: the calendar back to its grub
 ++  dav-write
-  |=  c=calendar:cal
+  |=  [pre=@t c=calendar:cal]
   =/  m  (fiber:fiber:nexus ,~)
   ^-  form:m
-  (over:io (cord-to-road:tarball '../calendar.calendar') [[/ %calendar] c])
+  (over:io (grub-road pre 'calendar.calendar') [[/ %calendar] c])
 ::  +dav-rid: an override's RECURRENCE-ID prop, if it has one
 ++  dav-rid
   |=  ve=vevent:ics
@@ -957,38 +969,19 @@
           ==
       ==
     (fail 412 'calendar: the object changed; fetch it again')
-  ::  an existing entry keeps its identity; only what the file says moves
-  =?  e  ?=(^ existing)  e(seq seq.u.existing)
   =/  overrides=(list vevent:ics)  (skim `(list vevent:ics)`ves |=(v=vevent:ics ?=(^ (dav-rid v))))
-  ::  the skipped occurrences: the file's EXDATEs and each override's moment
-  =/  rid-moments=(list @da)
-    %+  murn  overrides
-    |=  v=vevent:ics
-    ^-  (unit @da)
-    =/  rid=(unit [key=@t val=@t])  (dav-rid v)
-    ?~  rid  ~
-    =/  w=(unit when:ics)  (when-of:ics key.u.rid val.u.rid)
-    ?~  w  ~
-    `?-(-.u.w %utc d.u.w, %local d.u.w, %day d.u.w)
-  =.  e  (with-exdates e (weld exdates.u.got rid-moments))
-  ::  the children: the old set goes, the file's set comes
+  ::  a PUT replaces the whole override set: the old children go first
   =/  kk=cal:cal  u.k
   =.  kk
     %+  roll  (dav-children kk uid.e)
     |=([ch=entry:cal acc=_kk] (del-entry:cal acc uid.ch))
-  =.  kk  (put-entry:cal kk e)
+  =/  put=(unit [k=cal:cal =uid:cal])  (put-parent kk u.parent zone.c uid.res ~)
+  ?~  put  (fail 400 'calendar: could not read the VEVENT')
+  =.  kk  k.u.put
   =.  kk
     %+  roll  overrides
-    |=  [v=vevent:ics acc=_kk]
-    =/  rid=(unit [key=@t val=@t])  (dav-rid v)
-    ?~  rid  acc
-    =/  cg=(unit [e=entry:cal exdates=(list @da)])  (to-entry:ics v zone.c)
-    ?~  cg  acc
-    =/  ch=entry:cal  e.u.cg
-    =.  uid.ch  (crip "{(trip uid.e)}#{(trip val.u.rid)}")
-    =.  props.ch  [['X-GRUBBERY-PARENT' uid.e] props.ch]
-    (put-entry:cal acc ch)
-  ;<  ~  bind:m  (dav-write c(cals (~(put by cals.c) id.res kk)))
+    |=([v=vevent:ics acc=_kk] (put-override acc uid.u.put v zone.c ~))
+  ;<  ~  bind:m  (dav-write '../' c(cals (~(put by cals.c) id.res kk)))
   =/  new-etag=@t
     =/  ne=(unit entry:cal)  (~(get by entries.kk) uid.e)
     ?~(ne '' etag.u.ne)
@@ -999,6 +992,66 @@
         ['etag' (crip "\"{(trip new-etag)}\"")]
     ==
   (pure:m ~)
+::  +put-parent: a parent VEVENT into a calendar. An existing entry
+::  keeps its identity (seq); the file's EXDATEs become skips. Extra
+::  props (a Google id, say) ride along. ~ when the VEVENT cannot be read.
+++  put-parent
+  |=  [k=cal:cal ve=vevent:ics zone=(unit @t) uid-hint=@t extra=(list [@t @t])]
+  ^-  (unit [k=cal:cal =uid:cal])
+  =/  got=(unit [e=entry:cal exdates=(list @da)])  (to-entry:ics ve zone)
+  ?~  got  ~
+  =/  e=entry:cal  e.u.got
+  =?  uid.e  =('' uid.e)  uid-hint
+  =/  existing=(unit entry:cal)  (~(get by entries.k) uid.e)
+  =?  e  ?=(^ existing)  e(seq seq.u.existing)
+  =.  props.e  (weld extra (skip props.e |=([key=@t *] (lien extra |=([x=@t *] =(x key))))))
+  =.  e  (with-exdates e exdates.u.got)
+  ::  the parent's existing skips survive a re-put (an override's moment
+  ::  stays skipped when only the parent changed)
+  =?  e  ?=(^ existing)
+    =/  old=event:cal  event.u.existing
+    =/  ex=(set @ud)  ?-(-.old %date ~, %timed except.bound.old, %allday except.bound.old)
+    ?-  -.event.e
+      %date    e
+      %timed   e(event event.e(except.bound (~(uni in except.bound.event.e) ex)))
+      %allday  e(event event.e(except.bound (~(uni in except.bound.event.e) ex)))
+    ==
+  `[(put-entry:cal k e) uid.e]
+::  +rid-moment: an override VEVENT's RECURRENCE-ID as a naive moment
+++  rid-moment
+  |=  ve=vevent:ics
+  ^-  (unit @da)
+  =/  rid=(unit [key=@t val=@t])  (dav-rid ve)
+  ?~  rid  ~
+  =/  w=(unit when:ics)  (when-of:ics key.u.rid val.u.rid)
+  ?~  w  ~
+  `?-(-.u.w %utc d.u.w, %local d.u.w, %day d.u.w)
+::  +put-override: an exception instance as a child of its parent: the
+::  parent skips that occurrence, the child (a once event at its own
+::  time, tagged) replaces any older child with the same RECURRENCE-ID.
+++  put-override
+  |=  [k=cal:cal parent=uid:cal ve=vevent:ics zone=(unit @t) extra=(list [@t @t])]
+  ^-  cal:cal
+  =/  rid=(unit [key=@t val=@t])  (dav-rid ve)
+  ?~  rid  k
+  =/  cg=(unit [e=entry:cal exdates=(list @da)])  (to-entry:ics ve zone)
+  ?~  cg  k
+  =/  ch=entry:cal  e.u.cg
+  =.  uid.ch  (crip "{(trip parent)}#{(trip val.u.rid)}")
+  =.  props.ch  (weld extra [['X-GRUBBERY-PARENT' parent] (skip props.ch |=([key=@t *] (lien extra |=([x=@t *] =(x key)))))])
+  =.  k  (skip-instance k parent (rid-moment ve))
+  (put-entry:cal k ch)
+::  +skip-instance: the parent skips one occurrence (a cancelled or
+::  overridden instance)
+++  skip-instance
+  |=  [k=cal:cal parent=uid:cal moment=(unit @da)]
+  ^-  cal:cal
+  ?~  moment  k
+  =/  pe=(unit entry:cal)  (~(get by entries.k) parent)
+  ?~  pe  k
+  =/  ne=entry:cal  (with-exdates u.pe ~[u.moment])
+  ?:  =(event.ne event.u.pe)  k
+  (put-entry:cal k ne)
 ++  dav-unquote
   |=  t=@t
   ^-  @t
@@ -1019,7 +1072,7 @@
     ?.  (~(has by cals.c) id.res)
       ;<  ~  bind:m  (send-simple:srv eyre-id [[404 ~] `(as-octs:mimes:html 'calendar: no such calendar')])
       (pure:m ~)
-    ;<  ~  bind:m  (dav-write c(cals (~(del by cals.c) id.res)))
+    ;<  ~  bind:m  (dav-write '../' c(cals (~(del by cals.c) id.res)))
     ;<  ~  bind:m  (send-simple:srv eyre-id [[204 ~] ~])
     (pure:m ~)
   ?.  ?=(%object -.res)
@@ -1033,7 +1086,7 @@
     %+  roll  (dav-children u.k uid.res)
     |=([ch=entry:cal acc=_u.k] (del-entry:cal acc uid.ch))
   =.  kk  (del-entry:cal kk uid.res)
-  ;<  ~  bind:m  (dav-write c(cals (~(put by cals.c) id.res kk)))
+  ;<  ~  bind:m  (dav-write '../' c(cals (~(put by cals.c) id.res kk)))
   ;<  ~  bind:m  (send-simple:srv eyre-id [[204 ~] ~])
   (pure:m ~)
 ::  +dav-mkcalendar: a new local calendar from the body's displayname
@@ -1059,7 +1112,7 @@
     ?~(el '#1e3a5f' (crip (scag 7 (text:dav u.el))))
   =/  k=cal:cal  fresh-cal:cal
   =.  props.k  [?:(=('' name) id.res name) ?:(=('' color) '#1e3a5f' color) %local ~]
-  ;<  ~  bind:m  (dav-write c(cals (~(put by cals.c) id.res k)))
+  ;<  ~  bind:m  (dav-write '../' c(cals (~(put by cals.c) id.res k)))
   ;<  ~  bind:m  (send-simple:srv eyre-id [[201 ~] ~])
   (pure:m ~)
 ::  +dav-proppatch: displayname and calendar-color on a calendar
@@ -1094,7 +1147,7 @@
       =.  color.props.kk  (crip (scag 7 (text:dav i.todo)))
       $(todo t.todo, done [(el:dav [%'A' %'calendar-color'] ~) done])
     $(todo t.todo, refused [n refused])
-  ;<  ~  bind:m  (dav-write c(cals (~(put by cals.c) id.res kk)))
+  ;<  ~  bind:m  (dav-write '../' c(cals (~(put by cals.c) id.res kk)))
   =/  h=tape  (dav-cal-href id.res)
   =/  stats=marl
     :-  (propstat:dav 200 done)
@@ -1442,22 +1495,27 @@
       ['api_base' s+'https://www.googleapis.com']
       ['tick_min' (numb:enjs:format 5)]
   ==
+::  +grub-road: a grub at the instance root, from any fiber depth (the
+::  request fibers live one dir down, at /requests/<id>)
+++  grub-road
+  |=  [pre=@t name=@t]
+  ^-  road:tarball
+  (cord-to-road:tarball (cat 3 pre name))
 ++  read-json-grub
-  |=  name=@t
+  |=  [pre=@t name=@t]
   =/  m  (fiber:fiber:nexus ,json)
   ^-  form:m
-  ;<  vw=view:nexus  bind:m
-    (peek:io (cord-to-road:tarball (cat 3 '../' name)) ~)
+  ;<  vw=view:nexus  bind:m  (peek:io (grub-road pre name) ~)
   ?.  ?=([%file *] vw)  (pure:m [%o ~])
   (pure:m (fall (mole |.(!<(json (need-vase:tarball sang.vw)))) [%o ~]))
 ++  write-json-grub
-  |=  [name=@t jon=json]
+  |=  [pre=@t name=@t jon=json]
   =/  m  (fiber:fiber:nexus ,~)
   ^-  form:m
-  (over:io (cord-to-road:tarball (cat 3 '../' name)) [[/ %json] jon])
-++  google-config  (read-json-grub 'google.json')
-++  google-auth    (read-json-grub 'google-auth.json')
-++  google-sync    (read-json-grub 'google-sync.json')
+  (over:io (grub-road pre name) [[/ %json] jon])
+++  google-config  |=(pre=@t (read-json-grub pre 'google.json'))
+++  google-auth    |=(pre=@t (read-json-grub pre 'google-auth.json'))
+++  google-sync    |=(pre=@t (read-json-grub pre 'google-sync.json'))
 ::  +fetch-full: an HTTP request with its status. A dropped connection
 ::  is status 0 rather than a crash.
 ++  fetch-full
@@ -1480,10 +1538,11 @@
 ::  +google-token: a valid access token, refreshed when near expiry.
 ::  ~ when the account is not connected or the refresh fails.
 ++  google-token
+  |=  pre=@t
   =/  m  (fiber:fiber:nexus ,(unit @t))
   ^-  form:m
-  ;<  cfg=json  bind:m  google-config
-  ;<  auth=json  bind:m  google-auth
+  ;<  cfg=json  bind:m  (google-config pre)
+  ;<  auth=json  bind:m  (google-auth pre)
   =/  refresh=@t  (gs auth 'refresh_token')
   ?:  =('' refresh)  (pure:m ~)
   ;<  now=@da  bind:m  get-time:io
@@ -1509,7 +1568,7 @@
     (pure:m ~)
   =/  ttl=@ud  (fall (gn tok 'expires_in') 3.600)
   ;<  ~  bind:m
-    %+  write-json-grub  'google-auth.json'
+    %^  write-json-grub  pre  'google-auth.json'
     ?.  ?=(%o -.auth)  auth
     :-  %o
     %-  ~(gas by p.auth)
@@ -1520,11 +1579,11 @@
 ::  +google-api: a call against api_base with the bearer token. status
 ::  401 when not connected.
 ++  google-api
-  |=  [method=method:http path=tape body=(unit json)]
+  |=  [pre=@t method=method:http path=tape body=(unit json)]
   =/  m  (fiber:fiber:nexus ,[status=@ud =json])
   ^-  form:m
-  ;<  cfg=json  bind:m  google-config
-  ;<  tok=(unit @t)  bind:m  google-token
+  ;<  cfg=json  bind:m  (google-config pre)
+  ;<  tok=(unit @t)  bind:m  (google-token pre)
   ?~  tok  (pure:m [401 [%o ~]])
   =/  headers=(list [@t @t])
     :-  ['authorization' (cat 3 'Bearer ' u.tok)]
@@ -1561,7 +1620,7 @@
     (pure:m ~)
   ::  config: the user's client, and the endpoints (the gate swaps them)
   ?:  &(post ?=([%config ~] rest))
-    ;<  cfg=json  bind:m  google-config
+    ;<  cfg=json  bind:m  (google-config '../')
     =/  cur=(map @t json)  ?:(?=(%o -.cfg) p.cfg ~)
     =/  new=(map @t json)
       %+  roll  `(list @t)`~['client_id' 'client_secret' 'auth_url' 'token_url' 'api_base']
@@ -1570,11 +1629,11 @@
       ?:(=('' v) acc (~(put by acc) k s+v))
     =/  tick=(unit @ud)  (gn jon 'tick_min')
     =?  new  ?=(^ tick)  (~(put by new) 'tick_min' (numb:enjs:format (max 1 u.tick)))
-    ;<  ~  bind:m  (write-json-grub 'google.json' [%o new])
+    ;<  ~  bind:m  (write-json-grub '../' 'google.json' [%o new])
     (send-json eyre-id (pairs:enjs:format ~[['ok' b+&]]))
   ::  connect: off to the consent screen
   ?:  ?=([%connect ~] rest)
-    ;<  cfg=json  bind:m  google-config
+    ;<  cfg=json  bind:m  (google-config '../')
     =/  cid=@t  (gs cfg 'client_id')
     ?:  =('' cid)  (send-err 400 'calendar: set the OAuth client first')
     =/  q=(list [tape tape])
@@ -1593,7 +1652,7 @@
     =/  code=@t  (fall (get-key:kv:html-utils 'code' args) '')
     ?:  =('' code)
       (send-err 400 (crip "calendar: google answered without a code: {(trip (fall (get-key:kv:html-utils 'error' args) ''))}"))
-    ;<  cfg=json  bind:m  google-config
+    ;<  cfg=json  bind:m  (google-config '../')
     ;<  [status=@ud body=@t]  bind:m
       %-  fetch-full
       :^  %'POST'  (gs cfg 'token_url')
@@ -1613,7 +1672,7 @@
       (send-err 502 (crip "calendar: token exchange failed ({(a-co:co status)}): {(trip (gs tok 'error_description'))}"))
     ;<  now=@da  bind:m  get-time:io
     ;<  ~  bind:m
-      %+  write-json-grub  'google-auth.json'
+      %^  write-json-grub  '../'  'google-auth.json'
       %-  pairs:enjs:format
       :~  ['refresh_token' s+refresh]
           ['access_token' s+access]
@@ -1621,14 +1680,14 @@
       ==
     (redirect-to "/apps/calendar?google=connected")
   ?:  &(post ?=([%disconnect ~] rest))
-    ;<  ~  bind:m  (write-json-grub 'google-auth.json' [%o ~])
+    ;<  ~  bind:m  (write-json-grub '../' 'google-auth.json' [%o ~])
     (send-json eyre-id (pairs:enjs:format ~[['ok' b+&]]))
   ::  calendars.json: the account's calendars, with which are linked
   ?:  ?=([%'calendars.json' ~] rest)
     ;<  [status=@ud res=json]  bind:m
-      (google-api %'GET' "/calendar/v3/users/me/calendarList" ~)
+      (google-api '../' %'GET' "/calendar/v3/users/me/calendarList" ~)
     ?.  =(200 status)  (send-err status (crip "calendar: google answered {(a-co:co status)}"))
-    ;<  sync=json  bind:m  google-sync
+    ;<  sync=json  bind:m  (google-sync '../')
     =/  linked=(map @t @t)
       %-  ~(gas by *(map @t @t))
       %+  turn  ?:(?=(%o -.sync) ~(tap by p.sync) ~)
@@ -1662,8 +1721,8 @@
     =/  color=@t  (gs jon 'color')
     =/  k=cal:cal  fresh-cal:cal
     =.  props.k  [?:(=('' nm) gid nm) ?:(=('' color) '#1e3a5f' color) %google `gid]
-    ;<  ~  bind:m  (dav-write c(cals (~(put by cals.c) id k)))
-    ;<  sync=json  bind:m  google-sync
+    ;<  ~  bind:m  (dav-write '../' c(cals (~(put by cals.c) id k)))
+    ;<  sync=json  bind:m  (google-sync '../')
     =/  row=json
       %-  pairs:enjs:format
       :~  ['google_id' s+gid]
@@ -1673,8 +1732,8 @@
           ['ids' [%o ~]]
       ==
     ;<  ~  bind:m
-      (write-json-grub 'google-sync.json' [%o (~(put by ?:(?=(%o -.sync) p.sync ~)) id row)])
-    ;<  ~  bind:m  google-prod
+      (write-json-grub '../' 'google-sync.json' [%o (~(put by ?:(?=(%o -.sync) p.sync ~)) id row)])
+    ;<  ~  bind:m  (google-prod '../')
     (send-json eyre-id (pairs:enjs:format ~[['id' s+id]]))
   ?:  &(post ?=([%unlink ~] rest))
     =/  id=@ta  (crip (trip (gs jon 'id')))
@@ -1682,20 +1741,141 @@
       (peek:io (cord-to-road:tarball '../calendar.calendar') ~)
     =/  c=calendar:cal  (cal-of cal-view)
     ?.  (~(has by cals.c) id)  (send-err 404 'calendar: not linked')
-    ;<  ~  bind:m  (dav-write c(cals (~(del by cals.c) id)))
-    ;<  sync=json  bind:m  google-sync
+    ;<  ~  bind:m  (dav-write '../' c(cals (~(del by cals.c) id)))
+    ;<  sync=json  bind:m  (google-sync '../')
     ;<  ~  bind:m
-      (write-json-grub 'google-sync.json' [%o (~(del by ?:(?=(%o -.sync) p.sync ~)) id)])
+      (write-json-grub '../' 'google-sync.json' [%o (~(del by ?:(?=(%o -.sync) p.sync ~)) id)])
     (send-json eyre-id (pairs:enjs:format ~[['ok' b+&]]))
   ?:  &(post ?=([%sync ~] rest))
-    ;<  ~  bind:m  google-prod
+    ;<  ~  bind:m  (google-prod '../')
     (send-json eyre-id (pairs:enjs:format ~[['ok' b+&]]))
   (send-err 404 'calendar: no such google route')
-::  +google-prod: wake the sync fiber now
-++  google-prod
+::  +take-any: the next news on a wire, or any poke (a timer wake is one)
+++  take-any
+  |=  =wire
+  =/  m  (fiber:fiber:nexus ,?(%news %poke))
+  ^-  form:m
+  |=  input:fiber:nexus
+  :+  ~  q.state
+  ?+  in  [%skip ~]
+      ~  [%wait ~]
+      [~ %news * *]
+    ?.(=(wire wire.u.in) [%skip ~] [%done %news])
+      [~ %poke * *]
+    [%done %poke]
+  ==
+::  +google-pass: pull each linked calendar (when asked), then push
+++  google-pass
+  |=  pull=?
   =/  m  (fiber:fiber:nexus ,~)
   ^-  form:m
-  (poke-soft-unit (cord-to-road:tarball '../google.sig'))
+  =/  pre=@t  './'
+  ;<  sync=json  bind:m  (google-sync pre)
+  =/  rows=(list [id=@t row=json])  ?:(?=(%o -.sync) ~(tap by p.sync) ~)
+  ;<  tok=(unit @t)  bind:m  (google-token pre)
+  ?~  tok  (pure:m ~)
+  =/  out=(map @t json)  ?:(?=(%o -.sync) p.sync ~)
+  |-
+  ?~  rows
+    (write-json-grub pre 'google-sync.json' [%o out])
+  ;<  row=json  bind:m
+    ?.  pull  (pure:(fiber:fiber:nexus ,json) row.i.rows)
+    (google-pull pre (crip (trip id.i.rows)) row.i.rows)
+  ;<  row=json  bind:m  (google-push pre (crip (trip id.i.rows)) row)
+  $(rows t.rows, out (~(put by out) id.i.rows row))
+::  +google-pull: one calendar, all pages, applied; the row comes back
+::  with the new token, time, id map and watermark
+++  google-pull
+  |=  [pre=@t id=@ta row=json]
+  =/  m  (fiber:fiber:nexus ,json)
+  ^-  form:m
+  =/  gid=@t  (gs row 'google_id')
+  =/  tok=@t  (gs row 'sync_token')
+  =/  full=?  =('' tok)
+  =/  base=tape  "/calendar/v3/calendars/{(enc-seg:dav (trip gid))}/events?maxResults=250"
+  =/  ids=(map @t json)  =/(i (obj:gcal row 'ids') ?:(?=(%o -.i) p.i ~))
+  =/  page=@t  ''
+  =/  seen=(set uid:cal)  ~
+  =/  retried=?  |
+  |-
+  =/  q=tape
+    ;:  weld
+      base
+      ?:(full "&showDeleted=true&singleEvents=false" "&syncToken={(enc-seg:dav (trip tok))}")
+      ?:(=('' page) "" "&pageToken={(enc-seg:dav (trip page))}")
+    ==
+  ;<  [status=@ud res=json]  bind:m  (google-api pre %'GET' q ~)
+  ?:  &(=(410 status) !retried)
+    ~&  >  [%calendar-google-resync id]
+    $(full &, tok '', page '', retried &)
+  ?.  =(200 status)
+    ~&  >>>  [%calendar-google-pull-failed id status]
+    (pure:m row)
+  ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road pre 'calendar.calendar') ~)
+  =/  c=calendar:cal  (cal-of cal-view)
+  =/  k=cal:cal  (fall (~(get by cals.c) id) fresh-cal:cal)
+  =/  items=(list gitem:gcal)  (murn (arr:gcal res 'items') item-of:gcal)
+  ::  parents first, so an instance finds its parent
+  =/  parents=(list gitem:gcal)  (skip items |=(g=gitem:gcal ?=(^ rid.g)))
+  =/  insts=(list gitem:gcal)  (skim items |=(g=gitem:gcal ?=(^ rid.g)))
+  =/  res2=[k=cal:cal ids=(map @t json) seen=(set uid:cal)]
+    %+  roll  (weld parents insts)
+    |=  [g=gitem:gcal acc=[k=cal:cal ids=(map @t json) seen=(set uid:cal)]]
+    =/  u=uid:cal  uid.ve.g
+    =/  extra=(list [@t @t])  ~[['X-GOOGLE-ID' gid.g] ['X-GOOGLE-UPDATED' updated.g]]
+    ?^  rid.g
+      =.  seen.acc  (~(put in seen.acc) u)
+      ?:  cancelled.g
+        acc(k (skip-instance k.acc u (rid-moment ve.g)))
+      acc(k (put-override k.acc u ve.g zone.c extra))
+    ?:  cancelled.g
+      =.  k.acc  (del-entry:cal k.acc u)
+      =.  k.acc
+        %+  roll  (dav-children k.acc u)
+        |=([ch=entry:cal a=_k.acc] (del-entry:cal a uid.ch))
+      acc(ids (~(del by ids.acc) u))
+    =/  put=(unit [k=cal:cal =uid:cal])  (put-parent k.acc ve.g zone.c u extra)
+    ?~  put  acc
+    acc(k k.u.put, ids (~(put by ids.acc) u s+gid.g), seen (~(put in seen.acc) u))
+  =.  k  k.res2
+  =.  ids  ids.res2
+  =.  seen  (~(uni in seen) seen.res2)
+  =/  next-page=@t  (gs res 'nextPageToken')
+  =/  next-tok=@t  (gs res 'nextSyncToken')
+  ::  a full listing is the whole truth: what it did not name is gone
+  =?  k  &(full =('' next-page))
+    %+  roll  ~(tap by entries.k)
+    |=  [[u=uid:cal e=entry:cal] acc=_k]
+    ?:  (dav-is-child e)  acc
+    ?:  (~(has in seen) u)  acc
+    ?:  (lien props.e |=([key=@t *] =('X-GOOGLE-ID' key)))
+      (del-entry:cal acc u)
+    acc
+  ;<  ~  bind:m  (dav-write pre c(cals (~(put by cals.c) id k)))
+  ;<  now=@da  bind:m  get-time:io
+  =/  row2=json
+    ?.  ?=(%o -.row)  row
+    :-  %o
+    %-  ~(gas by p.row)
+    :~  ['sync_token' s+?:(=('' next-tok) tok next-tok)]
+        ['last_ms' (numb:enjs:format (da-to-ms now))]
+        ['ids' [%o ids]]
+        ['pushed_seq' (numb:enjs:format seq.k)]
+    ==
+  ?.  =('' next-page)  $(page next-page, row row2)
+  (pure:m row2)
+::  +google-push: (task 3) the calendar's log past the watermark, out
+++  google-push
+  |=  [pre=@t id=@ta row=json]
+  =/  m  (fiber:fiber:nexus ,json)
+  ^-  form:m
+  (pure:m row)
+::  +google-prod: wake the sync fiber now
+++  google-prod
+  |=  pre=@t
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  (poke-soft-unit (grub-road pre 'google.sig'))
 ++  poke-soft-unit
   |=  =road:tarball
   =/  m  (fiber:fiber:nexus ,~)
