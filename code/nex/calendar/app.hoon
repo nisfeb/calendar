@@ -62,6 +62,8 @@
           [%over %& [/ %'calendar.css'] [[/ %mime] cal-css]]
           [%over %& [/ %'calendar.js'] [[/ %mime] cal-js]]
           [%fall %& [/ %'carried.json'] [[/ %json] b+|]]
+          ::  dav-clients.json: the CalDAV client passwords, hashed
+          [%fall %& [/ %'dav-clients.json'] [[/ %json] [%a ~]]]
           [%fall %| /requests empty-dir:loader]
       ==
     ::
@@ -335,11 +337,76 @@
         ;<  [src=@p req=inbound-request:eyre]  bind:m
           (get-state-as:io ,[src=@p inbound-request:eyre])
         ;<  our=@p  bind:m  get-our:io
+        =/  [site=path args=quay:eyre]  (parse-url:http-utils url.request.req)
+        =/  suffix=path  (slag (lent `path`/apps/calendar) site)
+        ::  /dav/...: CalDAV. Its own door: a minted client password over
+        ::  HTTP Basic, or the owner's cookie. Never the src==our gate.
+        ?:  ?=([%dav *] suffix)
+          (dav-request eyre-id req our t.suffix args)
         ?.  =(src our)
           ;<  ~  bind:m  (send-simple:srv eyre-id [[403 ~] `(as-octs:mimes:html 'Forbidden')])
           (pure:m ~)
-        =/  [site=path args=quay:eyre]  (parse-url:http-utils url.request.req)
-        =/  suffix=path  (slag (lent `path`/apps/calendar) site)
+        ::  /dav-clients.json, /dav-clients, /dav-clients/revoke: the owner
+        ::  mints and revokes CalDAV client passwords. The password is
+        ::  answered once and stored only as a salted hash.
+        ?:  ?=([%'dav-clients.json' ~] suffix)
+          ;<  clients=json  bind:m  dav-clients
+          =/  rows=json
+            :-  %a
+            %+  turn  ?:(?=(%a -.clients) p.clients ~)
+            |=  c=json
+            ^-  json
+            :-  %o
+            %-  ~(gas by *(map @t json))
+            :~  ['id' s+(gs c 'id')]
+                ['name' s+(gs c 'name')]
+                ['made_ms' (numb:enjs:format (fall (gn c 'made_ms') 0))]
+            ==
+          (send-json eyre-id rows)
+        ?:  &(=('POST' method.request.req) ?=([%'dav-clients' ~] suffix))
+          =/  jon=json
+            (fall (de:json:html ?~(body.request.req '' q.u.body.request.req)) *json)
+          =/  name=@t  (gs jon 'name')
+          ?:  =('' name)
+            ;<  ~  bind:m  (send-simple:srv eyre-id [[400 ~] `(as-octs:mimes:html 'need a name')])
+            (pure:m ~)
+          ;<  clients=json  bind:m  dav-clients
+          ;<  eny=@uvJ  bind:m  get-entropy:io
+          ;<  now=@da  bind:m  get-time:io
+          =/  id=@t  (scot %uv (end [3 5] eny))
+          =/  salt=@t  (scot %uv (end [3 10] (rsh [3 5] eny)))
+          =/  password=@t  (crip (dav-password (rsh [3 15] eny)))
+          =/  row=json
+            :-  %o
+            %-  ~(gas by *(map @t json))
+            :~  ['id' s+id]
+                ['name' s+name]
+                ['salt' s+salt]
+                ['hash' s+(dav-hash salt password)]
+                ['made_ms' (numb:enjs:format (da-to-ms now))]
+            ==
+          =/  new=json  [%a (snoc ?:(?=(%a -.clients) p.clients ~) row)]
+          ;<  ~  bind:m
+            (over:io (cord-to-road:tarball '../dav-clients.json') [[/ %json] new])
+          %+  send-json  eyre-id
+          %-  pairs:enjs:format
+          :~  ['id' s+id]
+              ['name' s+name]
+              ['password' s+password]
+              ['url' s+'/apps/calendar/dav/']
+          ==
+        ?:  &(=('POST' method.request.req) ?=([%'dav-clients' %revoke ~] suffix))
+          =/  jon=json
+            (fall (de:json:html ?~(body.request.req '' q.u.body.request.req)) *json)
+          =/  id=@t  (gs jon 'id')
+          ;<  clients=json  bind:m  dav-clients
+          =/  new=json
+            :-  %a
+            %+  skip  ?:(?=(%a -.clients) p.clients ~)
+            |=(c=json =(id (gs c 'id')))
+          ;<  ~  bind:m
+            (over:io (cord-to-road:tarball '../dav-clients.json') [[/ %json] new])
+          (send-json eyre-id (pairs:enjs:format ~[['ok' b+&]]))
         ?:  ?=([%'window.json' ~] suffix)
           =/  from=(unit @da)  (ms-arg args 'from')
           =/  to=(unit @da)    (ms-arg args 'to')
@@ -560,6 +627,7 @@
             :~  ['title' s+title.c]
                 ['zone' ?~(zone.c ~ s+u.zone.c)]
                 ['ball' s+(crip ball)]
+                ['ship' s+(scot %p our)]
             ==
           (send-json eyre-id json)
         ::  static files; the shell is the default
@@ -688,6 +756,91 @@
   ?:  (~(has in want) u.m)
     $(idx +(idx), dead 0, got (~(put in got) idx), want (~(del in want) u.m))
   $(idx +(idx), dead 0)
+::  ---- CalDAV ----
+::  +dav-clients: the minted client passwords, hashed
+++  dav-clients
+  =/  m  (fiber:fiber:nexus ,json)
+  ^-  form:m
+  ;<  vw=view:nexus  bind:m
+    (peek:io (cord-to-road:tarball '../dav-clients.json') ~)
+  ?.  ?=([%file *] vw)  (pure:m [%a ~])
+  (pure:m (fall (mole |.(!<(json (need-vase:tarball sang.vw)))) [%a ~]))
+::  +dav-password: up to 24 base-32 characters from entropy
+++  dav-password
+  |=  eny=@
+  ^-  tape
+  =/  raw=tape  (trip (scot %uv (end [3 15] eny)))
+  =/  body=tape  (slag 2 raw)
+  ::  ponytail: leading zero digits are dropped by scot, so this is
+  ::  20-24 characters, not always 24
+  (skip body |=(c=@t =('.' c)))
+::  +dav-hash: a salted sha-256, as text
+++  dav-hash
+  |=  [salt=@t password=@t]
+  ^-  @t
+  (scot %ux (shax (rap 3 ~[salt ':' password])))
+::  +dav-verb: the DAV verb. The runtime only passes GET/PUT/POST/HEAD/
+::  DELETE/OPTIONS/CONNECT/TRACE, so a proxy sends the others as POST
+::  with X-HTTP-Method-Override.
+++  dav-verb
+  |=  req=inbound-request:eyre
+  ^-  @t
+  =/  m=@t  method.request.req
+  ?.  =('POST' m)  m
+  =/  ov=(unit @t)  (get-header:http 'x-http-method-override' header-list.request.req)
+  ?~  ov  m
+  (crip (cuss (trip u.ov)))
+::  +dav-authed: the owner's cookie, or Basic with a minted password
+++  dav-authed
+  |=  [req=inbound-request:eyre clients=json]
+  ^-  ?
+  ?:  authenticated.req  &
+  =/  au=(unit @t)  (get-header:http 'authorization' header-list.request.req)
+  ?~  au  |
+  =/  t=tape  (trip u.au)
+  ?.  (gte (lent t) 6)  |
+  ?.  =("basic " (cass (scag 6 t)))  |
+  =/  dec=(unit octs)  (de:base64:mimes:html (crip (slag 6 t)))
+  ?~  dec  |
+  =/  pair=tape  (trip q.u.dec)
+  =/  at=(unit @ud)  (find ":" pair)
+  ?~  at  |
+  =/  password=@t  (crip (slag +(u.at) pair))
+  ?:  =('' password)  |
+  %+  lien  ?:(?=(%a -.clients) p.clients ~)
+  |=  c=json
+  =((gs c 'hash') (dav-hash (gs c 'salt') password))
+::  +dav-request: the CalDAV handler. rest = the path after /dav.
+++  dav-request
+  |=  [eyre-id=@ta req=inbound-request:eyre our=@p rest=path args=quay:eyre]
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  =/  verb=@t  (dav-verb req)
+  ;<  clients=json  bind:m  dav-clients
+  ?.  (dav-authed req clients)
+    ;<  ~  bind:m
+      %+  send-simple:srv  eyre-id
+      :_  `(as-octs:mimes:html 'calendar: a client password is required')
+      [401 ['www-authenticate' 'Basic realm="calendar"'] ~]
+    (pure:m ~)
+  ?:  =('OPTIONS' verb)
+    ;<  ~  bind:m
+      %+  send-simple:srv  eyre-id
+      :_  ~
+      :~  200
+          ['dav' '1, 3, calendar-access']
+          ['allow' 'OPTIONS, GET, PUT, DELETE, PROPFIND, PROPPATCH, REPORT, MKCALENDAR']
+      ==
+    (pure:m ~)
+  ?:  =('POST' verb)
+    ;<  ~  bind:m
+      (send-simple:srv eyre-id [[405 ['allow' 'OPTIONS, GET, PUT, DELETE, PROPFIND, PROPPATCH, REPORT, MKCALENDAR'] ~] `(as-octs:mimes:html 'calendar: POST needs X-HTTP-Method-Override')])
+    (pure:m ~)
+  ?.  ?=(?(%'PROPFIND' %'PROPPATCH' %'REPORT' %'MKCALENDAR' %'GET' %'PUT' %'DELETE' %'HEAD') verb)
+    ;<  ~  bind:m  (send-simple:srv eyre-id [[405 ~] `(as-octs:mimes:html 'calendar: unknown DAV verb')])
+    (pure:m ~)
+  ;<  ~  bind:m  (send-simple:srv eyre-id [[501 ~] `(as-octs:mimes:html 'calendar: not yet')])
+  (pure:m ~)
 ++  get-meta
   |=  e=event:cal
   ^-  meta:cal

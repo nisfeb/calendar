@@ -775,6 +775,76 @@ document.getElementById('feed-add').onclick = function() {
   });
 };
 
+// CalDAV clients: list, mint (the password shows once), revoke
+var davBack = document.getElementById('dav-back');
+document.getElementById('dav-btn').onclick = function() {
+  document.getElementById('dav-url').textContent = location.origin + CAL + '/dav/';
+  document.getElementById('dav-new').classList.add('hidden');
+  loadDav();
+  davBack.classList.add('open');
+};
+document.getElementById('dav-close').onclick = function() { davBack.classList.remove('open'); };
+davBack.onclick = function(e) { if (e.target === davBack) davBack.classList.remove('open'); };
+
+function loadDav() {
+  fetch(CAL + '/dav-clients.json')
+    .then(function(r) { return r.json(); })
+    .then(function(cs) {
+      var list = document.getElementById('dav-list');
+      list.innerHTML = '';
+      if (!cs.length) {
+        list.innerHTML = '<div class="feed-row" style="border:none;color:#666">No clients yet.</div>';
+        return;
+      }
+      cs.forEach(function(c) {
+        var row = document.createElement('div');
+        row.className = 'feed-row';
+        var nm = document.createElement('span');
+        nm.className = 'fn';
+        nm.textContent = c.name;
+        var u = document.createElement('span');
+        u.className = 'fu';
+        u.textContent = 'since ' + new Date(c.made_ms).toLocaleDateString();
+        var x = document.createElement('button');
+        x.className = 'fx';
+        x.textContent = '✕';
+        x.title = 'Revoke';
+        x.onclick = function() {
+          fetch(CAL + '/dav-clients/revoke', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: c.id }) })
+            .then(function() { loadDav(); });
+        };
+        row.appendChild(nm); row.appendChild(u); row.appendChild(x);
+        list.appendChild(row);
+      });
+    })
+    .catch(function() {});
+}
+
+document.getElementById('dav-add').onclick = function() {
+  var st = document.getElementById('dav-status');
+  var n = document.getElementById('dav-name').value.trim();
+  if (!n) { st.textContent = 'name required'; return; }
+  st.textContent = '';
+  fetch(CAL + '/dav-clients', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: n }) })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      var box = document.getElementById('dav-new');
+      box.innerHTML = '';
+      var t = document.createElement('div');
+      t.textContent = 'Password for ' + d.name + ' (shown once):';
+      var pw = document.createElement('div');
+      pw.className = 'pw';
+      pw.textContent = d.password;
+      var url = document.createElement('div');
+      url.textContent = 'URL: ' + location.origin + d.url + '   Username: ' + (CFG.ship || 'your ship name');
+      box.appendChild(t); box.appendChild(pw); box.appendChild(url);
+      box.classList.remove('hidden');
+      document.getElementById('dav-name').value = '';
+      loadDav();
+    })
+    .catch(function() { st.textContent = 'mint failed'; });
+};
+
 // sync: materialize external ICS feeds into this calendar
 var syncBtn = document.getElementById('sync-btn');
 syncBtn.onclick = function() {
@@ -1045,6 +1115,7 @@ fetch(CAL + '/config.json')
   .then(function(cfg) {
     CFG.zone = cfg.zone || '';
     CFG.ball = cfg.ball || '';
+    CFG.ship = cfg.ship || '';
     CFG.title = cfg.title || 'Calendar';
     loadZones();
     loadCals();

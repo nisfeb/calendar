@@ -28,6 +28,17 @@ body { font-family: -apple-system, system-ui, sans-serif; background: #111; colo
 .cap-chip { background: transparent; border: 1px dashed #555; color: #999; }
 .cap-chip:hover { filter: none; border-color: #888; color: #ccc; }
 /* feeds modal */
+#dav-back { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 100; }
+#dav-back.open { display: flex; align-items: center; justify-content: center; }
+#dav-modal { background: #1a1a1a; border: 1px solid #333; border-radius: 14px; width: 92%; max-width: 480px; padding: 20px; }
+#dav-modal input { width: 100%; padding: 7px 9px; border-radius: 6px; border: 1px solid #333; background: #111; color: #eee; font-size: 13px; outline: none; }
+#dav-modal input:focus { border-color: #2563eb; }
+#dav-modal code { color: #93c5fd; font-size: 12px; }
+.dav-hint { font-size: 12px; color: #888; margin-bottom: 10px; line-height: 1.5; }
+#dav-status { font-size: 12px; color: #f87171; }
+#dav-new { margin: 10px 0; padding: 10px; border: 1px solid #2563eb; border-radius: 8px; font-size: 12px; color: #ddd; line-height: 1.6; }
+#dav-new.hidden { display: none; }
+#dav-new .pw { font-family: monospace; font-size: 14px; color: #fff; user-select: all; }
 #feeds-back { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 100; }
 #feeds-back.open { display: flex; align-items: center; justify-content: center; }
 #feeds-modal { background: #1a1a1a; border: 1px solid #333; border-radius: 14px; width: 92%; max-width: 440px; padding: 20px; }

@@ -34,6 +34,7 @@
       <button id="feeds-btn" class="nav-btn icon-btn" title="Manage external calendar feeds">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1.5" fill="currentColor" stroke="none"/></svg>
       </button>
+      <button id="dav-btn" class="nav-btn" title="CalDAV clients: Thunderbird, DAVx5, iOS">CalDAV</button>
       <button id="clock-btn" class="nav-btn" title="Clock format"></button>
       <div id="views">
         <button id="v-month" class="nav-btn view-btn">Month</button>
@@ -191,6 +192,24 @@
         <div id="modal-foot">
           <span id="f-status"></span>
           <button id="f-save" class="nav-btn">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="dav-back">
+      <div id="dav-modal">
+        <div class="feeds-header">
+          <span>CalDAV clients</span>
+          <button id="dav-close" class="nav-btn">Close</button>
+        </div>
+        <div class="dav-hint">Each client (Thunderbird, DAVx5, iOS) gets its own password. The URL is <code id="dav-url"></code>; the username is your ship name.</div>
+        <div id="dav-list"></div>
+        <div id="dav-new" class="hidden"></div>
+        <label class="f">New client</label>
+        <input id="dav-name" placeholder="Thunderbird on the laptop">
+        <div class="feeds-foot">
+          <span id="dav-status"></span>
+          <button id="dav-add" class="nav-btn">Mint a password</button>
         </div>
       </div>
     </div>
