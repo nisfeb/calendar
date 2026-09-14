@@ -47,20 +47,19 @@
     |=  p=@t
     =/  kv=(list @t)  (split '=' p)
     ?.  ?=([@ @ ~] kv)  ~
-    `[(cuss (trip i.kv)) i.t.kv]
+    `[(crip (cuss (trip i.kv))) i.t.kv]
   ?:  (lien parts |=([k=@t *] !(~(has in supported) k)))  ~
-  =/  get  |=(k=@t ^-((unit @t) (bind (find-part parts k) tail)))
+  =/  get  |=(k=@t ^-((unit @t) (bind (find-part parts k) |=([* v=@t] v))))
   =/  fq=(unit @t)  (get 'FREQ')
   ?~  fq  ~
-  =/  =freq
-    ?+  u.fq  !!
-      %'DAILY'    %daily
-      %'WEEKLY'   %weekly
-      %'MONTHLY'  %monthly
-      %'YEARLY'   %yearly
-    ==
-  =/  bad=?  !?=(?(%'DAILY' %'WEEKLY' %'MONTHLY' %'YEARLY') u.fq)
-  ?:  bad  ~
+  =/  fr=(unit freq)
+    ?:  =('DAILY' u.fq)    `%daily
+    ?:  =('WEEKLY' u.fq)   `%weekly
+    ?:  =('MONTHLY' u.fq)  `%monthly
+    ?:  =('YEARLY' u.fq)   `%yearly
+    ~
+  ?~  fr  ~
+  =/  =freq  u.fr
   =/  interval=@ud  (max 1 (fall (bind (get 'INTERVAL') |=(v=@t (fall (rush v dem) 1))) 1))
   =/  count=(unit @ud)  (bind (get 'COUNT') |=(v=@t (fall (rush v dem) 0)))
   =/  until=(unit @da)  (bind (get 'UNTIL') parse-until)
@@ -73,7 +72,7 @@
   =/  bymonth=(list @ud)
     %+  murn  (fall (bind (get 'BYMONTH') |=(v=@t (split ',' v))) ~)
     |=(v=@t (rush v dem))
-  =/  wkst=wkd:rules  (fall (bind (get 'WKST') parse-wkd) %mon)
+  =/  wkst=wkd:rules  (fall (biff (get 'WKST') parse-wkd) %mon)
   `[freq interval count until byday bymonthday bymonth wkst]
 ++  find-part
   |=  [parts=(list [k=@t v=@t]) k=@t]
@@ -94,7 +93,7 @@
 ++  parse-wkd
   |=  v=@t
   ^-  (unit wkd:rules)
-  ?+  (cuss (trip v))  ~
+  ?+  (crip (cuss (trip v)))  ~
     %'MO'  `%mon
     %'TU'  `%tue
     %'WE'  `%wed
@@ -264,6 +263,24 @@
   ?:  (gte (mod g n) (lent cand))  ~
   (snag (mod g n) cand)
 ::  +to-text: a rule back to RRULE text, for the ICS writer
+++  wkd-text
+  |=  w=wkd:rules
+  ^-  tape
+  ?-(w %mon "MO", %tue "TU", %wed "WE", %thu "TH", %fri "FR", %sat "SA", %sun "SU")
+++  sd-text
+  |=  d=@sd
+  ^-  tape
+  ?:((syn:si d) (a-co:co (abs:si d)) ['-' (a-co:co (abs:si d))])
+++  byday-text
+  |=  b=byday
+  ^-  tape
+  (weld ?~(ord.b "" (sd-text u.ord.b)) (wkd-text day.b))
+++  sep-join
+  |=  [sep=tape ls=(list tape)]
+  ^-  tape
+  ?~  ls  ~
+  ?~  t.ls  i.ls
+  (weld i.ls (weld sep $(ls t.ls)))
 ++  to-text
   |=  r=rule
   ^-  @t
@@ -274,31 +291,18 @@
       %monthly  "MONTHLY"
       %yearly   "YEARLY"
     ==
-  =/  wkd-text
-    |=  w=wkd:rules
-    ^-  tape
-    ?-(w %mon "MO", %tue "TU", %wed "WE", %thu "TH", %fri "FR", %sat "SA", %sun "SU")
-  =/  sd-text  |=(d=@sd ^-(tape ?:((syn:si d) (a-co:co (abs:si d)) ['-' (a-co:co (abs:si d))])))
-  =/  parts=(list tape)
-    ;:  weld
-      ~["FREQ={fq}"]
-      ?:(=(1 interval.r) ~ ~["INTERVAL={(a-co:co interval.r)}"])
-      ?~(count.r ~ ~["COUNT={(a-co:co u.count.r)}"])
-      ?~(until.r ~ ~["UNTIL={(until-text u.until.r)}"])
-      ?~  byday.r  ~
-      :_  ~
-      %+  weld  "BYDAY="
-      %-  zing
-      %+  join  ","
-      %+  turn  byday.r
-      |=(b=byday (weld ?~(ord.b "" (sd-text u.ord.b)) (wkd-text day.b)))
-      ?~  bymonthday.r  ~
-      ~[(weld "BYMONTHDAY=" (zing (join "," (turn bymonthday.r sd-text))))]
-      ?~  bymonth.r  ~
-      ~[(weld "BYMONTH=" (zing (join "," (turn bymonth.r |=(m=@ud (a-co:co m))))))]
-      ?:(=(%mon wkst.r) ~ ~["WKST={(wkd-text wkst.r)}"])
-    ==
-  (crip (zing (join ";" parts)))
+  =/  parts=(list tape)  ~[(weld "FREQ=" fq)]
+  =?  parts  !=(1 interval.r)  (snoc parts (weld "INTERVAL=" (a-co:co interval.r)))
+  =?  parts  ?=(^ count.r)  (snoc parts (weld "COUNT=" (a-co:co u.count.r)))
+  =?  parts  ?=(^ until.r)  (snoc parts (weld "UNTIL=" (until-text u.until.r)))
+  =/  bd=(list tape)  (turn byday.r byday-text)
+  =?  parts  !=(~ bd)  (snoc parts (weld "BYDAY=" (sep-join "," bd)))
+  =/  bmd=(list tape)  (turn bymonthday.r sd-text)
+  =?  parts  !=(~ bmd)  (snoc parts (weld "BYMONTHDAY=" (sep-join "," bmd)))
+  =/  bm=(list tape)  (turn bymonth.r |=(m=@ud (a-co:co m)))
+  =?  parts  !=(~ bm)  (snoc parts (weld "BYMONTH=" (sep-join "," bm)))
+  =?  parts  !=(%mon wkst.r)  (snoc parts (weld "WKST=" (wkd-text wkst.r)))
+  (crip (sep-join ";" parts))
 ++  until-text
   |=  d=@da
   ^-  tape

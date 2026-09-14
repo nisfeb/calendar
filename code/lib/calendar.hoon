@@ -78,7 +78,7 @@
 +$  alarm  [trigger=$%([%rel before=@dr] [%abs at=@da]) desc=@t]
 +$  props  (list [k=@t v=@t])
 +$  entry  [=event =uid =etag seq=@ud alarms=(list alarm) =props]
-+$  cal-props  [name=@t color=@t kind=?(%local %google) remote=(unit @t)]
++$  cal-props  [name=@t color=@t kind=$~(%local ?(%local %google)) remote=(unit @t)]
 +$  logent  [=uid kind=?(%put %del)]
 ::  a calendar: its entries, and an append-only log of every put and
 ::  delete by seq, so a sync client asking "what changed since N" hears

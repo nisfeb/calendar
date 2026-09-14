@@ -9,6 +9,7 @@
 /<  rules  /lib/rules.hoon
 /<  pytz   /lib/pytz.hoon
 /<  ics    /lib/ics.hoon
+/<  rr     /lib/rrule.hoon
 ::  the rule kinds, compiled in. The ball-era calendar loaded them at run
 ::  time from /code/lib/rules/ through a granted road; a desk install has
 ::  no such road to grant, and the kinds are ours, so they are part of the
@@ -22,6 +23,7 @@
 /<  k-once         /lib/rules/once.hoon
 /<  k-weekly       /lib/rules/weekly.hoon
 /<  k-yearly       /lib/rules/yearly.hoon
+/<  k-rrule        /lib/rules/rrule.hoon
 /&  icon      icon.svg
 /&  cal-html  calendar.html
 /&  cal-css   calendar.css
@@ -110,6 +112,35 @@
             ==
           ?~  new  $
           ;<  ~  bind:m  (replace:io (put-ev c id u.new))
+          $
+        ?:  =('add-calendar' act)
+          =/  id=@ta  (crip (trip (gs jon 'id')))
+          =/  nm=@t  (gs jon 'name')
+          ?:  |(=('' id) =('' nm) (~(has by cals.c) id))  $
+          =/  color=@t  (gs jon 'color')
+          =/  k=cal:cal  fresh-cal:cal
+          =.  props.k  [nm ?:(=('' color) '#1e3a5f' color) %local ~]
+          ;<  ~  bind:m  (replace:io c(cals (~(put by cals.c) id k)))
+          $
+        ?:  =('edit-calendar' act)
+          =/  id=@ta  (crip (trip (gs jon 'id')))
+          =/  got=(unit cal:cal)  (~(get by cals.c) id)
+          ?~  got  $
+          =/  nm=@t  (gs jon 'name')
+          =/  color=@t  (gs jon 'color')
+          =.  name.props.u.got  ?:(=('' nm) name.props.u.got nm)
+          =.  color.props.u.got  ?:(=('' color) color.props.u.got color)
+          =.  kind.props.u.got
+            ?+  (gs jon 'kind')  kind.props.u.got
+              %local   %local
+              %google  %google
+            ==
+          ;<  ~  bind:m  (replace:io c(cals (~(put by cals.c) id u.got)))
+          $
+        ?:  =('del-calendar' act)
+          =/  id=@ta  (crip (trip (gs jon 'id')))
+          ?:  |(=('' id) =(%default id))  $
+          ;<  ~  bind:m  (replace:io c(cals (~(del by cals.c) id)))
           $
         ?:  =('config' act)
           =/  ti=@t  (gs jon 'title')
@@ -420,6 +451,79 @@
             ?:(?=(%o -.j) j [%o ~])
           (send-json eyre-id feeds)
         ::  /zones.json: every pytz zone name, for dropdowns
+        ::  /calendars.json: every calendar — id, props, seq, entry count
+        ?:  ?=([%'calendars.json' ~] suffix)
+          ;<  cal-view=view:nexus  bind:m
+            (peek:io (cord-to-road:tarball '../calendar.calendar') ~)
+          =/  c=calendar:cal  (cal-of cal-view)
+          =/  rows=json
+            :-  %a
+            %+  turn  (sort ~(tap by cals.c) |=([a=[@ta *] b=[@ta *]] (aor -.a -.b)))
+            |=  [id=@ta k=cal:cal]
+            :-  %o
+            %-  ~(gas by *(map @t json))
+            :~  ['id' s+id]
+                ['name' s+name.props.k]
+                ['color' s+color.props.k]
+                ['kind' s+kind.props.k]
+                ['seq' (numb:enjs:format seq.k)]
+                ['count' (numb:enjs:format ~(wyt by entries.k))]
+            ==
+          (send-json eyre-id rows)
+        ::  export.ics[?cal=id]: every calendar, or one, as iCalendar.
+        ?:  ?=([%'export.ics' ~] suffix)
+          ;<  cal-view=view:nexus  bind:m
+            (peek:io (cord-to-road:tarball '../calendar.calendar') ~)
+          =/  c=calendar:cal  (cal-of cal-view)
+          =/  only=(unit @t)  (get-key:kv:html-utils 'cal' args)
+          ;<  now=@da  bind:m  get-time:io
+          =/  picked=(list [id=@ta k=cal:cal])
+            %+  skim  ~(tap by cals.c)
+            |=([id=@ta *] ?~(only & =(u.only id)))
+          =/  bodies=(list tape)
+            %-  zing
+            %+  turn  picked
+            |=  [id=@ta k=cal:cal]
+            %+  turn  ~(tap by entries.k)
+            |=  [u=uid:cal e=entry:cal]
+            (write-entry:ics e (exdates-of e) now)
+          =/  body=@t  (write-calendar:ics title.c bodies)
+          ;<  ~  bind:m
+            %+  send-simple:srv  eyre-id
+            :_  `(as-octs:mimes:html body)
+            [200 ['content-type' 'text/calendar; charset=utf-8'] ['content-disposition' 'attachment; filename="calendar.ics"'] ~]
+          (pure:m ~)
+        ::  import?cal=id: an iCalendar body; each VEVENT becomes an entry
+        ::  in that calendar (%default when unnamed), replacing one with the
+        ::  same UID. Answers {imported, skipped}.
+        ?:  ?=([%import ~] suffix)
+          ?.  =('POST' method.request.req)
+            ;<  ~  bind:m  (send-simple:srv eyre-id [[405 ~] `(as-octs:mimes:html 'POST an .ics body')])
+            (pure:m ~)
+          =/  body=@t  ?~(body.request.req '' q.u.body.request.req)
+          =/  target=@ta  (fall (get-key:kv:html-utils 'cal' args) %default)
+          ;<  cal-view=view:nexus  bind:m
+            (peek:io (cord-to-road:tarball '../calendar.calendar') ~)
+          =/  c=calendar:cal  (cal-of cal-view)
+          =/  k=cal:cal  (fall (~(get by cals.c) target) fresh-cal:cal)
+          =/  ves=(list vevent:ics)  ?:(=('' body) ~ (events:ics body))
+          =/  res=[k=cal:cal imported=@ud skipped=@ud]
+            %+  roll  ves
+            |=  [ve=vevent:ics acc=_[k=k imported=0 skipped=0]]
+            =/  got=(unit [e=entry:cal exdates=(list @da)])  (to-entry:ics ve zone.c)
+            ?~  got  acc(skipped +(skipped.acc))
+            ?:  =('' uid.e.u.got)  acc(skipped +(skipped.acc))
+            =/  e=entry:cal  (with-exdates e.u.got exdates.u.got)
+            acc(k (put-entry:cal k.acc e), imported +(imported.acc))
+          ;<  ~  bind:m
+            %+  over:io  (cord-to-road:tarball '../calendar.calendar')
+            [[/ %calendar] c(cals (~(put by cals.c) target k.res))]
+          %+  send-json  eyre-id
+          %-  pairs:enjs:format
+          :~  ['imported' (numb:enjs:format imported.res)]
+              ['skipped' (numb:enjs:format skipped.res)]
+              ['cal' s+target]
+          ==
         ?:  ?=([%'zones.json' ~] suffix)
           %+  send-json  eyre-id
           [%a (turn zone-names:pytz |=(n=@t `json`s+n))]
@@ -503,6 +607,48 @@
     |=(=lane:tarball ?:(?=(%| -.lane) `p.lane ~))
   ?~  dirs  (pure:m ~)
   (pure:m `i.dirs)
+::  +exdates-of: an entry's skipped occurrences as naive moments, through
+::  its kind. A %date event has none.
+++  exdates-of
+  |=  e=entry:cal
+  ^-  (list @da)
+  =/  ev=event:cal  event.e
+  ?:  ?=(%date -.ev)  ~
+  =/  rc=recur:cal  recur.ev
+  =/  ex=(set @ud)  ?-(-.ev %timed except.bound.ev, %allday except.bound.ev)
+  =/  k=(unit kind:rules)  (kind-for kind.rc)
+  ?~  k  ~
+  %+  murn  (sort ~(tap in ex) lth)
+  |=(idx=@ud (fall (mole |.((u.k args.rc start.rc idx))) ~))
+::  +with-exdates: EXDATE moments back to indices of the entry's kind.
+::  Walks the rule forward, bounded, matching on the moment; an EXDATE the
+::  rule never produces is dropped.
+++  with-exdates
+  |=  [e=entry:cal exdates=(list @da)]
+  ^-  entry:cal
+  ?~  exdates  e
+  =/  ev=event:cal  event.e
+  ?:  ?=(%date -.ev)  e
+  =/  rc=recur:cal  recur.ev
+  =/  k=(unit kind:rules)  (kind-for kind.rc)
+  ?~  k  e
+  =/  want=(set @da)  (sy exdates)
+  =|  got=(set @ud)
+  =/  idx=@ud  0
+  =/  dead=@ud  0
+  |-
+  ?:  |(=(0 ~(wyt in want)) (gth dead 400) (gth idx 10.000))
+    =/  ev2=event:cal
+      ?-  -.ev
+        %timed   ev(except.bound (~(uni in except.bound.ev) got))
+        %allday  ev(except.bound (~(uni in except.bound.ev) got))
+      ==
+    e(event ev2)
+  =/  m=(unit @da)  (fall (mole |.((u.k args.rc start.rc idx))) ~)
+  ?~  m  $(idx +(idx), dead +(dead))
+  ?:  (~(has in want) u.m)
+    $(idx +(idx), dead 0, got (~(put in got) idx), want (~(del in want) u.m))
+  $(idx +(idx), dead 0)
 ++  get-meta
   |=  e=event:cal
   ^-  meta:cal
@@ -726,6 +872,7 @@
       [%once k-once]
       [%weekly k-weekly]
       [%yearly k-yearly]
+      [%rrule k-rrule]
   ==
 ++  kind-for
   |=  =rail:tarball
@@ -821,8 +968,11 @@
   ?~  rec  ~
   =/  dom=(unit @ud)
     =/  n=(unit @ud)  (gn jon 'count')
-    ?~  n  ~
-    ?:(=(0 u.n) ~ n)
+    ?^  n  ?:(=(0 u.n) ~ n)
+    ::  an RRULE's COUNT is its cap
+    ?.  =(%rrule name.kind.u.rec)  ~
+    =/  r=(unit rule:rr)  (parse:rr (str:~(. ja:rules args.u.rec) 'rrule'))
+    ?~(r ~ count.u.r)
   =/  =bound:cal  [dom ~]
   ?:  =('allday' cat)
     =/  days=@ud  (max 1 (fall (gn jon 'span_days') 1))
