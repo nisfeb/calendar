@@ -1774,15 +1774,25 @@
   =/  rows=(list [id=@t row=json])  ?:(?=(%o -.sync) ~(tap by p.sync) ~)
   ;<  tok=(unit @t)  bind:m  (google-token pre)
   ?~  tok  (pure:m ~)
-  =/  out=(map @t json)  ?:(?=(%o -.sync) p.sync ~)
+  =|  done=(map @t json)
   |-
   ?~  rows
-    (write-json-grub pre 'google-sync.json' [%o out])
+    ::  merge onto a fresh read: a link or unlink may have changed the
+    ::  file while this pass waited on the network
+    ?:  =(~ done)  (pure:m ~)
+    ;<  fresh=json  bind:m  (google-sync pre)
+    =/  cur=(map @t json)  ?:(?=(%o -.fresh) p.fresh ~)
+    =/  merged=(map @t json)
+      %+  roll  ~(tap by done)
+      |=  [[id=@t row=json] acc=_cur]
+      ?.((~(has by acc) id) acc (~(put by acc) id row))
+    (write-json-grub pre 'google-sync.json' [%o merged])
   ;<  row=json  bind:m
     ?.  pull  (pure:(fiber:fiber:nexus ,json) row.i.rows)
     (google-pull pre (crip (trip id.i.rows)) row.i.rows)
   ;<  row=json  bind:m  (google-push pre (crip (trip id.i.rows)) row)
-  $(rows t.rows, out (~(put by out) id.i.rows row))
+  ?:  =(row row.i.rows)  $(rows t.rows)
+  $(rows t.rows, done (~(put by done) id.i.rows row))
 ::  +google-pull: one calendar, all pages, applied; the row comes back
 ::  with the new token, time, id map and watermark
 ++  google-pull
@@ -1820,7 +1830,7 @@
   =/  insts=(list gitem:gcal)  (skim items |=(g=gitem:gcal ?=(^ rid.g)))
   =/  res2=[k=cal:cal ids=(map @t json) seen=(set uid:cal)]
     %+  roll  (weld parents insts)
-    |=  [g=gitem:gcal acc=[k=cal:cal ids=(map @t json) seen=(set uid:cal)]]
+    |=  [g=gitem:gcal acc=_[k=k ids=ids seen=seen]]
     =/  u=uid:cal  uid.ve.g
     =/  extra=(list [@t @t])  ~[['X-GOOGLE-ID' gid.g] ['X-GOOGLE-UPDATED' updated.g]]
     ?^  rid.g
@@ -1864,12 +1874,96 @@
     ==
   ?.  =('' next-page)  $(page next-page, row row2)
   (pure:m row2)
-::  +google-push: (task 3) the calendar's log past the watermark, out
+::  +google-push: the calendar's log past the watermark, out. A parent
+::  with a known Google id is updated, without one inserted; a delete
+::  goes by the id map. Children (overrides) are not pushed. A 5xx, 429
+::  or dropped connection stops the pass and keeps the watermark.
 ++  google-push
   |=  [pre=@t id=@ta row=json]
   =/  m  (fiber:fiber:nexus ,json)
   ^-  form:m
-  (pure:m row)
+  =/  gid=@t  (gs row 'google_id')
+  =/  since=@ud  (fall (gn row 'pushed_seq') 0)
+  =/  ids=(map @t json)  =/(i (obj:gcal row 'ids') ?:(?=(%o -.i) p.i ~))
+  ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road pre 'calendar.calendar') ~)
+  =/  c=calendar:cal  (cal-of cal-view)
+  =/  k=(unit cal:cal)  (~(get by cals.c) id)
+  ?~  k  (pure:m row)
+  ?.  (gth seq.u.k since)  (pure:m row)
+  =/  changes=(list [uid:cal ?(%put %del)])
+    =/  latest=(map uid:cal ?(%put %del))
+      %+  roll  (tap:on-log:cal log.u.k)
+      |=  [[key=@ud val=logent:cal] acc=(map uid:cal ?(%put %del))]
+      ?.  (gth key since)  acc
+      ?^  (find "#" (trip uid.val))  acc
+      (~(put by acc) uid.val kind.val)
+    ~(tap by latest)
+  =/  base=tape  "/calendar/v3/calendars/{(enc-seg:dav (trip gid))}/events"
+  =|  results=(list [=uid:cal gid=@t updated=@t])
+  =/  stopped=?  |
+  |-
+  ?^  changes
+    =/  [u=uid:cal what=?(%put %del)]  i.changes
+    =/  known=@t  =/(v (~(get by ids) u) ?:(?=([~ %s *] v) p.u.v ''))
+    ?:  =(%del what)
+      ?:  =('' known)  $(changes t.changes)
+      ;<  [status=@ud *]  bind:m
+        (google-api pre %'DELETE' "{base}/{(enc-seg:dav (trip known))}" ~)
+      ?:  |(=(0 status) (gte status 500) =(429 status))
+        ~&  >>>  [%calendar-google-push-stopped u status]
+        $(changes ~, stopped &)
+      $(changes t.changes, ids (~(del by ids) u))
+    =/  e=(unit entry:cal)  (~(get by entries.u.k) u)
+    ?~  e  $(changes t.changes)
+    =/  body=json  (json-of:gcal u.e (exdates-of u.e))
+    =/  have=@t
+      ?.  =('' known)  known
+      =/  hit=(list [@t @t])  (skim props.u.e |=([key=@t *] =('X-GOOGLE-ID' key)))
+      ?~(hit '' +.i.hit)
+    ;<  [status=@ud res=json]  bind:m
+      ?:  =('' have)  (google-api pre %'POST' base `body)
+      (google-api pre %'PUT' "{base}/{(enc-seg:dav (trip have))}" `body)
+    ;<  [status=@ud res=json]  bind:m
+      ?.  &(=(404 status) !=('' have))  (pure:(fiber:fiber:nexus ,[@ud json]) [status res])
+      (google-api pre %'POST' base `body)
+    ?:  |(=(0 status) (gte status 500) =(429 status))
+      ~&  >>>  [%calendar-google-push-stopped u status]
+      $(changes ~, stopped &)
+    ?.  =(200 status)
+      ~&  >>>  [%calendar-google-push-refused u status]
+      $(changes t.changes)
+    =/  new-gid=@t  (gs res 'id')
+    %=  $
+      changes  t.changes
+      ids      (~(put by ids) u s+new-gid)
+      results  [[u new-gid (gs res 'updated')] results]
+    ==
+  ::  the ids and stamps Google handed back, onto a fresh read of the
+  ::  calendar (a poke may have landed while we waited on the network)
+  ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road pre 'calendar.calendar') ~)
+  =/  c=calendar:cal  (cal-of cal-view)
+  =/  kk=cal:cal  (fall (~(get by cals.c) id) fresh-cal:cal)
+  =.  kk
+    %+  roll  results
+    |=  [[u=uid:cal g=@t up=@t] acc=_kk]
+    =/  e=(unit entry:cal)  (~(get by entries.acc) u)
+    ?~  e  acc
+    =/  props=(list [@t @t])
+      :-  ['X-GOOGLE-ID' g]
+      :-  ['X-GOOGLE-UPDATED' up]
+      (skip props.u.e |=([key=@t *] |(=('X-GOOGLE-ID' key) =('X-GOOGLE-UPDATED' key))))
+    (put-entry:cal acc u.e(props props))
+  ;<  ~  bind:m
+    ?~  results  (pure:(fiber:fiber:nexus ,~) ~)
+    (dav-write pre c(cals (~(put by cals.c) id kk)))
+  =/  row2=json
+    ?.  ?=(%o -.row)  row
+    :-  %o
+    %-  ~(gas by p.row)
+    :~  ['ids' [%o ids]]
+        ['pushed_seq' (numb:enjs:format ?:(stopped since seq.kk))]
+    ==
+  (pure:m row2)
 ::  +google-prod: wake the sync fiber now
 ++  google-prod
   |=  pre=@t
