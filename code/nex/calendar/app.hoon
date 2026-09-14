@@ -75,6 +75,10 @@
           ::  id map and the push watermark
           [%fall %& [/ %'google-sync.json'] [[/ %json] [%o ~]]]
           [%fall %& [/ %'google-conflicts.json'] [[/ %json] [%a ~]]]
+          ::  caldav-remotes.json: the remote CalDAV calendars this ship
+          ::  follows — url, credentials, sync token, href and etag per
+          ::  uid, the push watermark. Never answered to the browser.
+          [%fall %& [/ %'caldav-remotes.json'] [[/ %json] [%o ~]]]
           [%fall %& [/ %'google.sig'] [[/ %sig] ~]]
           [%fall %| /requests empty-dir:loader]
       ==
@@ -314,6 +318,7 @@
         ;<  what=?(%news %poke)  bind:m  (take-any /cal)
         ;<  ~  bind:m  (cancel-timer:io /tick)
         ;<  ~  bind:m  (google-pass =(%poke what))
+        ;<  ~  bind:m  (caldav-pass =(%poke what))
         $
           [~ %'reminders.json']
         ;<  ~  bind:m  (rise-wait:io prod "%calendar reminders: failed")
@@ -382,6 +387,8 @@
         ::  answered once and stored only as a salted hash.
         ?:  ?=([%google *] suffix)
           (google-request eyre-id req our t.suffix args)
+        ?:  ?=([%caldav *] suffix)
+          (caldav-request eyre-id req t.suffix)
         ?:  ?=([%'google.json' ~] suffix)
           ;<  cfg=json  bind:m  (google-config '../')
           ;<  auth=json  bind:m  (google-auth '../')
@@ -1522,11 +1529,17 @@
   |=  =request:http
   =/  m  (fiber:fiber:nexus ,[status=@ud body=@t])
   ^-  form:m
+  ;<  [status=@ud * body=@t]  bind:m  (fetch-hdr request)
+  (pure:m [status body])
+++  fetch-hdr
+  |=  =request:http
+  =/  m  (fiber:fiber:nexus ,[status=@ud headers=(list [@t @t]) body=@t])
+  ^-  form:m
   ;<  ~  bind:m  (send-request:io request)
   ;<  res=client-response:iris  bind:m  take-client-response:io
-  ?.  ?=(%finished -.res)  (pure:m [0 ''])
+  ?.  ?=(%finished -.res)  (pure:m [0 ~ ''])
   =/  body=@t  ?~(full-file.res '' q.data.u.full-file.res)
-  (pure:m [status-code.response-header.res body])
+  (pure:m [status-code.response-header.res headers.response-header.res body])
 ++  form-body
   |=  kvs=(list [k=tape v=tape])
   ^-  octs
@@ -2013,6 +2026,347 @@
         ['pushed_seq' (numb:enjs:format ?:(stopped since seq.kk))]
     ==
   (pure:m row2)
+::  ---- CalDAV client: following a remote calendar ----
+++  caldav-remotes  |=(pre=@t (read-json-grub pre 'caldav-remotes.json'))
+::  +dav-fetch: a request to the remote with Basic auth. iris has the same
+::  closed verb set the server side has, so REPORT and PROPFIND go as
+::  POST with X-HTTP-Method-Override; our calendars and SabreDAV honour it.
+++  dav-fetch
+  |=  [row=json verb=@t url=@t body=(unit @t) extra=(list [@t @t])]
+  =/  m  (fiber:fiber:nexus ,[status=@ud headers=(list [@t @t]) body=@t])
+  ^-  form:m
+  =/  cred=@t  (en:base64:mimes:html (as-octs:mimes:html (rap 3 ~[(gs row 'user') ':' (gs row 'password')])))
+  =/  native=?  ?=(?(%'GET' %'PUT' %'POST' %'DELETE' %'HEAD' %'OPTIONS') verb)
+  =/  method=method:http  ?:(native ;;(method:http verb) %'POST')
+  =/  headers=(list [@t @t])
+    %+  weld  extra
+    :-  ['authorization' (cat 3 'Basic ' cred)]
+    ?:(native ~ ~[['x-http-method-override' verb]])
+  (fetch-hdr [method url headers ?~(body ~ `(as-octs:mimes:html u.body))])
+++  dav-origin
+  |=  url=@t
+  ^-  tape
+  =/  t=tape  (trip url)
+  =/  at=(unit @ud)  (find "//" t)
+  ?~  at  ""
+  =/  rest=tape  (slag (add 2 u.at) t)
+  =/  sl=(unit @ud)  (find "/" rest)
+  ?~(sl t (scag (add (add 2 u.at) u.sl) t))
+++  hdr-of
+  |=  [headers=(list [@t @t]) name=@t]
+  ^-  @t
+  (fall (get-header:http name headers) '')
+::  +caldav-request: the owner's routes under /apps/calendar/caldav/
+++  caldav-request
+  |=  [eyre-id=@ta req=inbound-request:eyre rest=path]
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  =/  jon=json
+    (fall (de:json:html ?~(body.request.req '' q.u.body.request.req)) *json)
+  =/  post=?  =('POST' method.request.req)
+  =/  send-err
+    |=  [code=@ud why=@t]
+    =/  m  (fiber:fiber:nexus ,~)
+    ^-  form:m
+    ;<  ~  bind:m  (send-simple:srv eyre-id [[code ~] `(as-octs:mimes:html why)])
+    (pure:m ~)
+  ?:  ?=([%'subscriptions.json' ~] rest)
+    ;<  rows=json  bind:m  (caldav-remotes '../')
+    %+  send-json  eyre-id
+    :-  %a
+    %+  turn  ?:(?=(%o -.rows) ~(tap by p.rows) ~)
+    |=  [id=@t row=json]
+    ^-  json
+    %-  pairs:enjs:format
+    :~  ['id' s+id]
+        ['url' s+(gs row 'url')]
+        ['user' s+(gs row 'user')]
+        ['last_ms' (numb:enjs:format (fall (gn row 'last_ms') 0))]
+    ==
+  ?:  &(post ?=([%subscribe ~] rest))
+    =/  url=@t  (gs jon 'url')
+    ?:  =('' url)  (send-err 400 'calendar: need url')
+    ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road '../' 'calendar.calendar') ~)
+    =/  c=calendar:cal  (cal-of cal-view)
+    =/  id=@ta  (crip "c-{(trip (scot %uw (mug url)))}")
+    ?:  (~(has by cals.c) id)  (send-err 409 'calendar: already followed')
+    =/  nm=@t  (gs jon 'name')
+    =/  color=@t  (gs jon 'color')
+    =/  k=cal:cal  fresh-cal:cal
+    =.  props.k  [?:(=('' nm) url nm) ?:(=('' color) '#101541' color) %caldav `url]
+    ;<  ~  bind:m  (dav-write '../' c(cals (~(put by cals.c) id k)))
+    ;<  rows=json  bind:m  (caldav-remotes '../')
+    =/  row=json
+      %-  pairs:enjs:format
+      :~  ['url' s+url]
+          ['user' s+(gs jon 'user')]
+          ['password' s+(gs jon 'password')]
+          ['sync_token' s+'']
+          ['last_ms' (numb:enjs:format 0)]
+          ['pushed_seq' (numb:enjs:format 0)]
+          ['ids' [%o ~]]
+      ==
+    ;<  ~  bind:m
+      (write-json-grub '../' 'caldav-remotes.json' [%o (~(put by ?:(?=(%o -.rows) p.rows ~)) id row)])
+    ;<  ~  bind:m  (google-prod '../')
+    (send-json eyre-id (pairs:enjs:format ~[['id' s+id]]))
+  ?:  &(post ?=([%unsubscribe ~] rest))
+    =/  id=@ta  (crip (trip (gs jon 'id')))
+    ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road '../' 'calendar.calendar') ~)
+    =/  c=calendar:cal  (cal-of cal-view)
+    ?.  (~(has by cals.c) id)  (send-err 404 'calendar: not followed')
+    ;<  ~  bind:m  (dav-write '../' c(cals (~(del by cals.c) id)))
+    ;<  rows=json  bind:m  (caldav-remotes '../')
+    ;<  ~  bind:m
+      (write-json-grub '../' 'caldav-remotes.json' [%o (~(del by ?:(?=(%o -.rows) p.rows ~)) id)])
+    (send-json eyre-id (pairs:enjs:format ~[['ok' b+&]]))
+  ?:  &(post ?=([%sync ~] rest))
+    ;<  ~  bind:m  (google-prod '../')
+    (send-json eyre-id (pairs:enjs:format ~[['ok' b+&]]))
+  (send-err 404 'calendar: no such caldav route')
+::  +caldav-pass: every followed calendar: pull (when asked), then push
+++  caldav-pass
+  |=  pull=?
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  =/  pre=@t  './'
+  ;<  rows-j=json  bind:m  (caldav-remotes pre)
+  =/  rows=(list [id=@t row=json])  ?:(?=(%o -.rows-j) ~(tap by p.rows-j) ~)
+  =|  done=(map @t json)
+  |-
+  ?~  rows
+    ?:  =(~ done)  (pure:m ~)
+    ;<  fresh=json  bind:m  (caldav-remotes pre)
+    =/  cur=(map @t json)  ?:(?=(%o -.fresh) p.fresh ~)
+    =/  merged=(map @t json)
+      %+  roll  ~(tap by done)
+      |=  [[id=@t row=json] acc=_cur]
+      ?.((~(has by acc) id) acc (~(put by acc) id row))
+    (write-json-grub pre 'caldav-remotes.json' [%o merged])
+  ;<  row=json  bind:m
+    ?.  pull  (pure:(fiber:fiber:nexus ,json) row.i.rows)
+    (caldav-pull pre (crip (trip id.i.rows)) row.i.rows)
+  ;<  row=json  bind:m  (caldav-push pre (crip (trip id.i.rows)) row)
+  ?:  =(row row.i.rows)  $(rows t.rows)
+  $(rows t.rows, done (~(put by done) id.i.rows row))
+::  +caldav-changes: what changed on the remote since the token:
+::  [href etag gone] per object, and the new token. sync-collection
+::  first; a server that refuses it gets a PROPFIND and an etag diff.
+++  caldav-changes
+  |=  row=json
+  =/  m  (fiber:fiber:nexus ,(unit [changes=(list [href=tape etag=@t gone=?]) token=@t]))
+  ^-  form:m
+  =/  url=@t  (gs row 'url')
+  =/  tok=@t  (gs row 'sync_token')
+  =/  ids=(map @t json)  =/(i (obj:gcal row 'ids') ?:(?=(%o -.i) p.i ~))
+  =/  known=(map tape @t)
+    %-  ~(gas by *(map tape @t))
+    %+  turn  ~(tap by ids)
+    |=([u=@t v=json] [(trip (gs v 'href')) (gs v 'etag')])
+  =/  body=@t
+    %-  crip
+    ;:  weld
+      "<?xml version=\"1.0\" encoding=\"utf-8\"?><D:sync-collection xmlns:D=\"DAV:\"><D:sync-token>"
+      (trip tok)
+      "</D:sync-token><D:sync-level>1</D:sync-level><D:prop><D:getetag/></D:prop></D:sync-collection>"
+    ==
+  ;<  [status=@ud * res=@t]  bind:m
+    (dav-fetch row %'REPORT' url `body ~[['content-type' 'application/xml; charset=utf-8'] ['depth' '1']])
+  ?:  =(207 status)
+    =/  root=(unit manx)  (parse:dav res)
+    ?~  root  (pure:m ~)
+    =/  token=@t
+      =/  el=(unit manx)  (kid:dav u.root %'sync-token')
+      ?~(el tok (crip (text:dav u.el)))
+    =/  changes=(list [href=tape etag=@t gone=?])
+      %+  murn  (kids:dav u.root %response)
+      |=  r=manx
+      ^-  (unit [tape @t ?])
+      =/  h=(unit manx)  (kid:dav r %href)
+      ?~  h  ~
+      =/  href=tape  (text:dav u.h)
+      ?.  =(".ics" (slag (sub (lent href) (min 4 (lent href))) href))  ~
+      =/  st=(unit manx)  (kid:dav r %status)
+      ?:  &(?=(^ st) ?=(^ (find "404" (text:dav u.st))))  `[href '' &]
+      =/  et=(unit manx)  (find-el:dav r %getetag)
+      `[href ?~(et '' (dav-unquote (crip (text:dav u.et)))) |]
+    (pure:m `[changes token])
+  ::  fallback: list with PROPFIND and diff the etags
+  ;<  [status2=@ud * res2=@t]  bind:m
+    %-  dav-fetch
+    :*  row  %'PROPFIND'  url
+        `'<?xml version="1.0"?><D:propfind xmlns:D="DAV:"><D:prop><D:getetag/></D:prop></D:propfind>'
+        ~[['content-type' 'application/xml; charset=utf-8'] ['depth' '1']]
+    ==
+  ?.  =(207 status2)
+    ~&  >>>  [%calendar-caldav-list-failed status status2]
+    (pure:m ~)
+  =/  root=(unit manx)  (parse:dav res2)
+  ?~  root  (pure:m ~)
+  =/  listed=(list [href=tape etag=@t])
+    %+  murn  (kids:dav u.root %response)
+    |=  r=manx
+    ^-  (unit [tape @t])
+    =/  h=(unit manx)  (kid:dav r %href)
+    ?~  h  ~
+    =/  href=tape  (text:dav u.h)
+    ?.  =(".ics" (slag (sub (lent href) (min 4 (lent href))) href))  ~
+    =/  et=(unit manx)  (find-el:dav r %getetag)
+    `[href ?~(et '' (dav-unquote (crip (text:dav u.et))))]
+  =/  seen=(set tape)  (~(gas in *(set tape)) (turn listed |=([h=tape *] h)))
+  =/  changed=(list [href=tape etag=@t gone=?])
+    %+  murn  listed
+    |=  [h=tape e=@t]
+    ^-  (unit [tape @t ?])
+    =/  old=(unit @t)  (~(get by known) h)
+    ?:  &(?=(^ old) =(u.old e) !=('' e))  ~
+    `[h e |]
+  =/  gone=(list [href=tape etag=@t gone=?])
+    %+  murn  ~(tap by known)
+    |=  [h=tape *]
+    ^-  (unit [tape @t ?])
+    ?:((~(has in seen) h) ~ `[h '' &])
+  (pure:m `[(weld changed gone) tok])
+::  +caldav-pull: fetch every changed object, then apply them all onto
+::  one read of the calendar
+++  caldav-pull
+  |=  [pre=@t id=@ta row=json]
+  =/  m  (fiber:fiber:nexus ,json)
+  ^-  form:m
+  =/  url=@t  (gs row 'url')
+  =/  origin=tape  (dav-origin url)
+  ;<  got=(unit [changes=(list [href=tape etag=@t gone=?]) token=@t])  bind:m  (caldav-changes row)
+  ?~  got  (pure:m row)
+  =/  ids=(map @t json)  =/(i (obj:gcal row 'ids') ?:(?=(%o -.i) p.i ~))
+  =/  by-href=(map tape @t)
+    %-  ~(gas by *(map tape @t))
+    (turn ~(tap by ids) |=([u=@t v=json] [(trip (gs v 'href')) u]))
+  ::  1. the network: every changed object's text
+  =|  fetched=(list [href=tape etag=@t gone=? body=@t])
+  =/  todo=(list [href=tape etag=@t gone=?])  changes.u.got
+  |-
+  ?^  todo
+    ?:  gone.i.todo  $(todo t.todo, fetched [[href.i.todo '' & ''] fetched])
+    ;<  [status=@ud hs=(list [@t @t]) body=@t]  bind:m
+      (dav-fetch row %'GET' (crip (weld origin href.i.todo)) ~ ~)
+    ?.  =(200 status)
+      ~&  >>>  [%calendar-caldav-get-failed href.i.todo status]
+      $(todo t.todo)
+    =/  et=@t  ?:(=('' etag.i.todo) (dav-unquote (hdr-of hs 'etag')) etag.i.todo)
+    $(todo t.todo, fetched [[href.i.todo et | body] fetched])
+  ::  2. the calendar, once
+  ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road pre 'calendar.calendar') ~)
+  =/  c=calendar:cal  (cal-of cal-view)
+  =/  k=cal:cal  (fall (~(get by cals.c) id) fresh-cal:cal)
+  =/  res=[k=cal:cal ids=(map @t json)]
+    %+  roll  (flop fetched)
+    |=  [[href=tape etag=@t gone=? body=@t] acc=_[k=k ids=ids]]
+    ?:  gone
+      =/  u=(unit @t)  (~(get by by-href) href)
+      ?~  u  acc
+      =.  k.acc
+        %+  roll  (dav-children k.acc u.u)
+        |=([ch=entry:cal a=_k.acc] (del-entry:cal a uid.ch))
+      acc(k (del-entry:cal k.acc u.u), ids (~(del by ids.acc) u.u))
+    =/  ves=(list vevent:ics)  (events:ics body)
+    =/  parent=(unit vevent:ics)
+      =/  ps=(list vevent:ics)  (skip ves |=(v=vevent:ics ?=(^ (dav-rid v))))
+      ?~(ps ~ `i.ps)
+    ?~  parent  acc
+    =/  u=@t  uid.u.parent
+    =.  k.acc
+      %+  roll  (dav-children k.acc u)
+      |=([ch=entry:cal a=_k.acc] (del-entry:cal a uid.ch))
+    =/  put=(unit [k=cal:cal =uid:cal])  (put-parent k.acc u.parent zone.c u ~)
+    ?~  put  acc
+    =.  k.acc
+      %+  roll  (skim ves |=(v=vevent:ics ?=(^ (dav-rid v))))
+      |=([v=vevent:ics a=_k.u.put] (put-override a uid.u.put v zone.c ~))
+    acc(ids (~(put by ids.acc) uid.u.put (pairs:enjs:format ~[['href' s+(crip href)] ['etag' s+etag]])))
+  ;<  ~  bind:m
+    ?:  =(k.res k)  (pure:(fiber:fiber:nexus ,~) ~)
+    (dav-write pre c(cals (~(put by cals.c) id k.res)))
+  ;<  now=@da  bind:m  get-time:io
+  %-  pure:m
+  ?.  ?=(%o -.row)  row
+  :-  %o
+  %-  ~(gas by p.row)
+  :~  ['sync_token' s+token.u.got]
+      ['last_ms' (numb:enjs:format (da-to-ms now))]
+      ['ids' [%o ids.res]]
+      ['pushed_seq' (numb:enjs:format seq.k.res)]
+  ==
+::  +caldav-push: the log past the watermark, out as PUT and DELETE
+++  caldav-push
+  |=  [pre=@t id=@ta row=json]
+  =/  m  (fiber:fiber:nexus ,json)
+  ^-  form:m
+  =/  url=@t  (gs row 'url')
+  =/  origin=tape  (dav-origin url)
+  =/  since=@ud  (fall (gn row 'pushed_seq') 0)
+  =/  ids=(map @t json)  =/(i (obj:gcal row 'ids') ?:(?=(%o -.i) p.i ~))
+  ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road pre 'calendar.calendar') ~)
+  =/  c=calendar:cal  (cal-of cal-view)
+  =/  k=(unit cal:cal)  (~(get by cals.c) id)
+  ?~  k  (pure:m row)
+  ?.  (gth seq.u.k since)  (pure:m row)
+  =/  changes=(list [uid:cal ?(%put %del)])
+    =/  latest=(map uid:cal ?(%put %del))
+      %+  roll  (tap:on-log:cal log.u.k)
+      |=  [[key=@ud val=logent:cal] acc=(map uid:cal ?(%put %del))]
+      ?.  (gth key since)  acc
+      ?^  (find "#" (trip uid.val))  acc
+      (~(put by acc) uid.val kind.val)
+    ~(tap by latest)
+  ;<  now=@da  bind:m  get-time:io
+  =/  stopped=?  |
+  |-
+  ?^  changes
+    =/  [u=uid:cal what=?(%put %del)]  i.changes
+    =/  known=json  (fall (~(get by ids) u) [%o ~])
+    =/  href=tape
+      =/  h=@t  (gs known 'href')
+      ?.  =('' h)  (trip h)
+      =/  base=tape  (trip url)
+      =?  base  !=('/' (rear base))  (snoc base '/')
+      =/  at=(unit @ud)  (find "//" base)
+      =/  path=tape  ?~(at base (slag (add (add 2 u.at) (fall (find "/" (slag (add 2 u.at) base)) 0)) base))
+      :(weld path (enc-seg:dav (trip u)) ".ics")
+    =/  etag=@t  (gs known 'etag')
+    ?:  =(%del what)
+      ?:  =('' (gs known 'href'))  $(changes t.changes)
+      ;<  [status=@ud * *]  bind:m  (dav-fetch row %'DELETE' (crip (weld origin href)) ~ ~)
+      ?:  |(=(0 status) (gte status 500))
+        ~&  >>>  [%calendar-caldav-push-stopped u status]
+        $(changes ~, stopped &)
+      $(changes t.changes, ids (~(del by ids) u))
+    =/  body=(unit @t)  (dav-object-ics c id u now)
+    ?~  body  $(changes t.changes)
+    ;<  [status=@ud hs=(list [@t @t]) res=@t]  bind:m
+      %-  dav-fetch
+      :*  row  %'PUT'  (crip (weld origin href))  body
+          :-  ['content-type' 'text/calendar; charset=utf-8']
+          ?:(=('' etag) ~ ~[['if-match' (crip "\"{(trip etag)}\"")]])
+      ==
+    ?:  |(=(0 status) (gte status 500))
+      ~&  >>>  [%calendar-caldav-push-stopped u status]
+      $(changes ~, stopped &)
+    ?:  |(=(412 status) (gte status 400))
+      ;<  ~  bind:m
+        (google-conflict pre id u (~(get by entries.u.k) u) '' (crip "remote refused the push ({(a-co:co status)})"))
+      $(changes t.changes)
+    =/  new-etag=@t  (dav-unquote (hdr-of hs 'etag'))
+    %=  $
+      changes  t.changes
+      ids      (~(put by ids) u (pairs:enjs:format ~[['href' s+(crip href)] ['etag' s+?:(=('' new-etag) etag new-etag)]]))
+    ==
+  %-  pure:m
+  ?.  ?=(%o -.row)  row
+  :-  %o
+  %-  ~(gas by p.row)
+  :~  ['ids' [%o ids]]
+      ['pushed_seq' (numb:enjs:format ?:(stopped since seq.u.k))]
+  ==
 ::  +google-prod: wake the sync fiber now
 ++  google-prod
   |=  pre=@t
