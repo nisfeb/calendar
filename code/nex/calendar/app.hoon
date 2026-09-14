@@ -65,6 +65,16 @@
           [%fall %& [/ %'carried.json'] [[/ %json] b+|]]
           ::  dav-clients.json: the CalDAV client passwords, hashed
           [%fall %& [/ %'dav-clients.json'] [[/ %json] [%a ~]]]
+          ::  google.json: the user's own OAuth client and the endpoints
+          ::  (every URL is here so the gate can point them at a fake)
+          [%fall %& [/ %'google.json'] [[/ %json] google-defaults]]
+          ::  google-auth.json: the tokens. Never answered to the browser.
+          [%fall %& [/ %'google-auth.json'] [[/ %json] [%o ~]]]
+          ::  google-sync.json: per linked calendar, the sync token, the
+          ::  id map and the push watermark
+          [%fall %& [/ %'google-sync.json'] [[/ %json] [%o ~]]]
+          [%fall %& [/ %'google-conflicts.json'] [[/ %json] [%a ~]]]
+          [%fall %& [/ %'google.sig'] [[/ %sig] ~]]
           [%fall %| /requests empty-dir:loader]
       ==
     ::
@@ -285,6 +295,14 @@
           ::  timed events starting lead_min ahead. fired_ms is the
           ::  watermark: everything due in (fired, now] goes out once.
           ::
+          ::
+          ::  /google.sig: the Google sync fiber (phase 4 task 2 fills it)
+          ::
+          [~ %'google.sig']
+        ;<  ~  bind:m  (rise-wait:io prod "%calendar google: failed")
+        |-
+        ;<  *  bind:m  take-poke:io
+        $
           [~ %'reminders.json']
         ;<  ~  bind:m  (rise-wait:io prod "%calendar reminders: failed")
         |-
@@ -350,6 +368,25 @@
         ::  /dav-clients.json, /dav-clients, /dav-clients/revoke: the owner
         ::  mints and revokes CalDAV client passwords. The password is
         ::  answered once and stored only as a salted hash.
+        ?:  ?=([%google *] suffix)
+          (google-request eyre-id req our t.suffix args)
+        ?:  ?=([%'google.json' ~] suffix)
+          ;<  cfg=json  bind:m  google-config
+          ;<  auth=json  bind:m  google-auth
+          ;<  sync=json  bind:m  google-sync
+          =/  masked=json
+            ?.  ?=(%o -.cfg)  cfg
+            =/  sec=@t  (gs cfg 'client_secret')
+            :-  %o
+            %-  ~(put by p.cfg)
+            ['client_secret' s+?:(=('' sec) '' '••••••••')]
+          %+  send-json  eyre-id
+          ?.  ?=(%o -.masked)  masked
+          :-  %o
+          %-  ~(gas by p.masked)
+          :~  ['connected' b+!=('' (gs auth 'refresh_token'))]
+              ['linked' sync]
+          ==
         ?:  ?=([%'dav-clients.json' ~] suffix)
           ;<  clients=json  bind:m  dav-clients
           =/  rows=json
@@ -1393,6 +1430,277 @@
   ;<  ~  bind:m
     %+  send-simple:srv  eyre-id
     [[code ['content-type' 'application/xml; charset=utf-8'] ~] `(as-octs:mimes:html body)]
+  (pure:m ~)
+::  ---- Google ----
+++  google-defaults
+  ^-  json
+  %-  pairs:enjs:format
+  :~  ['client_id' s+'']
+      ['client_secret' s+'']
+      ['auth_url' s+'https://accounts.google.com/o/oauth2/v2/auth']
+      ['token_url' s+'https://oauth2.googleapis.com/token']
+      ['api_base' s+'https://www.googleapis.com']
+      ['tick_min' (numb:enjs:format 5)]
+  ==
+++  read-json-grub
+  |=  name=@t
+  =/  m  (fiber:fiber:nexus ,json)
+  ^-  form:m
+  ;<  vw=view:nexus  bind:m
+    (peek:io (cord-to-road:tarball (cat 3 '../' name)) ~)
+  ?.  ?=([%file *] vw)  (pure:m [%o ~])
+  (pure:m (fall (mole |.(!<(json (need-vase:tarball sang.vw)))) [%o ~]))
+++  write-json-grub
+  |=  [name=@t jon=json]
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  (over:io (cord-to-road:tarball (cat 3 '../' name)) [[/ %json] jon])
+++  google-config  (read-json-grub 'google.json')
+++  google-auth    (read-json-grub 'google-auth.json')
+++  google-sync    (read-json-grub 'google-sync.json')
+::  +fetch-full: an HTTP request with its status. A dropped connection
+::  is status 0 rather than a crash.
+++  fetch-full
+  |=  =request:http
+  =/  m  (fiber:fiber:nexus ,[status=@ud body=@t])
+  ^-  form:m
+  ;<  ~  bind:m  (send-request:io request)
+  ;<  res=client-response:iris  bind:m  take-client-response:io
+  ?.  ?=(%finished -.res)  (pure:m [0 ''])
+  =/  body=@t  ?~(full-file.res '' q.data.u.full-file.res)
+  (pure:m [status-code.response-header.res body])
+++  form-body
+  |=  kvs=(list [k=tape v=tape])
+  ^-  octs
+  %-  as-octs:mimes:html
+  %-  crip
+  %-  sep-join:rr
+  :-  "&"
+  (turn kvs |=([k=tape v=tape] "{k}={(enc-seg:dav v)}"))
+::  +google-token: a valid access token, refreshed when near expiry.
+::  ~ when the account is not connected or the refresh fails.
+++  google-token
+  =/  m  (fiber:fiber:nexus ,(unit @t))
+  ^-  form:m
+  ;<  cfg=json  bind:m  google-config
+  ;<  auth=json  bind:m  google-auth
+  =/  refresh=@t  (gs auth 'refresh_token')
+  ?:  =('' refresh)  (pure:m ~)
+  ;<  now=@da  bind:m  get-time:io
+  =/  expires=@ud  (fall (gn auth 'expires_ms') 0)
+  =/  access=@t  (gs auth 'access_token')
+  ?:  &(!=('' access) (gth expires (add (da-to-ms now) 60.000)))
+    (pure:m `access)
+  ;<  [status=@ud body=@t]  bind:m
+    %-  fetch-full
+    :^  %'POST'  (gs cfg 'token_url')
+      ~[['content-type' 'application/x-www-form-urlencoded']]
+    :-  ~
+    %-  form-body
+    :~  ["grant_type" "refresh_token"]
+        ["refresh_token" (trip refresh)]
+        ["client_id" (trip (gs cfg 'client_id'))]
+        ["client_secret" (trip (gs cfg 'client_secret'))]
+    ==
+  =/  tok=json  (fall (de:json:html body) *json)
+  =/  access=@t  (gs tok 'access_token')
+  ?:  |(!=(200 status) =('' access))
+    ~&  >>>  [%calendar-google-refresh-failed status]
+    (pure:m ~)
+  =/  ttl=@ud  (fall (gn tok 'expires_in') 3.600)
+  ;<  ~  bind:m
+    %+  write-json-grub  'google-auth.json'
+    ?.  ?=(%o -.auth)  auth
+    :-  %o
+    %-  ~(gas by p.auth)
+    :~  ['access_token' s+access]
+        ['expires_ms' (numb:enjs:format (add (da-to-ms now) (mul 1.000 ttl)))]
+    ==
+  (pure:m `access)
+::  +google-api: a call against api_base with the bearer token. status
+::  401 when not connected.
+++  google-api
+  |=  [method=method:http path=tape body=(unit json)]
+  =/  m  (fiber:fiber:nexus ,[status=@ud =json])
+  ^-  form:m
+  ;<  cfg=json  bind:m  google-config
+  ;<  tok=(unit @t)  bind:m  google-token
+  ?~  tok  (pure:m [401 [%o ~]])
+  =/  headers=(list [@t @t])
+    :-  ['authorization' (cat 3 'Bearer ' u.tok)]
+    ?~(body ~ ~[['content-type' 'application/json']])
+  ;<  [status=@ud res=@t]  bind:m
+    %-  fetch-full
+    :^  method  (crip (weld (trip (gs cfg 'api_base')) path))
+      headers
+    ?~(body ~ `(as-octs:mimes:html (en:json:html u.body)))
+  (pure:m [status (fall (de:json:html res) [%o ~])])
+::  +google-request: the owner's Google routes under /apps/calendar/google/
+++  google-request
+  |=  [eyre-id=@ta req=inbound-request:eyre our=@p rest=path args=quay:eyre]
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  =/  jon=json
+    (fall (de:json:html ?~(body.request.req '' q.u.body.request.req)) *json)
+  =/  post=?  =('POST' method.request.req)
+  =/  origin=tape
+    =/  host=@t  (fall (get-header:http 'host' header-list.request.req) 'localhost')
+    "{?:(secure.req "https" "http")}://{(trip host)}"
+  =/  redirect=tape  "{origin}/apps/calendar/google/callback"
+  =/  send-err
+    |=  [code=@ud why=@t]
+    =/  m  (fiber:fiber:nexus ,~)
+    ^-  form:m
+    ;<  ~  bind:m  (send-simple:srv eyre-id [[code ~] `(as-octs:mimes:html why)])
+    (pure:m ~)
+  =/  redirect-to
+    |=  where=tape
+    =/  m  (fiber:fiber:nexus ,~)
+    ^-  form:m
+    ;<  ~  bind:m  (send-simple:srv eyre-id [[302 ['location' (crip where)] ~] ~])
+    (pure:m ~)
+  ::  config: the user's client, and the endpoints (the gate swaps them)
+  ?:  &(post ?=([%config ~] rest))
+    ;<  cfg=json  bind:m  google-config
+    =/  cur=(map @t json)  ?:(?=(%o -.cfg) p.cfg ~)
+    =/  new=(map @t json)
+      %+  roll  `(list @t)`~['client_id' 'client_secret' 'auth_url' 'token_url' 'api_base']
+      |=  [k=@t acc=_cur]
+      =/  v=@t  (gs jon k)
+      ?:(=('' v) acc (~(put by acc) k s+v))
+    =/  tick=(unit @ud)  (gn jon 'tick_min')
+    =?  new  ?=(^ tick)  (~(put by new) 'tick_min' (numb:enjs:format (max 1 u.tick)))
+    ;<  ~  bind:m  (write-json-grub 'google.json' [%o new])
+    (send-json eyre-id (pairs:enjs:format ~[['ok' b+&]]))
+  ::  connect: off to the consent screen
+  ?:  ?=([%connect ~] rest)
+    ;<  cfg=json  bind:m  google-config
+    =/  cid=@t  (gs cfg 'client_id')
+    ?:  =('' cid)  (send-err 400 'calendar: set the OAuth client first')
+    =/  q=(list [tape tape])
+      :~  ["client_id" (trip cid)]
+          ["redirect_uri" redirect]
+          ["response_type" "code"]
+          ["scope" "https://www.googleapis.com/auth/calendar"]
+          ["access_type" "offline"]
+          ["prompt" "consent"]
+          ["state" "calendar"]
+      ==
+    =/  qs=tape  (sep-join:rr "&" (turn q |=([k=tape v=tape] "{k}={(enc-seg:dav v)}")))
+    (redirect-to "{(trip (gs cfg 'auth_url'))}?{qs}")
+  ::  callback: the code for the tokens
+  ?:  ?=([%callback ~] rest)
+    =/  code=@t  (fall (get-key:kv:html-utils 'code' args) '')
+    ?:  =('' code)
+      (send-err 400 (crip "calendar: google answered without a code: {(trip (fall (get-key:kv:html-utils 'error' args) ''))}"))
+    ;<  cfg=json  bind:m  google-config
+    ;<  [status=@ud body=@t]  bind:m
+      %-  fetch-full
+      :^  %'POST'  (gs cfg 'token_url')
+        ~[['content-type' 'application/x-www-form-urlencoded']]
+      :-  ~
+      %-  form-body
+      :~  ["grant_type" "authorization_code"]
+          ["code" (trip code)]
+          ["client_id" (trip (gs cfg 'client_id'))]
+          ["client_secret" (trip (gs cfg 'client_secret'))]
+          ["redirect_uri" redirect]
+      ==
+    =/  tok=json  (fall (de:json:html body) *json)
+    =/  refresh=@t  (gs tok 'refresh_token')
+    =/  access=@t  (gs tok 'access_token')
+    ?:  |(!=(200 status) =('' refresh))
+      (send-err 502 (crip "calendar: token exchange failed ({(a-co:co status)}): {(trip (gs tok 'error_description'))}"))
+    ;<  now=@da  bind:m  get-time:io
+    ;<  ~  bind:m
+      %+  write-json-grub  'google-auth.json'
+      %-  pairs:enjs:format
+      :~  ['refresh_token' s+refresh]
+          ['access_token' s+access]
+          ['expires_ms' (numb:enjs:format (add (da-to-ms now) (mul 1.000 (fall (gn tok 'expires_in') 3.600))))]
+      ==
+    (redirect-to "/apps/calendar?google=connected")
+  ?:  &(post ?=([%disconnect ~] rest))
+    ;<  ~  bind:m  (write-json-grub 'google-auth.json' [%o ~])
+    (send-json eyre-id (pairs:enjs:format ~[['ok' b+&]]))
+  ::  calendars.json: the account's calendars, with which are linked
+  ?:  ?=([%'calendars.json' ~] rest)
+    ;<  [status=@ud res=json]  bind:m
+      (google-api %'GET' "/calendar/v3/users/me/calendarList" ~)
+    ?.  =(200 status)  (send-err status (crip "calendar: google answered {(a-co:co status)}"))
+    ;<  sync=json  bind:m  google-sync
+    =/  linked=(map @t @t)
+      %-  ~(gas by *(map @t @t))
+      %+  turn  ?:(?=(%o -.sync) ~(tap by p.sync) ~)
+      |=([id=@t v=json] [(gs v 'google_id') id])
+    =/  items=(list json)
+      =/  it=(unit json)  ?:(?=(%o -.res) (~(get by p.res) 'items') ~)
+      ?:(?=([~ %a *] it) p.u.it ~)
+    %+  send-json  eyre-id
+    :-  %a
+    %+  turn  items
+    |=  it=json
+    ^-  json
+    =/  gid=@t  (gs it 'id')
+    %-  pairs:enjs:format
+    :~  ['id' s+gid]
+        ['name' s+(gs it 'summary')]
+        ['color' s+(gs it 'backgroundColor')]
+        ['primary' b+?=([~ %b %.y] (~(get by ?:(?=(%o -.it) p.it ~)) 'primary'))]
+        ['linked' ?~(l=(~(get by linked) gid) ~ s+u.l)]
+    ==
+  ::  link: a ship calendar of kind google for one of them
+  ?:  &(post ?=([%link ~] rest))
+    =/  gid=@t  (gs jon 'google_id')
+    ?:  =('' gid)  (send-err 400 'calendar: need google_id')
+    ;<  cal-view=view:nexus  bind:m
+      (peek:io (cord-to-road:tarball '../calendar.calendar') ~)
+    =/  c=calendar:cal  (cal-of cal-view)
+    =/  id=@ta  (crip "g-{(trip (scot %uw (mug gid)))}")
+    ?:  (~(has by cals.c) id)  (send-err 409 'calendar: already linked')
+    =/  nm=@t  (gs jon 'name')
+    =/  color=@t  (gs jon 'color')
+    =/  k=cal:cal  fresh-cal:cal
+    =.  props.k  [?:(=('' nm) gid nm) ?:(=('' color) '#1e3a5f' color) %google `gid]
+    ;<  ~  bind:m  (dav-write c(cals (~(put by cals.c) id k)))
+    ;<  sync=json  bind:m  google-sync
+    =/  row=json
+      %-  pairs:enjs:format
+      :~  ['google_id' s+gid]
+          ['sync_token' s+'']
+          ['last_ms' (numb:enjs:format 0)]
+          ['pushed_seq' (numb:enjs:format 0)]
+          ['ids' [%o ~]]
+      ==
+    ;<  ~  bind:m
+      (write-json-grub 'google-sync.json' [%o (~(put by ?:(?=(%o -.sync) p.sync ~)) id row)])
+    ;<  ~  bind:m  google-prod
+    (send-json eyre-id (pairs:enjs:format ~[['id' s+id]]))
+  ?:  &(post ?=([%unlink ~] rest))
+    =/  id=@ta  (crip (trip (gs jon 'id')))
+    ;<  cal-view=view:nexus  bind:m
+      (peek:io (cord-to-road:tarball '../calendar.calendar') ~)
+    =/  c=calendar:cal  (cal-of cal-view)
+    ?.  (~(has by cals.c) id)  (send-err 404 'calendar: not linked')
+    ;<  ~  bind:m  (dav-write c(cals (~(del by cals.c) id)))
+    ;<  sync=json  bind:m  google-sync
+    ;<  ~  bind:m
+      (write-json-grub 'google-sync.json' [%o (~(del by ?:(?=(%o -.sync) p.sync ~)) id)])
+    (send-json eyre-id (pairs:enjs:format ~[['ok' b+&]]))
+  ?:  &(post ?=([%sync ~] rest))
+    ;<  ~  bind:m  google-prod
+    (send-json eyre-id (pairs:enjs:format ~[['ok' b+&]]))
+  (send-err 404 'calendar: no such google route')
+::  +google-prod: wake the sync fiber now
+++  google-prod
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  (poke-soft-unit (cord-to-road:tarball '../google.sig'))
+++  poke-soft-unit
+  |=  =road:tarball
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  ;<  *  bind:m  (poke-soft:io road [[/ %json] `json`[%o ~]])
   (pure:m ~)
 ++  get-meta
   |=  e=event:cal

@@ -35,6 +35,7 @@
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1.5" fill="currentColor" stroke="none"/></svg>
       </button>
       <button id="dav-btn" class="nav-btn" title="CalDAV clients: Thunderbird, DAVx5, iOS">CalDAV</button>
+      <button id="google-btn" class="nav-btn" title="Google Calendar, two-way">Google</button>
       <button id="clock-btn" class="nav-btn" title="Clock format"></button>
       <div id="views">
         <button id="v-month" class="nav-btn view-btn">Month</button>
@@ -192,6 +193,43 @@
         <div id="modal-foot">
           <span id="f-status"></span>
           <button id="f-save" class="nav-btn">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="google-back">
+      <div id="google-modal">
+        <div class="feeds-header">
+          <span>Google Calendar</span>
+          <button id="google-close" class="nav-btn">Close</button>
+        </div>
+        <div id="google-status" class="dav-hint"></div>
+        <details id="google-setup">
+          <summary>Set up your own OAuth client (once)</summary>
+          <ol class="dav-hint">
+            <li>In the Google Cloud console make a project, open <b>APIs &amp; Services → OAuth consent screen</b>, choose External, fill the name and your email, and add yourself as a test user. It can stay in Testing.</li>
+            <li>Enable the <b>Google Calendar API</b> under Library.</li>
+            <li>Under <b>Credentials</b> make an OAuth client of type <b>Web application</b>. Authorized redirect URI, exactly: <code id="google-redirect"></code></li>
+            <li>Paste the client id and secret here, save, then press Connect.</li>
+          </ol>
+        </details>
+        <label class="f">Client id</label>
+        <input id="google-cid" placeholder="1234…apps.googleusercontent.com">
+        <label class="f">Client secret</label>
+        <input id="google-csec" type="password" placeholder="GOCSPX-…">
+        <div class="feeds-foot">
+          <span id="google-msg"></span>
+          <span>
+            <button id="google-save" class="nav-btn">Save</button>
+            <button id="google-connect" class="nav-btn">Connect</button>
+            <button id="google-disconnect" class="nav-btn danger">Disconnect</button>
+          </span>
+        </div>
+        <label class="f">Calendars on Google</label>
+        <div id="google-list"></div>
+        <div class="feeds-foot">
+          <span id="google-conflicts" class="dav-hint"></span>
+          <button id="google-sync-now" class="nav-btn">Sync now</button>
         </div>
       </div>
     </div>

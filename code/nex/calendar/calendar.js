@@ -775,6 +775,82 @@ document.getElementById('feed-add').onclick = function() {
   });
 };
 
+// Google: the user's own OAuth client, connect, link calendars
+var googleBack = document.getElementById('google-back');
+document.getElementById('google-btn').onclick = function() {
+  document.getElementById('google-redirect').textContent = location.origin + CAL + '/google/callback';
+  loadGoogle();
+  googleBack.classList.add('open');
+};
+document.getElementById('google-close').onclick = function() { googleBack.classList.remove('open'); };
+googleBack.onclick = function(e) { if (e.target === googleBack) googleBack.classList.remove('open'); };
+
+function loadGoogle() {
+  var st = document.getElementById('google-status');
+  fetch(CAL + '/google.json')
+    .then(function(r) { return r.json(); })
+    .then(function(g) {
+      document.getElementById('google-cid').value = g.client_id || '';
+      document.getElementById('google-csec').value = '';
+      document.getElementById('google-csec').placeholder = g.client_secret ? g.client_secret + ' (saved)' : 'GOCSPX-…';
+      var linked = g.linked || {};
+      var n = Object.keys(linked).length;
+      st.textContent = g.connected ? ('Connected. ' + n + ' calendar' + (n === 1 ? '' : 's') + ' linked.') : 'Not connected.';
+      document.getElementById('google-setup').open = !g.client_id;
+      if (g.connected) loadGoogleCalendars(linked);
+      else document.getElementById('google-list').innerHTML = '';
+    })
+    .catch(function() { st.textContent = 'could not read the Google settings'; });
+  fetch(CAL + '/google/conflicts.json').then(function(r) { return r.json(); }).then(function(cs) {
+    document.getElementById('google-conflicts').textContent = cs.length ? (cs.length + ' conflict' + (cs.length === 1 ? '' : 's') + ' logged') : '';
+  }).catch(function() {});
+}
+
+function loadGoogleCalendars(linked) {
+  var list = document.getElementById('google-list');
+  list.innerHTML = '<div class="feed-row" style="border:none;color:#666">Loading…</div>';
+  fetch(CAL + '/google/calendars.json')
+    .then(function(r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+    .then(function(cs) {
+      list.innerHTML = '';
+      cs.forEach(function(c) {
+        var row = document.createElement('div');
+        row.className = 'feed-row';
+        var dot = document.createElement('span');
+        dot.style.cssText = 'width:10px;height:10px;border-radius:50%;display:inline-block;background:' + (c.color || '#888');
+        var nm = document.createElement('span'); nm.className = 'fn'; nm.textContent = c.name + (c.primary ? ' (primary)' : '');
+        var u = document.createElement('span'); u.className = 'fu';
+        var linkedId = c.linked;
+        u.textContent = linkedId ? ('linked' + (linked[linkedId] && linked[linkedId].last_ms ? ', synced ' + new Date(linked[linkedId].last_ms).toLocaleString() : ', not synced yet')) : '';
+        var b = document.createElement('button'); b.className = 'fx'; b.style.fontSize = '12px';
+        b.textContent = linkedId ? 'Unlink' : 'Link';
+        b.onclick = function() {
+          var body = linkedId ? { id: linkedId } : { google_id: c.id, name: c.name, color: c.color };
+          fetch(CAL + '/google/' + (linkedId ? 'unlink' : 'link'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+            .then(function() { loadGoogle(); loadCals(); });
+        };
+        row.appendChild(dot); row.appendChild(nm); row.appendChild(u); row.appendChild(b);
+        list.appendChild(row);
+      });
+      if (!cs.length) list.innerHTML = '<div class="feed-row" style="border:none;color:#666">No calendars on this account.</div>';
+    })
+    .catch(function(e) { list.innerHTML = '<div class="feed-row" style="border:none;color:#f87171">Google answered ' + e.message + '</div>'; });
+}
+
+document.getElementById('google-save').onclick = function() {
+  var body = { client_id: document.getElementById('google-cid').value.trim(), client_secret: document.getElementById('google-csec').value.trim() };
+  fetch(CAL + '/google/config', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+    .then(function() { document.getElementById('google-msg').textContent = 'saved'; loadGoogle(); });
+};
+document.getElementById('google-connect').onclick = function() { location.href = CAL + '/google/connect'; };
+document.getElementById('google-disconnect').onclick = function() {
+  fetch(CAL + '/google/disconnect', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then(function() { loadGoogle(); });
+};
+document.getElementById('google-sync-now').onclick = function() {
+  fetch(CAL + '/google/sync', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then(function() { setTimeout(function() { loadGoogle(); load(); }, 3000); });
+};
+if (new URLSearchParams(location.search).get('google') === 'connected') { setTimeout(function() { document.getElementById('google-btn').click(); }, 500); }
+
 // CalDAV clients: list, mint (the password shows once), revoke
 var davBack = document.getElementById('dav-back');
 document.getElementById('dav-btn').onclick = function() {

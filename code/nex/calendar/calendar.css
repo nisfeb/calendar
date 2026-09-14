@@ -28,6 +28,15 @@ body { font-family: -apple-system, system-ui, sans-serif; background: #111; colo
 .cap-chip { background: transparent; border: 1px dashed #555; color: #999; }
 .cap-chip:hover { filter: none; border-color: #888; color: #ccc; }
 /* feeds modal */
+#google-back { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 100; }
+#google-back.open { display: flex; align-items: center; justify-content: center; }
+#google-modal { background: #1a1a1a; border: 1px solid #333; border-radius: 14px; width: 92%; max-width: 520px; padding: 20px; max-height: 90vh; overflow-y: auto; }
+#google-modal input { width: 100%; padding: 7px 9px; border-radius: 6px; border: 1px solid #333; background: #111; color: #eee; font-size: 13px; outline: none; }
+#google-modal input:focus { border-color: #2563eb; }
+#google-modal code { color: #93c5fd; font-size: 12px; user-select: all; }
+#google-modal summary { cursor: pointer; font-size: 12px; color: #93c5fd; margin: 6px 0; }
+#google-modal ol { padding-left: 18px; }
+#google-msg { font-size: 12px; color: #f87171; }
 #dav-back { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 100; }
 #dav-back.open { display: flex; align-items: center; justify-content: center; }
 #dav-modal { background: #1a1a1a; border: 1px solid #333; border-radius: 14px; width: 92%; max-width: 480px; padding: 20px; }
