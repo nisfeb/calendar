@@ -6,7 +6,8 @@
 |_  =calendar:calendar
 ++  grab
   |%
-  ++  noun  ,calendar:^calendar
+  ::  any stored shape loads; a phase 1 noun is lifted on the way in
+  ++  noun  |=(n=* (lift:^calendar n))
   --
 ++  grow
   |%

@@ -59,11 +59,42 @@
       [%date month=@ud day=@ud =meta]
   ==
 ::
-+$  calendar
+::  the phase 1 noun: one calendar, events by id. Kept so a stored one
+::  still loads; +lift turns it into the current shape.
++$  calendar-1
   $:  title=@t
+      zone=(unit @t)
+      horizon=@dr
+      events=(map eid event)
+  ==
+::  an event's identity and history around its unchanged shape. uid is the
+::  iCalendar UID (the phase 1 id for carried events, <random>@<ship> for
+::  new ones, verbatim from a client or Google). etag is a hash of what a
+::  client would get back. seq is the calendar's change counter at the
+::  last write. alarms and props are what CalDAV clients will send that
+::  the event shape does not model; they round-trip untouched.
++$  uid    @t
++$  etag   @t
++$  alarm  [trigger=$%([%rel before=@dr] [%abs at=@da]) desc=@t]
++$  props  (list [k=@t v=@t])
++$  entry  [=event =uid =etag seq=@ud alarms=(list alarm) =props]
++$  cal-props  [name=@t color=@t kind=?(%local %google) remote=(unit @t)]
++$  logent  [=uid kind=?(%put %del)]
+::  a calendar: its entries, and an append-only log of every put and
+::  delete by seq, so a sync client asking "what changed since N" hears
+::  about deletions too.
++$  cal
+  $:  props=cal-props
+      entries=(map uid entry)
+      log=((mop @ud logent) lth)
+      seq=@ud
+  ==
++$  calendar
+  $:  %2
+      title=@t
       zone=(unit @t)   ::  display zone for the UI
       horizon=@dr      ::  how far ahead the cache inflates
-      events=(map eid event)
+      cals=(map @ta cal)
   ==
 ::
 +$  ref    [=eid idx=@ud =span]
@@ -75,7 +106,76 @@
 +$  cache  [thru=@da stops=(map eid @da) =order]
 ++  on-order  ((on @da (set ref)) lth)
 ::
-++  fresh-calendar  `calendar`['Calendar' ~ (mul 3 ~d365) ~]
+++  on-log    ((on @ud logent) lth)
+++  fresh-cal  `cal`[['Calendar' '#1e3a5f' %local ~] ~ ~ 0]
+++  fresh-calendar
+  ^-  calendar
+  [%2 'Calendar' ~ (mul 3 ~d365) (~(put by *(map @ta cal)) %default fresh-cal)]
+::  +make-etag: what a client would get back, hashed. The uid and seq are
+::  identity, not content, so they are left out.
+++  make-etag
+  |=  e=entry
+  ^-  etag
+  (scot %uw (sham [event.e alarms.e props.e]))
+::  +lift: any stored calendar noun to the current shape. A phase 1
+::  calendar becomes the %default calendar; its ids become uids; every
+::  event is entered once so the log starts complete.
+++  lift
+  |=  n=*
+  ^-  calendar
+  ?:  ?=([%2 *] n)  ;;(calendar n)
+  =/  old=calendar-1  ;;(calendar-1 n)
+  =/  c=cal
+    %+  roll  ~(tap by events.old)
+    |=  [[id=eid ev=event] acc=_fresh-cal]
+    (put-entry acc [ev id '' 0 ~ ~])
+  [%2 title.old zone.old horizon.old (~(put by *(map @ta cal)) %default c)]
+::  +put-entry: write an entry; seq and etag move, the log records it.
+++  put-entry
+  |=  [c=cal e=entry]
+  ^-  cal
+  =/  seq=@ud  +(seq.c)
+  =.  seq.e  seq
+  =.  etag.e  (make-etag e)
+  %_  c
+    seq      seq
+    entries  (~(put by entries.c) uid.e e)
+    log      (put:on-log log.c seq [uid.e %put])
+  ==
+++  del-entry
+  |=  [c=cal =uid]
+  ^-  cal
+  ?.  (~(has by entries.c) uid)  c
+  =/  seq=@ud  +(seq.c)
+  %_  c
+    seq      seq
+    entries  (~(del by entries.c) uid)
+    log      (put:on-log log.c seq [uid %del])
+  ==
+::  +find-entry: which calendar holds a uid, and the entry
+++  find-entry
+  |=  [c=calendar =uid]
+  ^-  (unit [id=@ta =entry])
+  =/  cs=(list [id=@ta k=cal])  ~(tap by cals.c)
+  |-
+  ?~  cs  ~
+  =/  e=(unit entry)  (~(get by entries.k.i.cs) uid)
+  ?^  e  `[id.i.cs u.e]
+  $(cs t.cs)
+::  +entries-all, +events-all: every calendar flattened, keyed by uid. The
+::  inflation engine and the window contract are written over events by
+::  id; a uid is that id now.
+++  entries-all
+  |=  c=calendar
+  ^-  (map uid entry)
+  %-  ~(gas by *(map uid entry))
+  %-  zing
+  %+  turn  ~(tap by cals.c)
+  |=([* k=cal] ~(tap by entries.k))
+++  events-all
+  |=  c=calendar
+  ^-  (map eid event)
+  (~(run by (entries-all c)) |=(e=entry event.e))
 ::
 ::  dead-run stops rules gone quiet (once exhausted, unreachable
 ::  dates); fuel stops high-frequency rules exploding the index
@@ -309,9 +409,30 @@
   :~  ['title' s+title.c]
       ['zone' ?~(zone.c ~ s+u.zone.c)]
       ['horizon_days' (numb:enjs:format (div horizon.c ~d1))]
+      :-  'calendars'
+      :-  %a
+      %+  turn  ~(tap by cals.c)
+      |=  [id=@ta k=cal]
+      %-  pairs:enjs:format
+      :~  ['id' s+id]
+          ['name' s+name.props.k]
+          ['color' s+color.props.k]
+          ['kind' s+kind.props.k]
+          ['seq' (numb:enjs:format seq.k)]
+          ['count' (numb:enjs:format ~(wyt by entries.k))]
+      ==
       :-  'events'
       :-  %a
-      %+  turn  ~(tap by events.c)
-      |=([id=@ta e=event] (event-json id e))
+      %+  turn  ~(tap by (entries-all c))
+      |=  [u=uid e=entry]
+      ^-  json
+      =/  base=json  (event-json u event.e)
+      ?.  ?=(%o -.base)  base
+      :-  %o
+      %-  ~(gas by p.base)
+      :~  ['uid' s+u]
+          ['etag' s+etag.e]
+          ['seq' (numb:enjs:format seq.e)]
+      ==
   ==
 --

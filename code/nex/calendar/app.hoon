@@ -9,7 +9,6 @@
 /<  rules  /lib/rules.hoon
 /<  pytz   /lib/pytz.hoon
 /<  ics    /lib/ics.hoon
-/<  sh     /lib/shell.hoon
 ::  the rule kinds, compiled in. The ball-era calendar loaded them at run
 ::  time from /code/lib/rules/ through a granted road; a desk install has
 ::  no such road to grant, and the kinds are ours, so they are part of the
@@ -90,17 +89,18 @@
         =/  jon=json  (fall (mole |.(!<(json q.sage))) *json)
         ?.  ?=(%o -.jon)  $
         =/  act=@t  (gs jon 'action')
-        ;<  c=calendar:cal  bind:m  (get-state-as:io ,calendar:cal)
+        ;<  raw=*  bind:m  (get-state-as:io ,*)
+        =/  c=calendar:cal  (lift:cal raw)
         ?:  =('del-event' act)
           =/  id=@ta  (crip (trip (gs jon 'id')))
           ?:  =('' id)  $
-          ;<  ~  bind:m  (replace:io c(events (~(del by events.c) id)))
+          ;<  ~  bind:m  (replace:io (del-ev c id))
           $
         ?:  =('skip-event' act)
           =/  id=@ta  (crip (trip (gs jon 'id')))
           =/  idx=(unit @ud)  (gn jon 'idx')
           ?:  |(=('' id) ?=(~ idx))  $
-          =/  ev=(unit event:cal)  (~(get by events.c) id)
+          =/  ev=(unit event:cal)  (~(get by (events-all:cal c)) id)
           ?~  ev  $
           =/  new=(unit event:cal)
             ?-  -.u.ev
@@ -109,7 +109,7 @@
               %allday  `u.ev(except.bound (~(put in except.bound.u.ev) u.idx))
             ==
           ?~  new  $
-          ;<  ~  bind:m  (replace:io c(events (~(put by events.c) id u.new)))
+          ;<  ~  bind:m  (replace:io (put-ev c id u.new))
           $
         ?:  =('config' act)
           =/  ti=@t  (gs jon 'title')
@@ -166,17 +166,18 @@
           ;<  now=@da  bind:m  get-time:io
           ;<  [synced=(map eid:cal event:cal) skipped=@ud]  bind:m
             (do-sync feeds (sub now (mul 90 ~d1)) (add now (mul 2 ~d365)))
-          =/  kept=(map eid:cal event:cal)
-            %-  ~(gas by *(map eid:cal event:cal))
-            %+  skim  ~(tap by events.c)
-            |=  [@ta e=event:cal]
-            =('' (meta-str:cal (get-meta e) 'feed'))
+          =/  stale=(list @ta)
+            %+  murn  ~(tap by (events-all:cal c))
+            |=  [id=@ta e=event:cal]
+            ?:(=('' (meta-str:cal (get-meta e) 'feed')) ~ `id)
+          =.  c  (roll stale |=([id=@ta acc=_c] (del-ev acc id)))
+          =.  c  (roll ~(tap by synced) |=([[id=@ta e=event:cal] acc=_c] (put-ev acc id e)))
           ~&  >  "%calendar sync: {(scow %ud ~(wyt by synced))} synced, {(scow %ud skipped)} recurring skipped"
-          ;<  ~  bind:m  (replace:io c(events (~(uni by kept) synced)))
+          ;<  ~  bind:m  (replace:io c)
           $
         ?:  =('edit-event' act)
           =/  id=@ta  (crip (trip (gs jon 'id')))
-          =/  old=(unit event:cal)  (~(get by events.c) id)
+          =/  old=(unit event:cal)  (~(get by (events-all:cal c)) id)
           ?~  old  $
           =/  ev=(unit event:cal)  (parse-event jon zone.c)
           ?~  ev
@@ -185,14 +186,14 @@
           ::  the shape is replaced but exceptions survive the edit
           =/  merged=event:cal  (carry-except u.old u.ev)
           ;<  new=event:cal  bind:m  (apply-until merged (gn jon 'until_ms'))
-          ;<  ~  bind:m  (replace:io c(events (~(put by events.c) id new)))
+          ;<  ~  bind:m  (replace:io (put-ev c id new))
           $
         ?:  =('cap-event' act)
           ::  end the series before index dom (this-and-following edits)
           =/  id=@ta  (crip (trip (gs jon 'id')))
           =/  cap=(unit @ud)  (gn jon 'dom')
           ?:  |(=('' id) ?=(~ cap))  $
-          =/  old=(unit event:cal)  (~(get by events.c) id)
+          =/  old=(unit event:cal)  (~(get by (events-all:cal c)) id)
           ?~  old  $
           =/  new=(unit event:cal)
             ?-  -.u.old
@@ -201,7 +202,7 @@
               %allday  `u.old(dom.bound `u.cap)
             ==
           ?~  new  $
-          ;<  ~  bind:m  (replace:io c(events (~(put by events.c) id u.new)))
+          ;<  ~  bind:m  (replace:io (put-ev c id u.new))
           $
         ?.  =('add-event' act)  $
         =/  ev=(unit event:cal)  (parse-event jon zone.c)
@@ -210,8 +211,9 @@
           $
         ;<  ev2=event:cal  bind:m  (apply-until u.ev (gn jon 'until_ms'))
         ;<  eny=@uvJ  bind:m  get-entropy:io
-        =/  id=@ta  (scot %uv (end [3 8] eny))
-        ;<  ~  bind:m  (replace:io c(events (~(put by events.c) id ev2)))
+        ;<  our=@p  bind:m  get-our:io
+        =/  id=@ta  (crip "{(scow %uv (end [3 8] eny))}@{(scow %p our)}")
+        ;<  ~  bind:m  (replace:io (put-ev c id ev2))
         $
           ::
           ::  /order.calendar-cache: reinflate on calendar news
@@ -225,14 +227,11 @@
         ?.  ?=([%file *] view)
           ;<  *  bind:m  (take-news:io /cal)
           $
-        =/  c=calendar:cal
-          %+  fall
-            (mole |.(!<(calendar:cal (need-vase:tarball sang.view))))
-          fresh-calendar:cal
+        =/  c=calendar:cal  (cal-of view)
         =/  rails=(list rail:tarball)
           %~  tap  in
           %-  sy
-          %+  murn  ~(tap by events.c)
+          %+  murn  ~(tap by (events-all:cal c))
           |=  [@ta e=event:cal]
           ^-  (unit rail:tarball)
           ?-  -.e
@@ -243,7 +242,7 @@
         ;<  kinds=(map rail:tarball kind:rules)  bind:m  (resolve-kinds rails)
         ;<  now=@da  bind:m  get-time:io
         =/  thru=@da  (add now horizon.c)
-        =/  [stops=(map eid:cal @da) o=order:cal]  (inflate:cal events.c kinds thru)
+        =/  [stops=(map eid:cal @da) o=order:cal]  (inflate:cal (events-all:cal c) kinds thru)
         ;<  ~  bind:m  (replace:io `cache:cal`[thru stops o])
         ;<  *  bind:m  (take-news:io /cal)
         $
@@ -275,18 +274,14 @@
         =/  ca=cache:cal
           ?.  ?=([%file *] cache-view)  *cache:cal
           (fall (mole |.(!<(cache:cal (need-vase:tarball sang.cache-view)))) *cache:cal)
-        =/  c=calendar:cal
-          ?.  ?=([%file *] cal-view)  fresh-calendar:cal
-          %+  fall
-            (mole |.(!<(calendar:cal (need-vase:tarball sang.cal-view))))
-          fresh-calendar:cal
+        =/  c=calendar:cal  (cal-of cal-view)
         =/  lo=@da  (add from lead)
         =/  hi=@da  (add now lead)
         =/  due=(list ref:cal)
           %+  skim  ~(tap in (window:cal order.ca lo hi))
           |=  r=ref:cal
           &((gth l.span.r lo) (lte l.span.r hi))
-        ;<  ~  bind:m  (send-reminders due events.c now)
+        ;<  ~  bind:m  (send-reminders due (events-all:cal c) now)
         =/  new-st=json
           :-  %o
           %-  ~(put by ?:(?=(%o -.st) p.st ~))
@@ -320,11 +315,7 @@
           =/  ca=cache:cal
             ?.  ?=([%file *] cache-view)  *cache:cal
             (fall (mole |.(!<(cache:cal (need-vase:tarball sang.cache-view)))) *cache:cal)
-          =/  c=calendar:cal
-            ?.  ?=([%file *] cal-view)  fresh-calendar:cal
-            %+  fall
-              (mole |.(!<(calendar:cal (need-vase:tarball sang.cal-view))))
-            fresh-calendar:cal
+          =/  c=calendar:cal  (cal-of cal-view)
           ::  refresh-ahead: the cache is derived state, so a read
           ::  past the wall (or with under half the horizon left)
           ::  reinflates and persists rather than serving a silent
@@ -339,7 +330,7 @@
             =/  rails=(list rail:tarball)
               %~  tap  in
               %-  sy
-              %+  murn  ~(tap by events.c)
+              %+  murn  ~(tap by (events-all:cal c))
               |=  [@ta e=event:cal]
               ^-  (unit rail:tarball)
               ?-  -.e
@@ -349,7 +340,7 @@
               ==
             ;<  kinds=(map rail:tarball kind:rules)  bind:m  (resolve-kinds rails)
             =/  thru=@da  (max (add now horizon.c) u.to)
-            =/  [stops=(map eid:cal @da) o=order:cal]  (inflate:cal events.c kinds thru)
+            =/  [stops=(map eid:cal @da) o=order:cal]  (inflate:cal (events-all:cal c) kinds thru)
             =/  new=cache:cal  [thru stops o]
             ;<  ~  bind:m
               %+  over:io  (cord-to-road:tarball '../order.calendar-cache')
@@ -362,7 +353,7 @@
             %+  murn  refs
             |=  r=ref:cal
             ^-  (unit json)
-            =/  ev=(unit event:cal)  (~(get by events.c) eid.r)
+            =/  ev=(unit event:cal)  (~(get by (events-all:cal c)) eid.r)
             ?~  ev  ~
             :-  ~
             %-  pairs:enjs:format
@@ -380,7 +371,7 @@
             %+  murn  ~(tap by stops.ca)
             |=  [id=@ta stop=@da]
             ^-  (unit json)
-            =/  ev=(unit event:cal)  (~(get by events.c) id)
+            =/  ev=(unit event:cal)  (~(get by (events-all:cal c)) id)
             ?~  ev  ~
             :-  ~
             %-  pairs:enjs:format
@@ -398,12 +389,8 @@
           =/  id=@ta  (crip (trip (fall (get-key:kv:html-utils 'id' args) '')))
           ;<  cal-view=view:nexus  bind:m
             (peek:io (cord-to-road:tarball '../calendar.calendar') ~)
-          =/  c=calendar:cal
-            ?.  ?=([%file *] cal-view)  fresh-calendar:cal
-            %+  fall
-              (mole |.(!<(calendar:cal (need-vase:tarball sang.cal-view))))
-            fresh-calendar:cal
-          =/  ev=(unit event:cal)  (~(get by events.c) id)
+          =/  c=calendar:cal  (cal-of cal-view)
+          =/  ev=(unit event:cal)  (~(get by (events-all:cal c)) id)
           ?~  ev
             ;<  ~  bind:m  (send-simple:srv eyre-id [[404 ~] `(as-octs:mimes:html 'No such event')])
             (pure:m ~)
@@ -411,14 +398,10 @@
         ?:  ?=([%'events.json' ~] suffix)
           ;<  cal-view=view:nexus  bind:m
             (peek:io (cord-to-road:tarball '../calendar.calendar') ~)
-          =/  c=calendar:cal
-            ?.  ?=([%file *] cal-view)  fresh-calendar:cal
-            %+  fall
-              (mole |.(!<(calendar:cal (need-vase:tarball sang.cal-view))))
-            fresh-calendar:cal
+          =/  c=calendar:cal  (cal-of cal-view)
           =/  rows=json
             :-  %a
-            %+  turn  ~(tap by events.c)
+            %+  turn  ~(tap by (events-all:cal c))
             |=  [id=@ta e=event:cal]
             ^-  json
             %-  pairs:enjs:format
@@ -443,18 +426,17 @@
         ::  /config.json: title, display zone, poke target for the client
         ?:  ?=([%'config.json' ~] suffix)
           ::  our own address, read from grant.json (no peek / walk).
-          ;<  bh=(unit @t)  bind:m  (here:sh rail)
+          ::  our own address, for the UI's poke url. grant.json is not a
+          ::  stable source (the loader prunes it on a reload); the shell's
+          ::  link registry is, and it is read through a granted road.
+          ;<  base=(unit path)  bind:m  self-base
           =/  ball=tape
-            ?~  bh  ""
-            =/  bt=tape  (trip u.bh)
+            ?~  base  ""
+            =/  bt=tape  (spud u.base)
             ?:(?&(?=(^ bt) =('/' i.bt)) t.bt bt)
           ;<  zone-view=view:nexus  bind:m
             (peek:io (cord-to-road:tarball '../calendar.calendar') ~)
-          =/  c=calendar:cal
-            ?.  ?=([%file *] zone-view)  fresh-calendar:cal
-            %+  fall
-              (mole |.(!<(calendar:cal (need-vase:tarball sang.zone-view))))
-            fresh-calendar:cal
+          =/  c=calendar:cal  (cal-of zone-view)
           =/  =json
             %-  pairs:enjs:format
             :~  ['title' s+title.c]
@@ -479,6 +461,48 @@
 |%
 ++  srv  ~(. http-res:io [%| 1 %& ~ %'main.sig'])
 ::
+::  +cal-of: a stored calendar view, any shape, or a fresh one
+++  cal-of
+  |=  vw=view:nexus
+  ^-  calendar:cal
+  ?.  ?=([%file *] vw)  fresh-calendar:cal
+  (fall (mole |.((lift:cal (sang-noun:tarball sang.vw)))) fresh-calendar:cal)
+::  +put-ev, +del-ev: an event by id into the calendar that holds it, or
+::  %default for a new one. The entry's identity (uid, alarms, props)
+::  survives an edit; only the event shape is replaced.
+++  put-ev
+  |=  [c=calendar:cal id=@ta ev=event:cal]
+  ^-  calendar:cal
+  =/  got=(unit [cid=@ta e=entry:cal])  (find-entry:cal c id)
+  =/  cid=@ta  ?~(got %default cid.u.got)
+  =/  k=cal:cal  (fall (~(get by cals.c) cid) fresh-cal:cal)
+  =/  e=entry:cal  ?~(got [ev id '' 0 ~ ~] e.u.got(event ev))
+  c(cals (~(put by cals.c) cid (put-entry:cal k e)))
+++  del-ev
+  |=  [c=calendar:cal id=@ta]
+  ^-  calendar:cal
+  =/  got=(unit [cid=@ta e=entry:cal])  (find-entry:cal c id)
+  ?~  got  c
+  =/  k=cal:cal  (fall (~(get by cals.c) cid.u.got) fresh-cal:cal)
+  c(cals (~(put by cals.c) cid.u.got (del-entry:cal k id)))
+::  +self-base: where this instance lives, from the shell's link registry
+::  (/sys/link/calendar/dest.lanes: every instance claiming the name,
+::  newest first, ours among them). ~ when the road is refused or the
+::  registry has no row yet.
+++  self-base
+  =/  m  (fiber:fiber:nexus ,(unit path))
+  ^-  form:m
+  ;<  vw=(unit view:nexus)  bind:m
+    (peek-soft:io [%& %& /sys/link/calendar %'dest.lanes'] ~)
+  ?.  ?=([~ %file *] vw)  (pure:m ~)
+  =/  ls=(unit (set lane:tarball))
+    (mole |.(!<((set lane:tarball) (need-vase:tarball sang.u.vw))))
+  ?~  ls  (pure:m ~)
+  =/  dirs=(list path)
+    %+  murn  ~(tap in u.ls)
+    |=(=lane:tarball ?:(?=(%| -.lane) `p.lane ~))
+  ?~  dirs  (pure:m ~)
+  (pure:m `i.dirs)
 ++  get-meta
   |=  e=event:cal
   ^-  meta:cal
@@ -681,7 +705,8 @@
       ==
       :-  'peek'
       :-  %a
-      :~  (line '/apps/calendar.calendar/' 'copy your existing events, reminders and feeds across from where the calendar used to live. Read-only, once, and the old copy is left untouched. Refuse it and this install starts empty')
+      :~  (line '/sys/link/' 'look up where this app is installed, so the page can address its own writer. Refuse this and the page cannot save events')
+          (line '/apps/calendar.calendar/' 'copy your existing events, reminders and feeds across from where the calendar used to live. Read-only, once, and the old copy is left untouched. Refuse it and this install starts empty')
       ==
   ==
 ::  +resolve-kinds: load kind gates from the code namespace
