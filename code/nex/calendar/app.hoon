@@ -23,10 +23,10 @@
 /<  k-once         /lib/rules/once.hoon
 /<  k-weekly       /lib/rules/weekly.hoon
 /<  k-yearly       /lib/rules/yearly.hoon
-/&  icon      calendar/icon.svg
-/&  cal-html  calendar/calendar.html
-/&  cal-css   calendar/calendar.css
-/&  cal-js    calendar/calendar.js
+/&  icon      icon.svg
+/&  cal-html  calendar.html
+/&  cal-css   calendar.css
+/&  cal-js    calendar.js
 =<  ^-  nexus:nexus
     |%
     ++  on-load
