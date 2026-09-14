@@ -873,8 +873,18 @@ function loadCalsList() {
       save.onclick = function() { poke({ action: 'edit-calendar', id: c.id, name: nm.value.trim(), color: color.value }, function() { setTimeout(loadCalsList, 300); }); };
       var del = document.createElement('button'); del.className = 'fx'; del.textContent = '✕'; del.title = 'Delete this calendar and its events';
       if (c.id === 'default' || c.kind !== 'local') del.style.visibility = 'hidden';
+      var mig = document.createElement('button'); mig.className = 'fx'; mig.style.fontSize = '12px'; mig.textContent = 'Make local'; mig.title = 'Copy everything once and stop syncing; the source is left as it is';
+      if (c.kind === 'local') mig.style.display = 'none';
+      mig.onclick = function() {
+        if (!confirm('Make "' + c.name + '" a local calendar? It pulls once more, then stops syncing and keeps its ' + c.count + ' events here. The ' + (c.kind === 'google' ? 'Google' : 'source') + ' calendar is not changed; delete it there yourself if you no longer want it.')) return;
+        mig.textContent = 'working…';
+        fetch(CAL + '/migrate', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: c.id }) })
+          .then(function(r) { return r.json(); })
+          .then(function() { loadCalsList(); loadCdav(); loadGoogle(); })
+          .catch(function() { mig.textContent = 'failed'; });
+      };
       del.onclick = function() { if (!confirm('Delete "' + c.name + '" and its ' + c.count + ' events?')) return; poke({ action: 'del-calendar', id: c.id }, function() { setTimeout(loadCalsList, 300); }); };
-      row.appendChild(color); row.appendChild(nm); row.appendChild(badge); row.appendChild(n); row.appendChild(save); row.appendChild(del);
+      row.appendChild(color); row.appendChild(nm); row.appendChild(badge); row.appendChild(n); row.appendChild(save); row.appendChild(mig); row.appendChild(del);
       list.appendChild(row);
     });
   }).catch(function() {});

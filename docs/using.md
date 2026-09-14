@@ -28,3 +28,12 @@ private extended properties and come back intact.
 
 API: `GET /apps/calendar/tags.json` lists tags with counts;
 `window.json` and `events.json` take `?tag=<tag>`; rows carry `meta.tags`.
+
+## Making a synced calendar local (migrate)
+
+Settings → Calendars → **Make local** on a followed or Google calendar. It
+pulls once more, then stops syncing: the sync row goes and the remote ids
+come off the events. The calendar stays, with everything in it, as a local
+calendar — shareable over CalDAV like any other. The source is not changed;
+if you no longer want it there, delete it at the source yourself. Nothing
+here ever deletes a calendar for you.

@@ -479,7 +479,9 @@
   %-  zing
   ;:  weld
     ~[(weld "BEGIN:VEVENT" crlf)]
-    ~[(line "UID" (trip uid.e))]
+    ::  an override child carries its parent's UID, as RFC 5545 wants
+    =/  parent=(list prop)  (skim props.e |=(p=prop =('X-GRUBBERY-PARENT' k.p)))
+    ~[(line "UID" (trip ?~(parent uid.e v.i.parent)))]
     ~[(line "DTSTAMP" (weld (dt-text now) "Z"))]
     ~[(line "SEQUENCE" (a-co:co seq.e))]
     ~[(line "SUMMARY" (escape (ms 'name')))]

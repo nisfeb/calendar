@@ -389,6 +389,57 @@
           (google-request eyre-id req our t.suffix args)
         ?:  ?=([%caldav *] suffix)
           (caldav-request eyre-id req t.suffix)
+        ::  POST /migrate {id}: a followed or Google calendar becomes a
+        ::  local one — one last pull, then the sync row goes and the
+        ::  remote ids come off the events. The source is never touched;
+        ::  deleting it there is the user's own act.
+        ?:  &(=('POST' method.request.req) ?=([%migrate ~] suffix))
+          =/  jon=json
+            (fall (de:json:html ?~(body.request.req '' q.u.body.request.req)) *json)
+          =/  id=@ta  (crip (trip (gs jon 'id')))
+          ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road '../' 'calendar.calendar') ~)
+          =/  c=calendar:cal  (cal-of cal-view)
+          =/  k=(unit cal:cal)  (~(get by cals.c) id)
+          ?~  k
+            ;<  ~  bind:m  (send-simple:srv eyre-id [[404 ~] `(as-octs:mimes:html 'calendar: no such calendar')])
+            (pure:m ~)
+          =/  kind=?(%local %google %caldav)  kind.props.u.k
+          ?:  ?=(%local kind)
+            ;<  ~  bind:m  (send-simple:srv eyre-id [[400 ~] `(as-octs:mimes:html 'calendar: already local')])
+            (pure:m ~)
+          ::  1. one last pull, so nothing on the remote is missed
+          =/  rows-name=@t  ?:(?=(%google kind) 'google-sync.json' 'caldav-remotes.json')
+          ;<  rows=json  bind:m  (read-json-grub '../' rows-name)
+          =/  row=(unit json)  ?:(?=(%o -.rows) (~(get by p.rows) id) ~)
+          ;<  ~  bind:m
+            ?~  row  (pure:(fiber:fiber:nexus ,~) ~)
+            ;<  *  bind:(fiber:fiber:nexus ,~)
+              ?:  ?=(%google kind)  (google-pull '../' id u.row)
+              (caldav-pull '../' id u.row)
+            (pure:(fiber:fiber:nexus ,~) ~)
+          ::  2. the sync row goes: nothing pulls or pushes it again
+          ;<  ~  bind:m
+            (write-json-grub '../' rows-name [%o (~(del by ?:(?=(%o -.rows) p.rows ~)) id)])
+          ::  3. the calendar is local now; the remote ids come off
+          ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road '../' 'calendar.calendar') ~)
+          =/  c=calendar:cal  (cal-of cal-view)
+          =/  k=cal:cal  (fall (~(get by cals.c) id) fresh-cal:cal)
+          =.  props.k  props.k(kind %local, remote ~)
+          =.  k
+            %+  roll  ~(tap by entries.k)
+            |=  [[u=uid:cal e=entry:cal] acc=_k]
+            =/  props=(list [@t @t])
+              %+  skip  props.e
+              |=([key=@t *] |(=('X-GOOGLE-ID' key) =('X-GOOGLE-UPDATED' key)))
+            ?:  =(props props.e)  acc
+            (put-entry:cal acc e(props props))
+          ;<  ~  bind:m  (dav-write '../' c(cals (~(put by cals.c) id k)))
+          %+  send-json  eyre-id
+          %-  pairs:enjs:format
+          :~  ['ok' b+&]
+              ['id' s+id]
+              ['events' (numb:enjs:format ~(wyt by entries.k))]
+          ==
         ?:  ?=([%'google.json' ~] suffix)
           ;<  cfg=json  bind:m  (google-config '../')
           ;<  auth=json  bind:m  (google-auth '../')
@@ -641,10 +692,7 @@
           =/  bodies=(list tape)
             %-  zing
             %+  turn  picked
-            |=  [id=@ta k=cal:cal]
-            %+  turn  ~(tap by entries.k)
-            |=  [u=uid:cal e=entry:cal]
-            (write-entry:ics e (exdates-of e) now)
+            |=([id=@ta k=cal:cal] (export-objects k now))
           =/  body=@t  (write-calendar:ics title.c bodies)
           ;<  ~  bind:m
             %+  send-simple:srv  eyre-id
@@ -666,13 +714,17 @@
           =/  k=cal:cal  (fall (~(get by cals.c) target) fresh-cal:cal)
           =/  ves=(list vevent:ics)  ?:(=('' body) ~ (events:ics body))
           =/  res=[k=cal:cal imported=@ud skipped=@ud]
-            %+  roll  ves
-            |=  [ve=vevent:ics acc=_[k=k imported=0 skipped=0]]
-            =/  got=(unit [e=entry:cal exdates=(list @da)])  (to-entry:ics ve zone.c)
-            ?~  got  acc(skipped +(skipped.acc))
-            ?:  =('' uid.e.u.got)  acc(skipped +(skipped.acc))
-            =/  e=entry:cal  (with-exdates e.u.got exdates.u.got)
-            acc(k (put-entry:cal k.acc e), imported +(imported.acc))
+            ::  one object per UID: a parent and its overrides together
+            =/  groups=(map @t (list vevent:ics))
+              %+  roll  ves
+              |=  [ve=vevent:ics acc=(map @t (list vevent:ics))]
+              ?:  =('' uid.ve)  acc
+              (~(put by acc) uid.ve (snoc (fall (~(get by acc) uid.ve) ~) ve))
+            %+  roll  ~(tap by groups)
+            |=  [[u=@t group=(list vevent:ics)] acc=_[k=k imported=0 skipped=0]]
+            =/  put=(unit [k=cal:cal =uid:cal])  (put-object k.acc group zone.c u ~)
+            ?~  put  acc(skipped +(skipped.acc))
+            acc(k k.u.put, imported +(imported.acc))
           ;<  ~  bind:m
             %+  over:io  (cord-to-road:tarball '../calendar.calendar')
             [[/ %calendar] c(cals (~(put by cals.c) target k.res))]
@@ -772,6 +824,10 @@
   =/  got=(unit [cid=@ta e=entry:cal])  (find-entry:cal c id)
   ?~  got  c
   =/  k=cal:cal  (fall (~(get by cals.c) cid.u.got) fresh-cal:cal)
+  ::  an override child goes with its parent
+  =.  k
+    %+  roll  (dav-children k id)
+    |=([ch=entry:cal acc=_k] (del-entry:cal acc uid.ch))
   c(cals (~(put by cals.c) cid.u.got (del-entry:cal k id)))
 ::  +self-base: where this instance lives, from the shell's link registry
 ::  (/sys/link/calendar/dest.lanes: every instance claiming the name,
@@ -996,18 +1052,9 @@
           ==
       ==
     (fail 412 'calendar: the object changed; fetch it again')
-  =/  overrides=(list vevent:ics)  (skim `(list vevent:ics)`ves |=(v=vevent:ics ?=(^ (dav-rid v))))
-  ::  a PUT replaces the whole override set: the old children go first
-  =/  kk=cal:cal  u.k
-  =.  kk
-    %+  roll  (dav-children kk uid.e)
-    |=([ch=entry:cal acc=_kk] (del-entry:cal acc uid.ch))
-  =/  put=(unit [k=cal:cal =uid:cal])  (put-parent kk u.parent zone.c uid.res ~)
+  =/  put=(unit [k=cal:cal =uid:cal])  (put-object u.k ves zone.c uid.res ~)
   ?~  put  (fail 400 'calendar: could not read the VEVENT')
-  =.  kk  k.u.put
-  =.  kk
-    %+  roll  overrides
-    |=([v=vevent:ics acc=_kk] (put-override acc uid.u.put v zone.c ~))
+  =/  kk=cal:cal  k.u.put
   ;<  ~  bind:m  (dav-write '../' c(cals (~(put by cals.c) id.res kk)))
   =/  new-etag=@t
     =/  ne=(unit entry:cal)  (~(get by entries.kk) uid.e)
@@ -1019,6 +1066,26 @@
         ['etag' (crip "\"{(trip new-etag)}\"")]
     ==
   (pure:m ~)
+::  +put-object: one iCalendar object's VEVENTs into a calendar: the one
+::  without a RECURRENCE-ID is the parent, the others its overrides, and
+::  the old override set goes. ~ when there is no parent or it cannot
+::  be read. Import, DAV PUT and the follower all come through here.
+++  put-object
+  |=  [k=cal:cal ves=(list vevent:ics) zone=(unit @t) uid-hint=@t extra=(list [@t @t])]
+  ^-  (unit [k=cal:cal =uid:cal])
+  =/  parents=(list vevent:ics)  (skip `(list vevent:ics)`ves |=(v=vevent:ics ?=(^ (dav-rid v))))
+  ?~  parents  ~
+  =/  overrides=(list vevent:ics)  (skim `(list vevent:ics)`ves |=(v=vevent:ics ?=(^ (dav-rid v))))
+  =/  u=@t  ?:(=('' uid.i.parents) uid-hint uid.i.parents)
+  =.  k
+    %+  roll  (dav-children k u)
+    |=([ch=entry:cal acc=_k] (del-entry:cal acc uid.ch))
+  =/  put=(unit [k=cal:cal =uid:cal])  (put-parent k i.parents zone u extra)
+  ?~  put  ~
+  :-  ~
+  :_  uid.u.put
+  %+  roll  overrides
+  |=([v=vevent:ics acc=_k.u.put] (put-override acc uid.u.put v zone extra))
 ::  +put-parent: a parent VEVENT into a calendar. An existing entry
 ::  keeps its identity (seq); the file's EXDATEs become skips. Extra
 ::  props (a Google id, say) ride along. ~ when the VEVENT cannot be read.
@@ -1182,6 +1249,21 @@
     ~[(propstat:dav 403 (turn refused |=(n=@tas (d-el:dav n ~))))]
   =/  resp=manx  (d-el:dav %response [(href:dav h) stats])
   (dav-send-xml eyre-id 207 (multistatus:dav ~[resp] ~))
+::  +export-objects: a calendar as VEVENT bodies, one object per parent:
+::  it and then its override children; a child is never on its own
+++  export-objects
+  |=  [k=cal:cal now=@da]
+  ^-  (list tape)
+  =/  ents=(list [uid:cal entry:cal])  ~(tap by entries.k)
+  =|  out=(list tape)
+  |-
+  ?~  ents  (flop out)
+  =/  u=uid:cal  -.i.ents
+  =/  e=entry:cal  +.i.ents
+  ?:  (dav-is-child e)  $(ents t.ents)
+  =/  objs=(list entry:cal)  [e (dav-children k u)]
+  =/  lines=(list tape)  (turn objs |=(x=entry:cal (write-entry:ics x (exdates-of x) now)))
+  $(ents t.ents, out (weld (flop lines) out))
 ::  +dav-children: the override entries of a parent, in one calendar
 ++  dav-children
   |=  [k=cal:cal parent=uid:cal]
@@ -1904,6 +1986,8 @@
   ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road pre 'calendar.calendar') ~)
   =/  c=calendar:cal  (cal-of cal-view)
   =/  k=cal:cal  (fall (~(get by cals.c) id) fresh-cal:cal)
+  ?.  ?=(%google kind.props.k)  (pure:m row)
+  =/  k=cal:cal  k
   =/  items=(list gitem:gcal)  (murn (arr:gcal res 'items') item-of:gcal)
   ::  an item whose uid also changed here since the last push is a
   ::  conflict: Google wins, the local copy is logged
@@ -1984,6 +2068,9 @@
   =/  c=calendar:cal  (cal-of cal-view)
   =/  k=(unit cal:cal)  (~(get by cals.c) id)
   ?~  k  (pure:m row)
+  ::  a calendar made local (migrated) is never pushed, whatever row a
+  ::  pass already in flight still holds
+  ?.  ?=(%google kind.props.u.k)  (pure:m row)
   ?.  (gth seq.u.k since)  (pure:m row)
   =/  pulled-seq=@ud  (fall (gn row 'pulled_seq') 0)
   =/  pulled=(set @t)  (~(gas in *(set @t)) (turn (arr:gcal row 'pulled_uids') |=(j=json ?:(?=(%s -.j) p.j ''))))
@@ -2042,6 +2129,7 @@
   ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road pre 'calendar.calendar') ~)
   =/  c=calendar:cal  (cal-of cal-view)
   =/  kk=cal:cal  (fall (~(get by cals.c) id) fresh-cal:cal)
+  =?  results  !?=(%google kind.props.kk)  ~
   =.  kk
     %+  roll  results
     |=  [[u=uid:cal g=@t up=@t] acc=_kk]
@@ -2297,6 +2385,8 @@
   ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road pre 'calendar.calendar') ~)
   =/  c=calendar:cal  (cal-of cal-view)
   =/  k=cal:cal  (fall (~(get by cals.c) id) fresh-cal:cal)
+  ?.  ?=(%caldav kind.props.k)  (pure:m row)
+  =/  k=cal:cal  k
   =/  res=[k=cal:cal ids=(map @t json) touched=(set @t)]
     %+  roll  (flop fetched)
     |=  [[href=tape etag=@t gone=? body=@t] acc=_[k=k ids=ids touched=*(set @t)]]
@@ -2307,20 +2397,9 @@
         %+  roll  (dav-children k.acc u.u)
         |=([ch=entry:cal a=_k.acc] (del-entry:cal a uid.ch))
       acc(k (del-entry:cal k.acc u.u), ids (~(del by ids.acc) u.u), touched (~(put in touched.acc) u.u))
-    =/  ves=(list vevent:ics)  (events:ics body)
-    =/  parent=(unit vevent:ics)
-      =/  ps=(list vevent:ics)  (skip ves |=(v=vevent:ics ?=(^ (dav-rid v))))
-      ?~(ps ~ `i.ps)
-    ?~  parent  acc
-    =/  u=@t  uid.u.parent
-    =.  k.acc
-      %+  roll  (dav-children k.acc u)
-      |=([ch=entry:cal a=_k.acc] (del-entry:cal a uid.ch))
-    =/  put=(unit [k=cal:cal =uid:cal])  (put-parent k.acc u.parent zone.c u ~)
+    =/  put=(unit [k=cal:cal =uid:cal])  (put-object k.acc (events:ics body) zone.c '' ~)
     ?~  put  acc
-    =.  k.acc
-      %+  roll  (skim ves |=(v=vevent:ics ?=(^ (dav-rid v))))
-      |=([v=vevent:ics a=_k.u.put] (put-override a uid.u.put v zone.c ~))
+    =.  k.acc  k.u.put
     acc(ids (~(put by ids.acc) uid.u.put (pairs:enjs:format ~[['href' s+(crip href)] ['etag' s+etag]])), touched (~(put in touched.acc) uid.u.put))
   ;<  ~  bind:m
     ?:  =(k.res k)  (pure:(fiber:fiber:nexus ,~) ~)
@@ -2349,6 +2428,7 @@
   =/  c=calendar:cal  (cal-of cal-view)
   =/  k=(unit cal:cal)  (~(get by cals.c) id)
   ?~  k  (pure:m row)
+  ?.  ?=(%caldav kind.props.u.k)  (pure:m row)
   ?.  (gth seq.u.k since)  (pure:m row)
   =/  pulled-seq=@ud  (fall (gn row 'pulled_seq') 0)
   =/  pulled=(set @t)  (~(gas in *(set @t)) (turn (arr:gcal row 'pulled_uids') |=(j=json ?:(?=(%s -.j) p.j ''))))
