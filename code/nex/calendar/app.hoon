@@ -1749,7 +1749,43 @@
   ?:  &(post ?=([%sync ~] rest))
     ;<  ~  bind:m  (google-prod '../')
     (send-json eyre-id (pairs:enjs:format ~[['ok' b+&]]))
+  ?:  ?=([%'conflicts.json' ~] rest)
+    ;<  cs=json  bind:m  (read-json-grub '../' 'google-conflicts.json')
+    (send-json eyre-id ?:(?=(%a -.cs) cs [%a ~]))
+  ?:  &(post ?=([%conflicts %clear ~] rest))
+    ;<  ~  bind:m  (write-json-grub '../' 'google-conflicts.json' [%a ~])
+    (send-json eyre-id (pairs:enjs:format ~[['ok' b+&]]))
   (send-err 404 'calendar: no such google route')
+::  +google-conflict: both versions kept, so nothing is lost silently.
+::  Google's copy has already won; the local one rides along as ICS.
+++  google-conflict
+  |=  [pre=@t id=@ta =uid:cal local=(unit entry:cal) remote-updated=@t why=@t]
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  ;<  cs=json  bind:m  (read-json-grub pre 'google-conflicts.json')
+  ;<  now=@da  bind:m  get-time:io
+  =/  ics=@t
+    ?~  local  ''
+    (write-calendar:ics 'conflict' ~[(write-entry:ics u.local (exdates-of u.local) now)])
+  =/  row=json
+    %-  pairs:enjs:format
+    :~  ['uid' s+uid]
+        ['cal' s+id]
+        ['at_ms' (numb:enjs:format (da-to-ms now))]
+        ['why' s+why]
+        ['local' s+ics]
+        ['remote_updated' s+remote-updated]
+    ==
+  ~&  >>  [%calendar-google-conflict uid why]
+  (write-json-grub pre 'google-conflicts.json' [%a (snoc ?:(?=(%a -.cs) p.cs ~) row)])
+::  +pending-uids: the uids with a local change the push has not sent yet
+++  pending-uids
+  |=  [k=cal:cal since=@ud]
+  ^-  (set uid:cal)
+  %-  ~(gas in *(set uid:cal))
+  %+  murn  (tap:on-log:cal log.k)
+  |=  [key=@ud val=logent:cal]
+  ?.((gth key since) ~ `uid.val)
 ::  +take-any: the next news on a wire, or any poke (a timer wake is one)
 ++  take-any
   |=  =wire
@@ -1825,6 +1861,18 @@
   =/  c=calendar:cal  (cal-of cal-view)
   =/  k=cal:cal  (fall (~(get by cals.c) id) fresh-cal:cal)
   =/  items=(list gitem:gcal)  (murn (arr:gcal res 'items') item-of:gcal)
+  ::  an item whose uid also changed here since the last push is a
+  ::  conflict: Google wins, the local copy is logged
+  =/  pending=(set uid:cal)  (pending-uids k (fall (gn row 'pushed_seq') 0))
+  =/  clashes=(list gitem:gcal)
+    (skim items |=(g=gitem:gcal &(?=(~ rid.g) (~(has in pending) uid.ve.g))))
+  ;<  ~  bind:m
+    =/  m  (fiber:fiber:nexus ,~)
+    |-  ^-  form:m
+    ?~  clashes  (pure:m ~)
+    ;<  ~  bind:m
+      (google-conflict pre id uid.ve.i.clashes (~(get by entries.k) uid.ve.i.clashes) updated.i.clashes 'changed on both sides; google kept')
+    $(clashes t.clashes)
   ::  parents first, so an instance finds its parent
   =/  parents=(list gitem:gcal)  (skip items |=(g=gitem:gcal ?=(^ rid.g)))
   =/  insts=(list gitem:gcal)  (skim items |=(g=gitem:gcal ?=(^ rid.g)))
@@ -1930,7 +1978,8 @@
       ~&  >>>  [%calendar-google-push-stopped u status]
       $(changes ~, stopped &)
     ?.  =(200 status)
-      ~&  >>>  [%calendar-google-push-refused u status]
+      ;<  ~  bind:m
+        (google-conflict pre id u e (gs res 'updated') (crip "google refused the push ({(a-co:co status)})"))
       $(changes t.changes)
     =/  new-gid=@t  (gs res 'id')
     %=  $

@@ -24,6 +24,7 @@ EVENTS = {c: {} for c in CALS}        # cid -> eid -> event (deleted ones keep s
 CHANGES = {c: [] for c in CALS}       # cid -> [eid, ...] in change order (sync tokens index this)
 GONE = {c: False for c in CALS}
 WRITES = []                           # every write the ship made: (method, cid, eid)
+FAIL = {'writes': False}              # __control {op: fail, on: true|false}: writes answer 503
 
 
 def now_iso():
@@ -94,7 +95,7 @@ class H(BaseHTTPRequestHandler):
             c = json.loads(raw or b'{}'); op = c.get('op'); cid = c.get('cal', 'primary@fake')
             if op == 'reset':
                 for k in EVENTS: EVENTS[k] = {}; CHANGES[k] = []; GONE[k] = False
-                WRITES.clear(); self.send(200, {'ok': True}); return
+                WRITES.clear(); FAIL['writes'] = False; self.send(200, {'ok': True}); return
             if op == 'put':
                 ev = c['event']; ev.setdefault('id', uuid.uuid4().hex[:12]); ev.setdefault('status', 'confirmed')
                 ev.setdefault('iCalUID', ev['id'] + '@google.com'); touch(cid, ev); self.send(200, ev); return
@@ -102,12 +103,15 @@ class H(BaseHTTPRequestHandler):
                 ev = EVENTS[cid][c['id']]; ev['status'] = 'cancelled'; touch(cid, ev); self.send(200, ev); return
             if op == 'gone':
                 GONE[cid] = True; self.send(200, {'ok': True}); return
+            if op == 'fail':
+                FAIL['writes'] = bool(c.get('on', True)); self.send(200, {'ok': True}); return
             if op == 'state':
                 self.send(200, {'events': EVENTS, 'writes': WRITES}); return
             self.send(400, {'error': 'bad op'}); return
         if not self.authed(): self.send(401, {'error': {'code': 401}}); return
         parts = p.split('/')
         if len(parts) == 6 and parts[3] == 'calendars' and parts[5] == 'events':
+            if FAIL['writes']: self.send(503, {'error': {'code': 503, 'message': 'forced'}}); return
             cid = parts[4]; ev = json.loads(raw); ev['id'] = uuid.uuid4().hex[:12]; ev.setdefault('status', 'confirmed')
             ev.setdefault('iCalUID', ev['id'] + '@google.com'); touch(cid, ev); WRITES.append(('insert', cid, ev['id'])); self.send(200, ev); return
         self.send(404, {'error': {'code': 404}})
@@ -117,6 +121,7 @@ class H(BaseHTTPRequestHandler):
         if not self.authed(): self.send(401, {'error': {'code': 401}}); return
         parts = p.split('/')
         if len(parts) == 7 and parts[5] == 'events':
+            if FAIL['writes']: self.send(503, {'error': {'code': 503, 'message': 'forced'}}); return
             cid, eid = parts[4], parts[6]
             if eid not in EVENTS[cid]: self.send(404, {'error': {'code': 404}}); return
             ev = json.loads(raw); ev['id'] = eid; ev.setdefault('status', 'confirmed'); ev.setdefault('iCalUID', EVENTS[cid][eid].get('iCalUID'))
