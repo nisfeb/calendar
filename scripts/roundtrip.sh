@@ -18,6 +18,6 @@ sleep 5
 curl -s -m 120 -b "$J" "$B/export.ics?cal=roundtrip" > "$T/b.ics"
 # one line per VEVENT (its lines joined with a separator), sorted, so blocks are
 # compared whole rather than as a multiset of lines across the file
-norm() { tr -d '\r' < "$1" | awk '/^BEGIN:VEVENT/{b=1;blk=""} b{ if ($0 !~ /^(DTSTAMP|SEQUENCE)/) blk=blk $0 "\x1f" } /^END:VEVENT/{b=0; print blk}' | sort | tr '\x1f' '\n' | sed 's/^END:VEVENT$/&\n----/'; }
+norm() { tr -d '\r' < "$1" | awk '/^BEGIN:VEVENT/{b=1;blk=""} b{ if ($0 !~ /^(DTSTAMP|SEQUENCE)/) blk=blk $0 "\x1f" } /^END:VEVENT/{b=0; print blk}' | sort | tr '\037' '\n' | sed 's/^END:VEVENT$/&\n----/'; }
 if diff <(norm "$T/a.ics") <(norm "$T/b.ics") > "$T/diff.txt"; then echo "ROUNDTRIP PASSED ($(grep -c '^BEGIN:VEVENT' "$T/b.ics") events)"; rc=0; else echo "ROUNDTRIP FAILED"; head -40 "$T/diff.txt"; rc=1; fi
 delcal; exit $rc

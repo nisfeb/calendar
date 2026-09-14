@@ -7,7 +7,7 @@ calendar through a client password minted on SOURCE.
 Both directions: add / edit / delete on the follower reach the source at
 once; the source's changes arrive on the follower's next pass; a moved
 instance crosses; nothing echoes; a stale If-Match is logged as a
-conflict. Cleans up. Non-zero on the first failure.
+conflict. Cleans up. Every check runs; non-zero if any failed.
 """
 import sys, json, time, subprocess
 
@@ -33,7 +33,10 @@ def curl(jar, url, data=None, method=None, raw=False):
 
 
 def poke(base, jar, body): return curl(jar, base + '/grubbery/api/poke' + POKE + '/calendar.calendar?blot=/json', json.dumps(body), 'POST')
-def names(base, jar, cal): return sorted(r['meta'].get('name') for r in curl(jar, base + '/apps/calendar/events.json') if r['cal'] == cal)
+def names(base, jar, cal):
+    rows = curl(jar, base + '/apps/calendar/events.json')
+    if not isinstance(rows, list): return ['<no events.json: %s>' % str(rows)[:60]]
+    return sorted(r['meta'].get('name') for r in rows if r['cal'] == cal)
 def uid_of(base, jar, name): return [r['id'] for r in curl(jar, base + '/apps/calendar/events.json') if r['meta'].get('name') == name][0]
 def prod(): curl(FJ, FOL + '/apps/calendar/caldav/sync', '{}', 'POST'); time.sleep(8)
 def src_seq(): return [c['seq'] for c in curl(SJ, SRC + '/apps/calendar/calendars.json') if c['id'] == 'default'][0]

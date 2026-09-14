@@ -1090,7 +1090,7 @@
   =.  k
     %+  roll  (dav-children k u)
     |=([ch=entry:cal acc=_k] ?:((~(has in keep) uid.ch) acc (del-entry:cal acc uid.ch)))
-  =/  put=(unit [k=cal:cal =uid:cal])  (put-parent k i.parents zone u extra)
+  =/  put=(unit [k=cal:cal =uid:cal])  (put-parent-keep k i.parents zone u extra |)
   ?~  put  ~
   :-  ~
   :_  uid.u.put
@@ -1102,6 +1102,13 @@
 ++  put-parent
   |=  [k=cal:cal ve=vevent:ics zone=(unit @t) uid-hint=@t extra=(list [@t @t])]
   ^-  (unit [k=cal:cal =uid:cal])
+  (put-parent-keep k ve zone uid-hint extra &)
+::  +put-parent-keep: keep=& carries the stored parent's skips forward
+::  (an incremental update of the parent alone); keep=| rebuilds them
+::  from the object (the overrides that follow re-add their own)
+++  put-parent-keep
+  |=  [k=cal:cal ve=vevent:ics zone=(unit @t) uid-hint=@t extra=(list [@t @t]) keep=?]
+  ^-  (unit [k=cal:cal =uid:cal])
   =/  got=(unit [e=entry:cal exdates=(list @da)])  (to-entry:ics ve zone)
   ?~  got  ~
   =/  e=entry:cal  e.u.got
@@ -1112,7 +1119,7 @@
   =.  e  (with-exdates e exdates.u.got)
   ::  the parent's existing skips survive a re-put (an override's moment
   ::  stays skipped when only the parent changed)
-  =?  e  ?=(^ existing)
+  =?  e  &(keep ?=(^ existing))
     =/  old=event:cal  event.u.existing
     =/  ex=(set @ud)  ?-(-.old %date ~, %timed except.bound.old, %allday except.bound.old)
     ?-  -.event.e
@@ -1918,14 +1925,48 @@
   ~&  >>  [%calendar-google-conflict uid why]
   =/  rest=(list json)  (skip ?:(?=(%a -.cs) p.cs ~) |=(c=json =(uid (gs c 'uid'))))
   (write-json-grub pre 'google-conflicts.json' [%a (snoc rest row)])
-::  +pending-uids: the uids with a local change the push has not sent yet
+::  +suppressed: the log rows a sync pass itself wrote, as [uid key],
+::  from the row. The push skips exactly those; nothing else.
+++  suppressed
+  |=  row=json
+  ^-  (set [@t @ud])
+  %-  ~(gas in *(set [@t @ud]))
+  %+  murn  (arr:gcal row 'suppressed')
+  |=  j=json
+  ^-  (unit [@t @ud])
+  ?.  ?=(%a -.j)  ~
+  ?.  ?=([* * ~] p.j)  ~
+  =/  u=json  i.p.j
+  =/  k=json  i.t.p.j
+  ?.  &(?=(%s -.u) ?=(%n -.k))  ~
+  `[p.u (fall (rush p.k dem) 0)]
+::  +suppress-json: the set back to the row, pruned of rows the
+::  watermark has passed
+++  suppress-json
+  |=  [sup=(set [@t @ud]) floor=@ud]
+  ^-  json
+  :-  %a
+  %+  turn  (skip ~(tap in sup) |=([* key=@ud] (lte key floor)))
+  |=([u=@t key=@ud] `json`[%a ~[s+u (numb:enjs:format key)]])
+::  +wrote-between: the log rows in (from, to], as [uid key]
+++  wrote-between
+  |=  [k=cal:cal from=@ud to=@ud]
+  ^-  (set [@t @ud])
+  %-  ~(gas in *(set [@t @ud]))
+  %+  murn  (tap:on-log:cal log.k)
+  |=  [key=@ud val=logent:cal]
+  ?.(&((gth key from) (lte key to)) ~ `[uid.val key])
+::  +pending-uids: the uids with a local change the push has not sent
+::  yet — log rows above the watermark that no pass wrote itself
 ++  pending-uids
-  |=  [k=cal:cal since=@ud]
+  |=  [k=cal:cal since=@ud sup=(set [@t @ud])]
   ^-  (set uid:cal)
   %-  ~(gas in *(set uid:cal))
   %+  murn  (tap:on-log:cal log.k)
   |=  [key=@ud val=logent:cal]
-  ?.((gth key since) ~ `uid.val)
+  ?.  (gth key since)  ~
+  ?:  (~(has in sup) [uid.val key])  ~
+  `uid.val
 ::  +take-any: the next news on a wire, or any poke (a timer wake is one)
 ++  take-any
   |=  =wire
@@ -2005,7 +2046,9 @@
   =/  items=(list gitem:gcal)  (murn (arr:gcal res 'items') item-of:gcal)
   ::  an item whose uid also changed here since the last push is a
   ::  conflict: Google wins, the local copy is logged
-  =/  pending=(set uid:cal)  (pending-uids k (fall (gn row 'pushed_seq') 0))
+  =/  sup=(set [@t @ud])  (suppressed row)
+  =/  pending=(set uid:cal)  (pending-uids k (fall (gn row 'pushed_seq') 0) sup)
+  =/  seq-at-peek=@ud  seq.k
   =/  clashes=(list gitem:gcal)
     (skim items |=(g=gitem:gcal &(?=(~ rid.g) (~(has in pending) uid.ve.g))))
   ;<  ~  bind:m
@@ -2062,11 +2105,7 @@
     :~  ['sync_token' s+?:(=('' next-tok) tok next-tok)]
         ['last_ms' (numb:enjs:format (da-to-ms now))]
         ['ids' [%o ids]]
-        ['pulled_seq' (numb:enjs:format seq.k)]
-        :-  'pulled_uids'
-        :-  %a
-        =/  old=(set @t)  (~(gas in *(set @t)) (turn (arr:gcal row 'pulled_uids') |=(j=json ?:(?=(%s -.j) p.j ''))))
-        (turn ~(tap in (~(uni in old) seen)) |=(u=@t `json`s+u))
+        ['suppressed' (suppress-json (~(uni in sup) (wrote-between k seq-at-peek seq.k)) (fall (gn row 'pushed_seq') 0))]
     ==
   ?.  =('' next-page)  $(page next-page, row row2)
   (pure:m row2)
@@ -2089,15 +2128,14 @@
   ::  pass already in flight still holds
   ?.  ?=(%google kind.props.u.k)  (pure:m row)
   ?.  (gth seq.u.k since)  (pure:m row)
-  =/  pulled-seq=@ud  (fall (gn row 'pulled_seq') 0)
-  =/  pulled=(set @t)  (~(gas in *(set @t)) (turn (arr:gcal row 'pulled_uids') |=(j=json ?:(?=(%s -.j) p.j ''))))
+  =/  sup=(set [@t @ud])  (suppressed row)
   =/  changes=(list [uid:cal ?(%put %del)])
     =/  latest=(map uid:cal ?(%put %del))
       %+  roll  (tap:on-log:cal log.u.k)
       |=  [[key=@ud val=logent:cal] acc=(map uid:cal ?(%put %del))]
       ?.  (gth key since)  acc
       ?^  (find "#" (trip uid.val))  acc
-      ?:  &((~(has in pulled) uid.val) (lte key pulled-seq))  acc
+      ?:  (~(has in sup) [uid.val key])  acc
       (~(put by acc) uid.val kind.val)
     ~(tap by latest)
   =/  base=tape  "/calendar/v3/calendars/{(enc-seg:dav (trip gid))}/events"
@@ -2150,6 +2188,7 @@
   =/  c=calendar:cal  (cal-of cal-view)
   =/  kk=cal:cal  (fall (~(get by cals.c) id) fresh-cal:cal)
   =?  results  !?=(%google kind.props.kk)  ~
+  =/  seq-mid=@ud  seq.kk
   =.  kk
     %+  roll  results
     |=  [[u=uid:cal g=@t up=@t] acc=_kk]
@@ -2169,11 +2208,7 @@
     %-  ~(gas by p.row)
     :~  ['ids' [%o ids]]
         ['pushed_seq' (numb:enjs:format ?:(stopped since seq-before))]
-        ['pulled_seq' (numb:enjs:format seq.kk)]
-        :-  'pulled_uids'
-        :-  %a
-        %+  turn  ~(tap in (~(uni in pulled) (~(gas in *(set @t)) (turn results |=([u=uid:cal *] u)))))
-        |=(u=@t `json`s+u)
+        ['suppressed' (suppress-json (~(uni in sup) (wrote-between kk seq-mid seq.kk)) ?:(stopped since seq-before))]
     ==
   (pure:m row2)
 ::  ---- CalDAV client: following a remote calendar ----
@@ -2208,10 +2243,14 @@
 ++  dav-href-path
   |=  h=tape
   ^-  (unit tape)
-  ?:  (lien h |=(c=@t |(=(10 c) =(13 c) =(0 c))))  ~
-  =/  at=(unit @ud)  (find "://" h)
-  ?~  at  `h
-  =/  rest=tape  (slag (add 3 u.at) h)
+  ?:  (lien h |=(c=@t |((lth c 32) =(127 c))))  ~
+  =/  low=tape  (cass h)
+  =/  pre=@ud
+    ?:  =("https://" (scag 8 low))  8
+    ?:  =("http://" (scag 7 low))  7
+    0
+  ?:  =(0 pre)  `h
+  =/  rest=tape  (slag pre h)
   =/  sl=(unit @ud)  (find "/" rest)
   ?~(sl `"/" `(slag u.sl rest))
 ++  hdr-of
@@ -2380,10 +2419,20 @@
     ?.  =(".ics" (slag (sub (lent href) (min 4 (lent href))) href))  ~
     =/  et=(unit manx)  (find-el:dav r %getetag)
     `[href ?~(et '' (dav-unquote (crip (text:dav u.et))))]
-  ::  S2-N2: an empty listing where we know objects is a failure, not a
-  ::  wholesale delete
-  ?:  &(?=(~ listed) !=(~ known))
-    ~&  >>>  [%calendar-caldav-empty-listing url]
+  ::  the collection's own <response> must be there before its member
+  ::  list is believed — an empty or truncated answer is a failure, and
+  ::  an emptied calendar (the collection present, no members) is real
+  =/  coll=tape  (fall (dav-href-path (trip url)) "")
+  =/  coll-here=?
+    %+  lien  (kids:dav u.root %response)
+    |=  r=manx
+    =/  h=(unit manx)  (kid:dav r %href)
+    ?~  h  |
+    =/  hp=(unit tape)  (dav-href-path (text:dav u.h))
+    ?~  hp  |
+    =(?:(=('/' (rear coll)) coll (snoc coll '/')) ?:(=('/' (rear u.hp)) u.hp (snoc u.hp '/')))
+  ?.  coll-here
+    ~&  >>>  [%calendar-caldav-listing-incomplete url]
     (pure:m ~)
   =/  seen=(set tape)  (~(gas in *(set tape)) (turn listed |=([h=tape *] h)))
   =/  changed=(list [href=tape etag=@t gone=?])
@@ -2412,11 +2461,11 @@
     ::  the row remembers that the remote could not be listed, for the UI
     %-  pure:m
     ?.  ?=(%o -.row)  row
-    [%o (~(put by p.row) 'error' s+'the remote refused to list the calendar (does it accept X-HTTP-Method-Override?)')]
+    [%o (~(put by p.row) 'error' s+'could not list the remote calendar (a server that refuses X-HTTP-Method-Override, or an incomplete answer)')]
   =/  ids=(map @t json)  =/(i (obj:gcal row 'ids') ?:(?=(%o -.i) p.i ~))
   =/  by-href=(map tape @t)
     %-  ~(gas by *(map tape @t))
-    (turn ~(tap by ids) |=([u=@t v=json] [(trip (gs v 'href')) u]))
+    (turn ~(tap by ids) |=([u=@t v=json] [(fall (dav-href-path (trip (gs v 'href'))) (trip (gs v 'href'))) u]))
   ::  1. the network: every changed object's text
   =|  fetched=(list [href=tape etag=@t gone=? body=@t])
   =/  failed=?  |
@@ -2438,38 +2487,38 @@
   =/  k=cal:cal  (fall (~(get by cals.c) id) fresh-cal:cal)
   ?.  ?=(%caldav kind.props.k)  (pure:m row)
   =/  k=cal:cal  k
-  ::  a fetched object whose uid also changed here since the last push is
-  ::  a conflict: the remote wins, the local copy is logged
-  =/  pending=(set uid:cal)  (pending-uids k (fall (gn row 'pushed_seq') 0))
-  =/  clashes=(list uid:cal)
-    %+  murn  fetched
-    |=  [href=tape etag=@t gone=? body=@t]
-    ^-  (unit uid:cal)
-    ?:  gone  ~
-    =/  ps=(list vevent:ics)  (skip (events:ics body) |=(v=vevent:ics ?=(^ (dav-rid v))))
-    ?~  ps  ~
-    ?.((~(has in pending) uid.i.ps) ~ `uid.i.ps)
-  ;<  ~  bind:m
-    =/  m  (fiber:fiber:nexus ,~)
-    |-  ^-  form:m
-    ?~  clashes  (pure:m ~)
-    ;<  ~  bind:m
-      (google-conflict pre id i.clashes (~(get by entries.k) i.clashes) '' 'changed on both sides; the remote kept')
-    $(clashes t.clashes)
-  =/  res=[k=cal:cal ids=(map @t json) touched=(set @t)]
+  ::  a fetched object (or a remote delete) whose uid also changed here
+  ::  since the last push, when the apply really replaces the local
+  ::  copy, is a conflict: the remote wins, the local copy is logged
+  =/  sup=(set [@t @ud])  (suppressed row)
+  =/  pending=(set uid:cal)  (pending-uids k (fall (gn row 'pushed_seq') 0) sup)
+  =/  seq-at-peek=@ud  seq.k
+  =/  res=[k=cal:cal ids=(map @t json) clashes=(list [uid:cal (unit entry:cal)])]
     %+  roll  (flop fetched)
-    |=  [[href=tape etag=@t gone=? body=@t] acc=_[k=k ids=ids touched=*(set @t)]]
+    |=  [[href=tape etag=@t gone=? body=@t] acc=_[k=k ids=ids clashes=*(list [uid:cal (unit entry:cal)])]]
     ?:  gone
       =/  u=(unit @t)  (~(get by by-href) href)
       ?~  u  acc
+      =/  old=(unit entry:cal)  (~(get by entries.k.acc) u.u)
+      =?  clashes.acc  &(?=(^ old) (~(has in pending) u.u))  [[u.u old] clashes.acc]
       =.  k.acc
         %+  roll  (dav-children k.acc u.u)
         |=([ch=entry:cal a=_k.acc] (del-entry:cal a uid.ch))
-      acc(k (del-entry:cal k.acc u.u), ids (~(del by ids.acc) u.u), touched (~(put in touched.acc) u.u))
+      acc(k (del-entry:cal k.acc u.u), ids (~(del by ids.acc) u.u))
     =/  put=(unit [k=cal:cal =uid:cal])  (put-object k.acc (events:ics body) zone.c '' ~)
     ?~  put  acc
+    =/  old=(unit entry:cal)  (~(get by entries.k.acc) uid.u.put)
+    =?  clashes.acc  &(?=(^ old) (~(has in pending) uid.u.put) !=(k.acc k.u.put))  [[uid.u.put old] clashes.acc]
     =.  k.acc  k.u.put
-    acc(ids (~(put by ids.acc) uid.u.put (pairs:enjs:format ~[['href' s+(crip href)] ['etag' s+etag]])), touched (~(put in touched.acc) uid.u.put))
+    acc(ids (~(put by ids.acc) uid.u.put (pairs:enjs:format ~[['href' s+(crip href)] ['etag' s+etag]])))
+  ;<  ~  bind:m
+    =/  m  (fiber:fiber:nexus ,~)
+    =/  todo=(list [uid:cal (unit entry:cal)])  clashes.res
+    |-  ^-  form:m
+    ?~  todo  (pure:m ~)
+    ;<  ~  bind:m
+      (google-conflict pre id -.i.todo +.i.todo '' 'changed on both sides; the remote kept')
+    $(todo t.todo)
   ;<  ~  bind:m
     ?:  =(k.res k)  (pure:(fiber:fiber:nexus ,~) ~)
     (dav-write pre c(cals (~(put by cals.c) id k.res)))
@@ -2482,11 +2531,7 @@
       ['last_ms' (numb:enjs:format (da-to-ms now))]
       ['error' s+'']
       ['ids' [%o ids.res]]
-      ['pulled_seq' (numb:enjs:format seq.k.res)]
-      :-  'pulled_uids'
-      :-  %a
-      =/  old=(set @t)  (~(gas in *(set @t)) (turn (arr:gcal row 'pulled_uids') |=(j=json ?:(?=(%s -.j) p.j ''))))
-      (turn ~(tap in (~(uni in old) touched.res)) |=(u=@t `json`s+u))
+      ['suppressed' (suppress-json (~(uni in sup) (wrote-between k.res seq-at-peek seq.k.res)) (fall (gn row 'pushed_seq') 0))]
   ==
 ::  +caldav-push: the log past the watermark, out as PUT and DELETE
 ++  caldav-push
@@ -2503,15 +2548,14 @@
   ?~  k  (pure:m row)
   ?.  ?=(%caldav kind.props.u.k)  (pure:m row)
   ?.  (gth seq.u.k since)  (pure:m row)
-  =/  pulled-seq=@ud  (fall (gn row 'pulled_seq') 0)
-  =/  pulled=(set @t)  (~(gas in *(set @t)) (turn (arr:gcal row 'pulled_uids') |=(j=json ?:(?=(%s -.j) p.j ''))))
+  =/  sup=(set [@t @ud])  (suppressed row)
   =/  changes=(list [uid:cal ?(%put %del)])
     =/  latest=(map uid:cal ?(%put %del))
       %+  roll  (tap:on-log:cal log.u.k)
       |=  [[key=@ud val=logent:cal] acc=(map uid:cal ?(%put %del))]
       ?.  (gth key since)  acc
       ?^  (find "#" (trip uid.val))  acc
-      ?:  &((~(has in pulled) uid.val) (lte key pulled-seq))  acc
+      ?:  (~(has in sup) [uid.val key])  acc
       (~(put by acc) uid.val kind.val)
     ~(tap by latest)
   ;<  now=@da  bind:m  get-time:io
@@ -2522,7 +2566,7 @@
     =/  known=json  (fall (~(get by ids) u) [%o ~])
     =/  href=tape
       =/  h=@t  (gs known 'href')
-      ?.  =('' h)  (trip h)
+      ?.  =('' h)  (fall (dav-href-path (trip h)) (trip h))
       =/  base=tape  (trip url)
       =?  base  !=('/' (rear base))  (snoc base '/')
       =/  at=(unit @ud)  (find "//" base)
@@ -2562,7 +2606,7 @@
   %-  ~(gas by p.row)
   :~  ['ids' [%o ids]]
       ['pushed_seq' (numb:enjs:format ?:(stopped since seq.u.k))]
-      ['pulled_uids' ?:(stopped (fall (~(get by p.row) 'pulled_uids') [%a ~]) [%a ~])]
+      ['suppressed' (suppress-json sup ?:(stopped since seq.u.k))]
   ==
 ::  +google-prod: wake the sync fiber now
 ++  google-prod
