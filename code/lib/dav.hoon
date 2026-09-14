@@ -31,6 +31,15 @@
   =/  got=(unit manx)  ^$(x i.cs)
   ?^  got  got
   $(cs t.cs)
+::  +attr: an attribute by local name
+++  attr
+  |=  [x=manx name=@tas]
+  ^-  (unit tape)
+  =/  a=mart  a.g.x
+  |-
+  ?~  a  ~
+  ?:  =(name (local n.i.a))  `v.i.a
+  $(a t.a)
 ::  +text: an element's text content (the text nodes, concatenated)
 ++  text
   |=  x=manx
@@ -48,7 +57,22 @@
   |=  body=@t
   ^-  (unit manx)
   ?:  =('' body)  ~
-  (de-xml:html body)
+  ::  drop the prolog (de-xml is particular about its quoting) and any
+  ::  whitespace before the root
+  =/  t=tape  (trip body)
+  =.  t  (skip-ws t)
+  =?  t  =("<?xml" (scag 5 t))
+    =/  at=(unit @ud)  (find "?>" t)
+    ?~(at t (slag (add 2 u.at) t))
+  =.  t  (skip-ws t)
+  (de-xml:html (crip t))
+++  skip-ws
+  |=  t=tape
+  ^-  tape
+  |-
+  ?~  t  ~
+  ?:  ?=(?(%' ' %'\09' %'\0a' %'\0d') i.t)  $(t t.t)
+  t
 ::  +prop-names: the local names asked for in <prop>; ~ means allprop
 ++  prop-names
   |=  x=(unit manx)
@@ -147,6 +171,6 @@
   ?:  &(=('%' i.t) ?=([@ @ *] t.t))
     =/  hx=(unit @)  (rush (crip [i.t.t i.t.t.t ~]) hex)
     ?~  hx  [i.t $(t t.t)]
-    [u.hx $(t t.t.t)]
+    [u.hx $(t t.t.t.t)]
   [i.t $(t t.t)]
 --

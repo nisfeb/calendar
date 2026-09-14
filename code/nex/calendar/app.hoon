@@ -848,7 +848,183 @@
   =/  c=calendar:cal  (cal-of cal-view)
   ?:  =('PROPFIND' verb)
     (dav-propfind eyre-id req our c res body)
+  ?:  ?=(?(%'GET' %'HEAD') verb)
+    (dav-get eyre-id c res)
+  ?:  =('REPORT' verb)
+    (dav-report eyre-id req our c res body)
   ;<  ~  bind:m  (send-simple:srv eyre-id [[501 ~] `(as-octs:mimes:html 'calendar: not yet')])
+  (pure:m ~)
+::  +dav-children: the override entries of a parent, in one calendar
+++  dav-children
+  |=  [k=cal:cal parent=uid:cal]
+  ^-  (list entry:cal)
+  %+  murn  ~(tap by entries.k)
+  |=  [* e=entry:cal]
+  ^-  (unit entry:cal)
+  ?.  (lien props.e |=([key=@t v=@t] &(=('X-GRUBBERY-PARENT' key) =(parent v))))  ~
+  `e
+::  +dav-object-ics: one object as iCalendar text: the parent, then its
+::  override children (each carrying its RECURRENCE-ID in props)
+++  dav-object-ics
+  |=  [c=calendar:cal id=@ta =uid:cal now=@da]
+  ^-  (unit @t)
+  =/  k=(unit cal:cal)  (~(get by cals.c) id)
+  ?~  k  ~
+  =/  e=(unit entry:cal)  (~(get by entries.u.k) uid)
+  ?~  e  ~
+  =/  all=(list entry:cal)  [u.e (dav-children u.k uid)]
+  :-  ~
+  %+  write-calendar:ics  title.c
+  (turn all |=(x=entry:cal (write-entry:ics x (exdates-of x) now)))
+::  +dav-get: an object's .ics with its ETag
+++  dav-get
+  |=  [eyre-id=@ta c=calendar:cal res=dav-res]
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  ?.  ?=(%object -.res)
+    ;<  ~  bind:m  (send-simple:srv eyre-id [[405 ~] `(as-octs:mimes:html 'calendar: GET an object')])
+    (pure:m ~)
+  ;<  now=@da  bind:m  get-time:io
+  =/  body=(unit @t)  (dav-object-ics c id.res uid.res now)
+  =/  e=(unit entry:cal)
+    =/  k=(unit cal:cal)  (~(get by cals.c) id.res)
+    ?~(k ~ (~(get by entries.u.k) uid.res))
+  ?:  |(?=(~ body) ?=(~ e))
+    ;<  ~  bind:m  (send-simple:srv eyre-id [[404 ~] `(as-octs:mimes:html 'calendar: no such object')])
+    (pure:m ~)
+  ;<  ~  bind:m
+    %+  send-simple:srv  eyre-id
+    :_  `(as-octs:mimes:html u.body)
+    :~  200
+        ['content-type' 'text/calendar; charset=utf-8']
+        ['etag' (crip "\"{(trip etag.u.e)}\"")]
+    ==
+  (pure:m ~)
+::  +dav-href-res: an href from a request body back to a resource
+++  dav-href-res
+  |=  h=tape
+  ^-  dav-res
+  =/  segs=(list @ta)
+    %+  turn  (skip (split-tape h '/') |=(t=tape =(~ t)))
+    |=(t=tape (crip t))
+  ?.  ?=([%apps %calendar %dav *] segs)  [%none ~]
+  (dav-resolve t.t.t.segs)
+++  split-tape
+  |=  [t=tape c=@t]
+  ^-  (list tape)
+  =|  cur=tape
+  =|  out=(list tape)
+  |-
+  ?~  t  (flop [(flop cur) out])
+  ?:  =(c i.t)  $(t t.t, out [(flop cur) out], cur ~)
+  $(t t.t, cur [i.t cur])
+::  +dav-obj-response: an object with its etag and calendar-data
+++  dav-obj-response
+  |=  [c=calendar:cal id=@ta =uid:cal now=@da with-data=?]
+  ^-  manx
+  =/  h=tape  (dav-obj-href id uid)
+  =/  k=(unit cal:cal)  (~(get by cals.c) id)
+  =/  e=(unit entry:cal)  ?~(k ~ (~(get by entries.u.k) uid))
+  ?~  e  (status-response:dav h 404)
+  =/  props=(list prop:dav)
+    :-  (d-el:dav %getetag ~[(tx:dav "\"{(trip etag.u.e)}\"")])
+    ?.  with-data  ~
+    =/  ics=(unit @t)  (dav-object-ics c id uid now)
+    ?~  ics  ~
+    ~[(c-el:dav %'calendar-data' ~[(tx:dav (trip u.ics))])]
+  (response:dav h props ~)
+::  +dav-report: calendar-multiget, calendar-query, sync-collection
+++  dav-report
+  |=  [eyre-id=@ta req=inbound-request:eyre our=@p c=calendar:cal res=dav-res body=@t]
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  ?.  ?=(%calendar -.res)
+    ;<  ~  bind:m  (send-simple:srv eyre-id [[403 ~] `(as-octs:mimes:html 'calendar: REPORT on a calendar')])
+    (pure:m ~)
+  =/  k=(unit cal:cal)  (~(get by cals.c) id.res)
+  ?~  k
+    ;<  ~  bind:m  (send-simple:srv eyre-id [[404 ~] `(as-octs:mimes:html 'calendar: no such calendar')])
+    (pure:m ~)
+  =/  root=(unit manx)  (parse:dav body)
+  ?~  root
+    ;<  ~  bind:m  (send-simple:srv eyre-id [[400 ~] `(as-octs:mimes:html 'calendar: REPORT needs an XML body')])
+    (pure:m ~)
+  ;<  now=@da  bind:m  get-time:io
+  =/  kind=@tas  (local:dav n.g.u.root)
+  =/  id=@ta  id.res
+  ::  the parents (never the override children) of this calendar
+  =/  parents=(list uid:cal)
+    %+  murn  ~(tap by entries.u.k)
+    |=([u=uid:cal e=entry:cal] ?:((dav-is-child e) ~ `u))
+  ?:  =(%'calendar-multiget' kind)
+    =/  hrefs=(list tape)  (turn (kids:dav u.root %href) text:dav)
+    =/  responses=marl
+      %+  turn  hrefs
+      |=  h=tape
+      =/  r=dav-res  (dav-href-res h)
+      ?.  ?=(%object -.r)  (status-response:dav h 404)
+      (dav-obj-response c id.r uid.r now &)
+    (dav-send-xml eyre-id 207 (multistatus:dav responses ~))
+  ?:  =(%'calendar-query' kind)
+    =/  tr=(unit manx)  (find-el:dav u.root %'time-range')
+    =/  range=(unit [lo=@da hi=@da])
+      ?~  tr  ~
+      =/  st=(unit tape)  (attr:dav u.tr %start)
+      =/  en=(unit tape)  (attr:dav u.tr %end)
+      =/  lo=(unit [d=@da z=?])  ?~(st ~ (parse-dt:ics (crip u.st)))
+      =/  hi=(unit [d=@da z=?])  ?~(en ~ (parse-dt:ics (crip u.en)))
+      `[?~(lo *@da d.u.lo) ?~(hi (add now (mul 10 ~d365)) d.u.hi)]
+    ;<  uids=(list uid:cal)  bind:m
+      ?~  range  (pure:(fiber:fiber:nexus ,(list uid:cal)) parents)
+      ;<  cache-view=view:nexus  bind:(fiber:fiber:nexus ,(list uid:cal))
+        (peek:io (cord-to-road:tarball '../order.calendar-cache') ~)
+      =/  ca=cache:cal
+        ?.  ?=([%file *] cache-view)  *cache:cal
+        (fall (mole |.(!<(cache:cal (need-vase:tarball sang.cache-view)))) *cache:cal)
+      ::  ponytail: a range past the inflated horizon answers every parent
+      ::  (the client filters); a refresh-ahead here would need the
+      ::  kinds resolved as window.json does
+      ?:  (gth hi.u.range thru.ca)
+        (pure:(fiber:fiber:nexus ,(list uid:cal)) parents)
+      =/  refs=(list ref:cal)  ~(tap in (window:cal order.ca lo.u.range hi.u.range))
+      =/  seen=(set uid:cal)
+        %-  ~(gas in *(set uid:cal))
+        %+  murn  refs
+        |=  r=ref:cal
+        ^-  (unit uid:cal)
+        =/  e=(unit entry:cal)  (~(get by entries.u.k) eid.r)
+        ?~  e  ~
+        =/  par=(list [@t @t])  (skim props.u.e |=([key=@t *] =('X-GRUBBERY-PARENT' key)))
+        ?~  par  `eid.r
+        `+.i.par
+      (pure:(fiber:fiber:nexus ,(list uid:cal)) ~(tap in seen))
+    =/  responses=marl
+      (turn uids |=(u=uid:cal (dav-obj-response c id u now &)))
+    (dav-send-xml eyre-id 207 (multistatus:dav responses ~))
+  ?:  =(%'sync-collection' kind)
+    =/  tok=tape  ?~(t=(kid:dav u.root %'sync-token') "" (text:dav u.t))
+    =/  since=@ud
+      =/  segs=(list tape)  (skip (split-tape tok '/') |=(t=tape =(~ t)))
+      =/  last=tape  ?~(segs "" (rear segs))
+      (fall (rush (crip last) dem) 0)
+    ::  the latest change per uid after the token; children never listed
+    =/  changes=(list [uid:cal ?(%put %del)])
+      =/  ents=(list [key=@ud val=logent:cal])  (tap:on-log:cal log.u.k)
+      =/  latest=(map uid:cal ?(%put %del))
+        %+  roll  ents
+        |=  [[key=@ud val=logent:cal] acc=(map uid:cal ?(%put %del))]
+        ?.  (gth key since)  acc
+        ?^  (find "#" (trip uid.val))  acc
+        (~(put by acc) uid.val kind.val)
+      ~(tap by latest)
+    =/  responses=marl
+      %+  turn  changes
+      |=  [u=uid:cal what=?(%put %del)]
+      ?:  =(%del what)  (status-response:dav (dav-obj-href id u) 404)
+      (dav-obj-response c id u now |)
+    =/  token=manx  (d-el:dav %'sync-token' ~[(tx:dav "{dav-root}sync/{(a-co:co seq.u.k)}")])
+    (dav-send-xml eyre-id 207 (multistatus:dav responses ~[token]))
+  ;<  ~  bind:m  (send-simple:srv eyre-id [[403 ~] `(as-octs:mimes:html 'calendar: unsupported report')])
   (pure:m ~)
 ::  +dav-res: what a dav path names
 +$  dav-res

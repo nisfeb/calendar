@@ -452,7 +452,8 @@
     timing
     recur-lines
     alarm-lines
-    (turn props.e |=(p=prop (line (trip k.p) (trip v.p))))
+    %+  turn  (skip props.e |=(p=prop =('X-GRUBBERY-PARENT' k.p)))
+    |=(p=prop (line (trip k.p) (trip v.p)))
     ~[(weld "END:VEVENT" crlf)]
   ==
 ++  write-calendar
