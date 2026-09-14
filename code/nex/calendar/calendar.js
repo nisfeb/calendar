@@ -78,6 +78,26 @@ function isoWeek(ser) {
 // per-event computation walls: [{id, name, stop}] where an event's
 // occurrence walk was capped short of the requested range
 var CAPS = [];
+// the calendars, from calendars.json: id -> {name, color}
+var CALS = {};
+function calColor(id) { var c = CALS[id]; return (c && c.color) || ''; }
+function loadCals() {
+  fetch(CAL + '/calendars.json')
+    .then(function(r) { return r.json(); })
+    .then(function(list) {
+      CALS = {};
+      var sel = document.getElementById('f-cal');
+      sel.innerHTML = '';
+      (list || []).forEach(function(c) {
+        CALS[c.id] = c;
+        var o = document.createElement('option');
+        o.value = c.id; o.textContent = c.name || c.id;
+        sel.appendChild(o);
+      });
+      sel.value = 'default';
+    })
+    .catch(function() {});
+}
 
 function fetchWindow(fromMs, toMs, cb) {
   fetch(CAL + '/window.json?from=' + fromMs + '&to=' + toMs)
@@ -93,7 +113,7 @@ function fetchWindow(fromMs, toMs, cb) {
         var m = r.meta || {};
         r.name = m.name || '';
         r.note = m.note || '';
-        r.color = m.color || '';
+        r.color = m.color || calColor(r.cal) || '';
       });
       cb(rows);
     })
@@ -832,6 +852,7 @@ function openModal(opts) {
   });
   dowSel.value = w;
   zoneSel.value = '';
+  document.getElementById('f-cal').value = 'default';
   setCat('timed');
   back.classList.add('open');
 }
@@ -849,6 +870,7 @@ function openEdit(d, target) {
   document.getElementById('f-name').value = dm.name || '';
   document.getElementById('f-note').value = dm.note || '';
   document.getElementById('f-color').value = dm.color || '#4a6a8a';
+  if (d.cal) document.getElementById('f-cal').value = d.cal;
 
   // edit scope only for a recurring series
   var recurring = (d.cat !== 'date' && d.kind !== 'once');
@@ -922,6 +944,8 @@ document.getElementById('f-save').onclick = function() {
   var color = document.getElementById('f-color').value;
   var note = document.getElementById('f-note').value;
   var body = { action: 'add-event', cat: cat, meta: { name: name, color: color, note: note } };
+  var calSel = document.getElementById('f-cal');
+  if (calSel.value) body.cal = calSel.value;
 
   if (cat === 'date') {
     body.month = +document.getElementById('f-bmonth').value;
@@ -1023,6 +1047,7 @@ fetch(CAL + '/config.json')
     CFG.ball = cfg.ball || '';
     CFG.title = cfg.title || 'Calendar';
     loadZones();
+    loadCals();
     boot();
   })
   .catch(boot);

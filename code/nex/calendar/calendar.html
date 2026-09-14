@@ -40,6 +40,7 @@
         <button id="v-week" class="nav-btn view-btn">Week</button>
         <button id="v-day" class="nav-btn view-btn">Day</button>
       </div>
+      <a id="export-btn" class="nav-btn" href="/apps/calendar/export.ics" title="Download every calendar as an .ics file">Export</a>
       <button id="add-btn" class="nav-btn icon-btn" title="New event">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
       </button>
@@ -183,6 +184,8 @@
         <select id="f-zone" class="tf"></select>
         <label class="f">Note</label>
         <input id="f-note" type="text">
+        <label class="f">Calendar</label>
+        <select id="f-cal"></select>
         <label class="f">Color</label>
         <input id="f-color" type="color" value="#4a6a8a">
         <div id="modal-foot">

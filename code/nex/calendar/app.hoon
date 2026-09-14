@@ -217,7 +217,7 @@
           ::  the shape is replaced but exceptions survive the edit
           =/  merged=event:cal  (carry-except u.old u.ev)
           ;<  new=event:cal  bind:m  (apply-until merged (gn jon 'until_ms'))
-          ;<  ~  bind:m  (replace:io (put-ev c id new))
+          ;<  ~  bind:m  (replace:io (put-ev-in c (cal-arg jon) id new))
           $
         ?:  =('cap-event' act)
           ::  end the series before index dom (this-and-following edits)
@@ -244,7 +244,7 @@
         ;<  eny=@uvJ  bind:m  get-entropy:io
         ;<  our=@p  bind:m  get-our:io
         =/  id=@ta  (crip "{(scow %uv (end [3 8] eny))}@{(scow %p our)}")
-        ;<  ~  bind:m  (replace:io (put-ev c id ev2))
+        ;<  ~  bind:m  (replace:io (put-ev-in c (cal-arg jon) id ev2))
         $
           ::
           ::  /order.calendar-cache: reinflate on calendar news
@@ -313,6 +313,13 @@
           |=  r=ref:cal
           &((gth l.span.r lo) (lte l.span.r hi))
         ;<  ~  bind:m  (send-reminders due (events-all:cal c) now)
+        ::  alarms: a relative one fires when its occurrence minus the
+        ::  lead falls in (from, now]; an absolute one when its moment
+        ::  does. Occurrences up to 31 days out are considered — the
+        ::  ceiling for a relative lead.
+        =/  ahead=(list ref:cal)
+          ~(tap in (window:cal order.ca from (add now ~d31)))
+        ;<  ~  bind:m  (send-pushes (alarm-pushes ahead (entries-all:cal c) from now))
         =/  new-st=json
           :-  %o
           %-  ~(put by ?:(?=(%o -.st) p.st ~))
@@ -379,6 +386,7 @@
             (pure:m new)
           =/  refs=(list ref:cal)
             ~(tap in (window:cal order.ca u.from u.to))
+          =/  owner=(map uid:cal @ta)  (owners c)
           =/  rows=json
             :-  %a
             %+  murn  refs
@@ -389,6 +397,7 @@
             :-  ~
             %-  pairs:enjs:format
             :~  ['id' s+eid.r]
+                ['cal' s+(fall (~(get by owner) eid.r) %default)]
                 ['idx' (numb:enjs:format idx.r)]
                 ['meta' [%o (get-meta u.ev)]]
                 ['cat' s+-.u.ev]
@@ -425,20 +434,25 @@
           ?~  ev
             ;<  ~  bind:m  (send-simple:srv eyre-id [[404 ~] `(as-octs:mimes:html 'No such event')])
             (pure:m ~)
-          (send-json eyre-id (event-json:cal id u.ev))
+          =/  ej=json  (event-json:cal id u.ev)
+          =/  cid=@ta  (fall (~(get by (owners c)) id) %default)
+          (send-json eyre-id ?:(?=(%o -.ej) [%o (~(put by p.ej) 'cal' s+cid)] ej))
         ?:  ?=([%'events.json' ~] suffix)
           ;<  cal-view=view:nexus  bind:m
             (peek:io (cord-to-road:tarball '../calendar.calendar') ~)
           =/  c=calendar:cal  (cal-of cal-view)
           =/  rows=json
             :-  %a
-            %+  turn  ~(tap by (events-all:cal c))
-            |=  [id=@ta e=event:cal]
+            =/  owner=(map uid:cal @ta)  (owners c)
+            %+  turn  ~(tap by (entries-all:cal c))
+            |=  [id=@ta e=entry:cal]
             ^-  json
             %-  pairs:enjs:format
             :~  ['id' s+id]
-                ['meta' [%o (get-meta e)]]
-                ['cat' s+-.e]
+                ['cal' s+(fall (~(get by owner) id) %default)]
+                ['etag' s+etag.e]
+                ['meta' [%o (get-meta event.e)]]
+                ['cat' s+-.event.e]
             ==
           (send-json eyre-id rows)
         ::  /feeds.json: the named external ICS feeds
@@ -577,11 +591,36 @@
 ++  put-ev
   |=  [c=calendar:cal id=@ta ev=event:cal]
   ^-  calendar:cal
+  (put-ev-in c ~ id ev)
+::  +put-ev-in: like put-ev, into a named calendar (an unknown name falls
+::  back to where the entry lives, or %default). An existing entry asked
+::  into another calendar moves: deleted from the old, put into the new.
+++  put-ev-in
+  |=  [c=calendar:cal want=(unit @ta) id=@ta ev=event:cal]
+  ^-  calendar:cal
   =/  got=(unit [cid=@ta e=entry:cal])  (find-entry:cal c id)
-  =/  cid=@ta  ?~(got %default cid.u.got)
+  =/  cid=@ta
+    ?:  &(?=(^ want) (~(has by cals.c) u.want))  u.want
+    ?~(got %default cid.u.got)
+  =?  c  &(?=(^ got) !=(cid.u.got cid))  (del-ev c id)
   =/  k=cal:cal  (fall (~(get by cals.c) cid) fresh-cal:cal)
   =/  e=entry:cal  ?~(got [ev id '' 0 ~ ~] e.u.got(event ev))
   c(cals (~(put by cals.c) cid (put-entry:cal k e)))
+::  +cal-arg: the poke's optional calendar name
+++  cal-arg
+  |=  jon=json
+  ^-  (unit @ta)
+  =/  v=@t  (gs jon 'cal')
+  ?:(=('' v) ~ `(crip (trip v)))
+::  +owners: which calendar holds each uid
+++  owners
+  |=  c=calendar:cal
+  ^-  (map uid:cal @ta)
+  %-  ~(gas by *(map uid:cal @ta))
+  %-  zing
+  %+  turn  ~(tap by cals.c)
+  |=  [id=@ta k=cal:cal]
+  (turn ~(tap by entries.k) |=([u=uid:cal *] [u id]))
 ++  del-ev
   |=  [c=calendar:cal id=@ta]
   ^-  calendar:cal
@@ -729,6 +768,61 @@
   ;<  ~  bind:m
     (send-push:io [~ ~ ~ [name body ~ `'/apps/calendar' `tag]])
   $(due t.due)
+::  +alarm-pushes: the alarms due in (from, now], as pushes. tag
+::  cal-<uid>-<idx>-<n> for a relative alarm n of occurrence idx,
+::  cal-<uid>-a-<n> for an absolute one (it belongs to the entry).
+++  alarm-pushes
+  |=  [ahead=(list ref:cal) entries=(map uid:cal entry:cal) from=@da now=@da]
+  ^-  (list [name=@t body=@t tag=@t])
+  =/  in-win  |=(at=@da &((gth at from) (lte at now)))
+  =/  rel=(list [name=@t body=@t tag=@t])
+    %-  zing
+    %+  turn  ahead
+    |=  r=ref:cal
+    ^-  (list [name=@t body=@t tag=@t])
+    =/  en=(unit entry:cal)  (~(get by entries) eid.r)
+    ?~  en  ~
+    =/  name=@t  (meta-str:cal (get-meta event.u.en) 'name')
+    =/  mins=@ud  (div ?:((gth l.span.r now) (sub l.span.r now) 0) ~m1)
+    =/  body=@t  (crip ?:(=(0 mins) "starting now" "in {(scow %ud mins)} min"))
+    =/  als=(list alarm:cal)  alarms.u.en
+    =/  n=@ud  0
+    |-  ^-  (list [name=@t body=@t tag=@t])
+    ?~  als  ~
+    =/  rest  $(als t.als, n +(n))
+    ?.  ?=(%rel -.trigger.i.als)  rest
+    ?.  (gte l.span.r before.trigger.i.als)  rest
+    ?.  (in-win (sub l.span.r before.trigger.i.als))  rest
+    :_  rest
+    :+  name
+      ?:(=('' desc.i.als) body desc.i.als)
+    (crip "cal-{(trip eid.r)}-{(scow %ud idx.r)}-{(scow %ud n)}")
+  =/  abs=(list [name=@t body=@t tag=@t])
+    %-  zing
+    %+  turn  ~(tap by entries)
+    |=  [u=uid:cal en=entry:cal]
+    ^-  (list [name=@t body=@t tag=@t])
+    =/  name=@t  (meta-str:cal (get-meta event.en) 'name')
+    =/  als=(list alarm:cal)  alarms.en
+    =/  n=@ud  0
+    |-  ^-  (list [name=@t body=@t tag=@t])
+    ?~  als  ~
+    =/  rest  $(als t.als, n +(n))
+    ?.  ?=(%abs -.trigger.i.als)  rest
+    ?.  (in-win at.trigger.i.als)  rest
+    :_  rest
+    :+  name
+      ?:(=('' desc.i.als) 'reminder' desc.i.als)
+    (crip "cal-{(trip u)}-a-{(scow %ud n)}")
+  (weld rel abs)
+++  send-pushes
+  |=  pushes=(list [name=@t body=@t tag=@t])
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  ?~  pushes  (pure:m ~)
+  ;<  ~  bind:m
+    (send-push:io [~ ~ ~ [name.i.pushes body.i.pushes ~ `'/apps/calendar' `tag.i.pushes]])
+  $(pushes t.pushes)
 ::  +do-sync: fetch each feed, parse its ICS, and convert single
 ::  (non-recurring) vevents inside [lo hi] into events tagged with
 ::  feed name + uid. Stable ids: same feed+uid = same event id.
