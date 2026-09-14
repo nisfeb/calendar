@@ -10,7 +10,7 @@ T=$(mktemp -d)
 delcal() { curl -s -m 60 -b "$J" -X POST -H 'content-type: application/json' -d '{"action":"del-calendar","id":"roundtrip"}' -o /dev/null "$H/grubbery/api/poke$P/calendar.calendar?blot=/json"; }
 delcal; sleep 3
 curl -s -m 120 -b "$J" "$B/export.ics" > "$T/a.ics"
-echo "export: $(grep -c '^BEGIN:VEVENT' "$T/a.ics") events, $(wc -c < "$T/a.ics") bytes"
+n=$(grep -c '^BEGIN:VEVENT' "$T/a.ics"); echo "export: $n events, $(wc -c < "$T/a.ics") bytes"; [ "$n" -gt 0 ] || { echo "ROUNDTRIP FAILED: nothing to round-trip"; exit 1; }
 curl -s -m 60 -b "$J" -X POST -H 'content-type: application/json' -d '{"action":"add-calendar","id":"roundtrip","name":"roundtrip","color":"#888888"}' -o /dev/null "$H/grubbery/api/poke$P/calendar.calendar?blot=/json"
 sleep 3
 echo "import: $(curl -s -m 300 -b "$J" -X POST --data-binary "@$T/a.ics" "$B/import?cal=roundtrip")"

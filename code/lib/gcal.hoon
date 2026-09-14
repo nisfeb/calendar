@@ -5,6 +5,7 @@
 /<  ics    /lib/ics.hoon
 /<  cal    /lib/calendar.hoon
 /<  rules  /lib/rules.hoon
+/<  rr     /lib/rrule.hoon
 |%
 +$  gitem
   $:  ve=vevent:ics
@@ -91,7 +92,7 @@
   =/  p  (parse-rfc3339 dt)
   ?~  p  ~
   =/  zone=@t  (str o 'timeZone')
-  ?.  =('' zone)  `[%local zone naive.u.p]
+  ?:  &(!=('' zone) (known-zone:rules zone))  `[%local zone naive.u.p]
   ?~  off.u.p  `[%utc naive.u.p]
   ::  local clock with an offset: back to UTC
   `[%utc ?:(neg.u.off.u.p (add naive.u.p d.u.off.u.p) (sub naive.u.p d.u.off.u.p))]
@@ -140,13 +141,18 @@
   =/  rid=(unit [key=@t val=@t])
     ?:  =('' (str item 'recurringEventId'))  ~
     (rid-of (obj item 'originalStartTime'))
+  =/  tags=@t  (str (obj (obj item 'extendedProperties') 'private') 'tags')
   =/  extra=(list [@t @t])
-    %+  weld
+    ;:  weld
       ^-  (list [@t @t])
       :~  ['X-GOOGLE-ID' gid]
           ['X-GOOGLE-UPDATED' (str item 'updated')]
       ==
-    ?~(rid ~ ~[[key.u.rid val.u.rid]])
+      ^-  (list [@t @t])
+      ?:(=('' tags) ~ ~[['CATEGORIES' tags]])
+      ^-  (list [@t @t])
+      ?~(rid ~ ~[[key.u.rid val.u.rid]])
+    ==
   :-  ~
   :*  ^-  vevent:ics
       :*  uid
@@ -217,7 +223,14 @@
             ?.  ?=(%rel -.trigger.a)  ~
             `(pairs:enjs:format ~[['method' s+?:(=('email' desc.a) 'email' 'popup')] ['minutes' (numb:enjs:format (div before.trigger.a ~m1))]])
         ==
-        ['extendedProperties' (pairs:enjs:format ~[['private' (pairs:enjs:format ~[['grubbery' s+'1']])]])]
+        :-  'extendedProperties'
+        %-  pairs:enjs:format
+        :_  ~
+        :-  'private'
+        %-  pairs:enjs:format
+        :-  ['grubbery' s+'1']
+        =/  tags=(list @t)  (meta-tags:cal m)
+        ?~(tags ~ ~[['tags' s+(crip (sep-join:rr "," (turn tags trip)))]])
     ==
   =/  timing=(list [@t json])
     ?-    -.ev

@@ -32,6 +32,11 @@
 ::
 /<  pytz  /lib/pytz.hoon
 |%
+::  +known-zone: a name pytz has; an unknown one would crash the walker
+++  known-zone
+  |=  z=@t
+  ^-  ?
+  ?=(^ (find ~[z] zone-names:pytz))
 +$  wkd   ?(%mon %tue %wed %thu %fri %sat %sun)
 +$  ord   ?(%first %second %third %fourth %last)
 +$  span  [l=@da r=@da]

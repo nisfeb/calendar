@@ -247,6 +247,43 @@
   ?:  =(i.s sep)  $(s t.s, cur ~, out [(crip (flop cur)) out])
   $(s t.s, cur [i.s cur])
 ::  +unescape / +escape: TEXT values, RFC 5545 3.3.11
+::  +key-name: a property key without its params (DTSTART;TZID=x -> DTSTART)
+++  key-name
+  |=  k=@t
+  ^-  @t
+  =/  t=tape  (trip k)
+  =/  at=(unit @ud)  (find ";" t)
+  ?~(at k (crip (scag u.at t)))
+::  +split-categories: a CATEGORIES value on its unescaped commas, each
+::  part unescaped and trimmed of spaces
+++  split-categories
+  |=  v=@t
+  ^-  (list @t)
+  =/  t=tape  (trip v)
+  =|  cur=tape
+  =|  out=(list tape)
+  =/  parts=(list tape)
+    |-
+    ?~  t  (flop [(flop cur) out])
+    ?:  &(=('\\' i.t) ?=(^ t.t))  $(t t.t.t, cur [i.t.t i.t cur])
+    ?:  =(',' i.t)  $(t t.t, out [(flop cur) out], cur ~)
+    $(t t.t, cur [i.t cur])
+  %+  murn  parts
+  |=  part=tape
+  ^-  (unit @t)
+  =/  u=@t  (unescape (crip part))
+  =/  trimmed=tape  (trim-spaces (trip u))
+  ?:(=(~ trimmed) ~ `(crip trimmed))
+++  trim-spaces
+  |=  t=tape
+  ^-  tape
+  (flop (skip-lead (flop (skip-lead t))))
+++  skip-lead
+  |=  t=tape
+  ^-  tape
+  ?~  t  ~
+  ?:  =(' ' i.t)  $(t t.t)
+  t
 ++  unescape
   |=  v=@t
   ^-  @t
@@ -448,6 +485,8 @@
     ~[(line "SUMMARY" (escape (ms 'name')))]
     ?:(=('' (ms 'location')) ~ ~[(line "LOCATION" (escape (ms 'location')))])
     ?:(=('' (ms 'note')) ~ ~[(line "DESCRIPTION" (escape (ms 'note')))])
+    =/  tags=(list @t)  (meta-tags:cal m)
+    ?~(tags ~ ~[(line "CATEGORIES" (sep-join:rr "," (turn tags |=(t=@t (escape t)))))])
     ?:(=('' (ms 'color')) ~ ~[(line "COLOR" (trip (ms 'color')))])
     timing
     recur-lines
@@ -479,6 +518,12 @@
   ?~  start.ve  ~
   =/  s=when  u.start.ve
   =/  sd=@da  ?-(-.s %utc d.s, %local d.s, %day d.s)
+  ::  CATEGORIES (RFC 5545) are the tags; they ride in meta, not props
+  =/  tags=(list @t)
+    %-  zing
+    %+  turn  (skim extra.ve |=(p=prop =('CATEGORIES' (key-name k.p))))
+    |=(p=prop (split-categories v.p))
+  =.  extra.ve  (skip extra.ve |=(p=prop =('CATEGORIES' (key-name k.p))))
   =/  =meta:cal
     %-  ~(gas by *(map @t json))
     ^-  (list [@t json])
@@ -489,6 +534,8 @@
       ?:(=('' location.ve) ~ ~[['location' s+location.ve]])
       ^-  (list [@t json])
       ?:(=('' description.ve) ~ ~[['note' s+description.ve]])
+      ^-  (list [@t json])
+      ?~(tags ~ ~[['tags' [%a (turn tags |=(t=@t `json`s+t))]]])
     ==
   =/  own-args=(unit (map @t json))
     ?:  =('' args.ve)  ~
@@ -517,7 +564,8 @@
       ?.  ?=(%day -.u.end.ve)  1
       (max 1 (div (sub d.u.end.ve sd) ~d1))
     `[[[%allday rc days [dom ~] meta] common] ex]
-  =/  zone=(unit @t)  ?:(?=(%local -.s) `zone.s ~)
+  ::  an unknown TZID falls back to UTC rather than a crash in the walker
+  =/  zone=(unit @t)  ?:(&(?=(%local -.s) (known-zone:rules zone.s)) `zone.s ~)
   =/  =fin:cal
     ?^  duration.ve  [%dur u.duration.ve]
     ?~  end.ve  [%dur ~s0]

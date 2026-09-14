@@ -289,7 +289,10 @@
   ?:  (gth u.moment thru)  [out ~]
   ?:  (~(has in except.bound) idx)
     $(idx +(idx), dead 0, fuel (dec fuel), last `u.moment)
-  =.  out  (add-spans out id idx (dress u.moment))
+  ::  a zone the dresser cannot place goes quiet, not down
+  =/  spans=(unit _(dress u.moment))  (mole |.((dress u.moment)))
+  ?~  spans  $(idx +(idx), dead +(dead))
+  =.  out  (add-spans out id idx u.spans)
   $(idx +(idx), dead 0, fuel (dec fuel), last `u.moment)
 ::  +inflate-date: a bare [month day] enumerated per year across
 ::  [1970, year-of-thru]. idx = year - 1970, a stable per-year handle.
@@ -317,7 +320,7 @@
   |=  [o=order from=@da to=@da]
   ^-  (set ref)
   =/  hits=(set ref)
-    %+  roll  (tap:on-order (lot:on-order o `(sub from 1) `(add to 1)))
+    %+  roll  (tap:on-order (lot:on-order o `(unit @da)`[~ `@da`?:(=(0 from) 0 (dec from))] `(add to 1)))
     |=  [[@da refs=(set ref)] acc=(set ref)]
     (~(uni in acc) refs)
   =/  left=(list [@da (set ref)])  (tap:on-order (lot:on-order o ~ `from))
@@ -344,6 +347,13 @@
 ++  all-day  |=(e=event ?=(?(%allday %date) -.e))
 ::  +meta-str: a string key from a meta map, '' when absent
 ::
+::  +meta-tags: the tags on an event (meta `tags`, a list of strings)
+++  meta-tags
+  |=  m=meta
+  ^-  (list @t)
+  =/  j=(unit json)  (~(get by m) 'tags')
+  ?.  ?=([~ %a *] j)  ~
+  (murn p.u.j |=(x=json ?:(?=(%s -.x) `p.x ~)))
 ++  meta-str
   |=  [m=meta k=@t]
   ^-  @t

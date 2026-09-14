@@ -457,7 +457,8 @@ function renderTimeGrid(rows, n) {
       blk.style.left = (it.col * w) + '%';
       blk.style.width = 'calc(' + w + '% - 3px)';
       var t = parts(it.ev.l);
-      blk.innerHTML = '<div class="blk-time">' + fmtTime(t) + '</div>' + it.ev.name;
+      var bt = document.createElement('div'); bt.className = 'blk-time'; bt.textContent = fmtTime(t);
+      blk.textContent = ''; blk.appendChild(bt); blk.appendChild(document.createTextNode(it.ev.name));
       blk.title = it.ev.name + (it.ev.note ? ' — ' + it.ev.note : '');
       blk.onclick = function(e) {
         e.stopPropagation();

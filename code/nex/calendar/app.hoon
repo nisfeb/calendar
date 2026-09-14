@@ -511,6 +511,7 @@
           =/  refs=(list ref:cal)
             ~(tap in (window:cal order.ca u.from u.to))
           =/  owner=(map uid:cal @ta)  (owners c)
+          =/  want=(unit @t)  (get-key:kv:html-utils 'tag' args)
           =/  rows=json
             :-  %a
             %+  murn  refs
@@ -518,6 +519,7 @@
             ^-  (unit json)
             =/  ev=(unit event:cal)  (~(get by (events-all:cal c)) eid.r)
             ?~  ev  ~
+            ?.  ?~(want & ?=(^ (find ~[u.want] (meta-tags:cal (get-meta u.ev)))))  ~
             :-  ~
             %-  pairs:enjs:format
             :~  ['id' s+eid.r]
@@ -561,6 +563,20 @@
           =/  ej=json  (event-json:cal id u.ev)
           =/  cid=@ta  (fall (~(get by (owners c)) id) %default)
           (send-json eyre-id ?:(?=(%o -.ej) [%o (~(put by p.ej) 'cal' s+cid)] ej))
+        ::  /tags.json: every tag in use, with how many events carry it
+        ?:  ?=([%'tags.json' ~] suffix)
+          ;<  cal-view=view:nexus  bind:m
+            (peek:io (cord-to-road:tarball '../calendar.calendar') ~)
+          =/  c=calendar:cal  (cal-of cal-view)
+          =/  counts=(map @t @ud)
+            %+  roll  ~(tap by (events-all:cal c))
+            |=  [[* e=event:cal] acc=(map @t @ud)]
+            %+  roll  (meta-tags:cal (get-meta e))
+            |=([t=@t a=_acc] (~(put by a) t +((fall (~(get by a) t) 0))))
+          %+  send-json  eyre-id
+          :-  %a
+          %+  turn  (sort ~(tap by counts) |=([a=[@t @ud] b=[@t @ud]] (aor -.a -.b)))
+          |=([t=@t n=@ud] (pairs:enjs:format ~[['tag' s+t] ['count' (numb:enjs:format n)]]))
         ?:  ?=([%'events.json' ~] suffix)
           ;<  cal-view=view:nexus  bind:m
             (peek:io (cord-to-road:tarball '../calendar.calendar') ~)
@@ -568,7 +584,11 @@
           =/  rows=json
             :-  %a
             =/  owner=(map uid:cal @ta)  (owners c)
-            %+  turn  ~(tap by (entries-all:cal c))
+            =/  want=(unit @t)  (get-key:kv:html-utils 'tag' args)
+            %+  turn
+              %+  skim  ~(tap by (entries-all:cal c))
+              |=  [* e=entry:cal]
+              ?~(want & ?=(^ (find ~[u.want] (meta-tags:cal (get-meta event.e)))))
             |=  [id=@ta e=entry:cal]
             ^-  json
             %-  pairs:enjs:format
@@ -1649,6 +1669,12 @@
     ;<  cfg=json  bind:m  (google-config '../')
     =/  cid=@t  (gs cfg 'client_id')
     ?:  =('' cid)  (send-err 400 'calendar: set the OAuth client first')
+    ;<  eny=@uvJ  bind:m  get-entropy:io
+    =/  state=@t  (scot %uv (end [3 12] eny))
+    ;<  auth=json  bind:m  (google-auth '../')
+    ;<  ~  bind:m
+      %^  write-json-grub  '../'  'google-auth.json'
+      [%o (~(put by ?:(?=(%o -.auth) p.auth ~)) 'state' s+state)]
     =/  q=(list [tape tape])
       :~  ["client_id" (trip cid)]
           ["redirect_uri" redirect]
@@ -1656,13 +1682,17 @@
           ["scope" "https://www.googleapis.com/auth/calendar"]
           ["access_type" "offline"]
           ["prompt" "consent"]
-          ["state" "calendar"]
+          ["state" (trip state)]
       ==
     =/  qs=tape  (sep-join:rr "&" (turn q |=([k=tape v=tape] "{k}={(enc-seg:dav v)}")))
     (redirect-to "{(trip (gs cfg 'auth_url'))}?{qs}")
   ::  callback: the code for the tokens
   ?:  ?=([%callback ~] rest)
     =/  code=@t  (fall (get-key:kv:html-utils 'code' args) '')
+    ;<  auth0=json  bind:m  (google-auth '../')
+    =/  want-state=@t  (gs auth0 'state')
+    ?:  |(=('' want-state) !=(want-state (fall (get-key:kv:html-utils 'state' args) '')))
+      (send-err 400 'calendar: the callback did not carry the state this ship issued')
     ?:  =('' code)
       (send-err 400 (crip "calendar: google answered without a code: {(trip (fall (get-key:kv:html-utils 'error' args) ''))}"))
     ;<  cfg=json  bind:m  (google-config '../')
@@ -1790,7 +1820,8 @@
         ['remote_updated' s+remote-updated]
     ==
   ~&  >>  [%calendar-google-conflict uid why]
-  (write-json-grub pre 'google-conflicts.json' [%a (snoc ?:(?=(%a -.cs) p.cs ~) row)])
+  =/  rest=(list json)  (skip ?:(?=(%a -.cs) p.cs ~) |=(c=json =(uid (gs c 'uid'))))
+  (write-json-grub pre 'google-conflicts.json' [%a (snoc rest row)])
 ::  +pending-uids: the uids with a local change the push has not sent yet
 ++  pending-uids
   |=  [k=cal:cal since=@ud]
@@ -1924,6 +1955,8 @@
     acc
   ;<  ~  bind:m  (dav-write pre c(cals (~(put by cals.c) id k)))
   ;<  now=@da  bind:m  get-time:io
+  ::  what this pull wrote is not for pushing back: the push skips these
+  ::  uids up to this seq, and moves the watermark itself
   =/  row2=json
     ?.  ?=(%o -.row)  row
     :-  %o
@@ -1931,7 +1964,8 @@
     :~  ['sync_token' s+?:(=('' next-tok) tok next-tok)]
         ['last_ms' (numb:enjs:format (da-to-ms now))]
         ['ids' [%o ids]]
-        ['pushed_seq' (numb:enjs:format seq.k)]
+        ['pulled_seq' (numb:enjs:format seq.k)]
+        ['pulled_uids' [%a (turn ~(tap in seen) |=(u=uid:cal `json`s+u))]]
     ==
   ?.  =('' next-page)  $(page next-page, row row2)
   (pure:m row2)
@@ -1951,12 +1985,15 @@
   =/  k=(unit cal:cal)  (~(get by cals.c) id)
   ?~  k  (pure:m row)
   ?.  (gth seq.u.k since)  (pure:m row)
+  =/  pulled-seq=@ud  (fall (gn row 'pulled_seq') 0)
+  =/  pulled=(set @t)  (~(gas in *(set @t)) (turn (arr:gcal row 'pulled_uids') |=(j=json ?:(?=(%s -.j) p.j ''))))
   =/  changes=(list [uid:cal ?(%put %del)])
     =/  latest=(map uid:cal ?(%put %del))
       %+  roll  (tap:on-log:cal log.u.k)
       |=  [[key=@ud val=logent:cal] acc=(map uid:cal ?(%put %del))]
       ?.  (gth key since)  acc
       ?^  (find "#" (trip uid.val))  acc
+      ?:  &((~(has in pulled) uid.val) (lte key pulled-seq))  acc
       (~(put by acc) uid.val kind.val)
     ~(tap by latest)
   =/  base=tape  "/calendar/v3/calendars/{(enc-seg:dav (trip gid))}/events"
@@ -1987,7 +2024,7 @@
     ;<  [status=@ud res=json]  bind:m
       ?.  &(=(404 status) !=('' have))  (pure:(fiber:fiber:nexus ,[@ud json]) [status res])
       (google-api pre %'POST' base `body)
-    ?:  |(=(0 status) (gte status 500) =(429 status))
+    ?:  |(=(0 status) (gte status 500) =(429 status) =(401 status) =(403 status))
       ~&  >>>  [%calendar-google-push-stopped u status]
       $(changes ~, stopped &)
     ?.  =(200 status)
@@ -2243,6 +2280,7 @@
     (turn ~(tap by ids) |=([u=@t v=json] [(trip (gs v 'href')) u]))
   ::  1. the network: every changed object's text
   =|  fetched=(list [href=tape etag=@t gone=? body=@t])
+  =/  failed=?  |
   =/  todo=(list [href=tape etag=@t gone=?])  changes.u.got
   |-
   ?^  todo
@@ -2250,24 +2288,25 @@
     ;<  [status=@ud hs=(list [@t @t]) body=@t]  bind:m
       (dav-fetch row %'GET' (crip (weld origin href.i.todo)) ~ ~)
     ?.  =(200 status)
+      ::  a miss keeps the old token, so the next pass asks again
       ~&  >>>  [%calendar-caldav-get-failed href.i.todo status]
-      $(todo t.todo)
+      $(todo t.todo, failed &)
     =/  et=@t  ?:(=('' etag.i.todo) (dav-unquote (hdr-of hs 'etag')) etag.i.todo)
     $(todo t.todo, fetched [[href.i.todo et | body] fetched])
   ::  2. the calendar, once
   ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road pre 'calendar.calendar') ~)
   =/  c=calendar:cal  (cal-of cal-view)
   =/  k=cal:cal  (fall (~(get by cals.c) id) fresh-cal:cal)
-  =/  res=[k=cal:cal ids=(map @t json)]
+  =/  res=[k=cal:cal ids=(map @t json) touched=(set @t)]
     %+  roll  (flop fetched)
-    |=  [[href=tape etag=@t gone=? body=@t] acc=_[k=k ids=ids]]
+    |=  [[href=tape etag=@t gone=? body=@t] acc=_[k=k ids=ids touched=*(set @t)]]
     ?:  gone
       =/  u=(unit @t)  (~(get by by-href) href)
       ?~  u  acc
       =.  k.acc
         %+  roll  (dav-children k.acc u.u)
         |=([ch=entry:cal a=_k.acc] (del-entry:cal a uid.ch))
-      acc(k (del-entry:cal k.acc u.u), ids (~(del by ids.acc) u.u))
+      acc(k (del-entry:cal k.acc u.u), ids (~(del by ids.acc) u.u), touched (~(put in touched.acc) u.u))
     =/  ves=(list vevent:ics)  (events:ics body)
     =/  parent=(unit vevent:ics)
       =/  ps=(list vevent:ics)  (skip ves |=(v=vevent:ics ?=(^ (dav-rid v))))
@@ -2282,7 +2321,7 @@
     =.  k.acc
       %+  roll  (skim ves |=(v=vevent:ics ?=(^ (dav-rid v))))
       |=([v=vevent:ics a=_k.u.put] (put-override a uid.u.put v zone.c ~))
-    acc(ids (~(put by ids.acc) uid.u.put (pairs:enjs:format ~[['href' s+(crip href)] ['etag' s+etag]])))
+    acc(ids (~(put by ids.acc) uid.u.put (pairs:enjs:format ~[['href' s+(crip href)] ['etag' s+etag]])), touched (~(put in touched.acc) uid.u.put))
   ;<  ~  bind:m
     ?:  =(k.res k)  (pure:(fiber:fiber:nexus ,~) ~)
     (dav-write pre c(cals (~(put by cals.c) id k.res)))
@@ -2291,10 +2330,11 @@
   ?.  ?=(%o -.row)  row
   :-  %o
   %-  ~(gas by p.row)
-  :~  ['sync_token' s+token.u.got]
+  :~  ['sync_token' s+?:(failed (gs row 'sync_token') token.u.got)]
       ['last_ms' (numb:enjs:format (da-to-ms now))]
       ['ids' [%o ids.res]]
-      ['pushed_seq' (numb:enjs:format seq.k.res)]
+      ['pulled_seq' (numb:enjs:format seq.k.res)]
+      ['pulled_uids' [%a (turn ~(tap in touched.res) |=(u=@t `json`s+u))]]
   ==
 ::  +caldav-push: the log past the watermark, out as PUT and DELETE
 ++  caldav-push
@@ -2310,12 +2350,15 @@
   =/  k=(unit cal:cal)  (~(get by cals.c) id)
   ?~  k  (pure:m row)
   ?.  (gth seq.u.k since)  (pure:m row)
+  =/  pulled-seq=@ud  (fall (gn row 'pulled_seq') 0)
+  =/  pulled=(set @t)  (~(gas in *(set @t)) (turn (arr:gcal row 'pulled_uids') |=(j=json ?:(?=(%s -.j) p.j ''))))
   =/  changes=(list [uid:cal ?(%put %del)])
     =/  latest=(map uid:cal ?(%put %del))
       %+  roll  (tap:on-log:cal log.u.k)
       |=  [[key=@ud val=logent:cal] acc=(map uid:cal ?(%put %del))]
       ?.  (gth key since)  acc
       ?^  (find "#" (trip uid.val))  acc
+      ?:  &((~(has in pulled) uid.val) (lte key pulled-seq))  acc
       (~(put by acc) uid.val kind.val)
     ~(tap by latest)
   ;<  now=@da  bind:m  get-time:io
@@ -2336,7 +2379,7 @@
     ?:  =(%del what)
       ?:  =('' (gs known 'href'))  $(changes t.changes)
       ;<  [status=@ud * *]  bind:m  (dav-fetch row %'DELETE' (crip (weld origin href)) ~ ~)
-      ?:  |(=(0 status) (gte status 500))
+      ?:  |(=(0 status) (gte status 500) =(401 status) =(403 status))
         ~&  >>>  [%calendar-caldav-push-stopped u status]
         $(changes ~, stopped &)
       $(changes t.changes, ids (~(del by ids) u))
@@ -2348,10 +2391,10 @@
           :-  ['content-type' 'text/calendar; charset=utf-8']
           ?:(=('' etag) ~ ~[['if-match' (crip "\"{(trip etag)}\"")]])
       ==
-    ?:  |(=(0 status) (gte status 500))
+    ?:  |(=(0 status) (gte status 500) =(401 status) =(403 status))
       ~&  >>>  [%calendar-caldav-push-stopped u status]
       $(changes ~, stopped &)
-    ?:  |(=(412 status) (gte status 400))
+    ?:  (gte status 400)
       ;<  ~  bind:m
         (google-conflict pre id u (~(get by entries.u.k) u) '' (crip "remote refused the push ({(a-co:co status)})"))
       $(changes t.changes)
@@ -2408,7 +2451,8 @@
   |=  [jon=json k=@t]
   ^-  @t
   ?.  ?=(%o -.jon)  ''
-  (fall (bind (~(get by p.jon) k) |=(=json ?>(?=(%s -.json) p.json))) '')
+  =/  j=(unit json)  (~(get by p.jon) k)
+  ?:(?=([~ %s *] j) p.u.j '')
 ::
 ++  gn
   |=  [jon=json k=@t]
@@ -2729,7 +2773,9 @@
   =/  args=(map @t json)
     =/  a=(unit json)  (~(get jo:json-utils jon) /args)
     ?.(?=([~ %o *] a) ~ p.u.a)
-  `[[/lib/rules (slav %tas kind)] args u.start]
+  =/  kn=(unit @tas)  (slaw %tas kind)
+  ?~  kn  ~
+  `[[/lib/rules u.kn] args u.start]
 ::  +parse-event: json -> one of the three event shapes. dz is the
 ::  calendar's default zone for timed events with none named.
 ::
@@ -2766,7 +2812,8 @@
   =/  zone=(unit @t)
     =/  z=@t  (gs jon 'zone')
     ?:  =('none' z)  ~
-    ?:(=('' z) dz `z)
+    ?:  =('' z)  dz
+    ?:((known-zone:rules z) `z dz)
   =/  =fin:cal
     =/  f=@t  (gs jon 'fin')
     ?:  =('to' f)  [%to (fall (bind (gn jon 'end_ms') ms-to-da) *@da)]
