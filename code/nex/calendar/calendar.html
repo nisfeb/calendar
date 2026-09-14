@@ -31,11 +31,8 @@
       <button id="sync-btn" class="nav-btn icon-btn" title="Sync external calendar feeds (Google Calendar etc.)">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>
       </button>
-      <button id="feeds-btn" class="nav-btn icon-btn" title="Manage external calendar feeds">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1.5" fill="currentColor" stroke="none"/></svg>
-      </button>
-      <button id="dav-btn" class="nav-btn" title="CalDAV clients: Thunderbird, DAVx5, iOS">CalDAV</button>
-      <button id="google-btn" class="nav-btn" title="Google Calendar, two-way">Google</button>
+      <select id="tag-filter" title="Only events with this tag"><option value="">All tags</option></select>
+      <button id="settings-btn" class="nav-btn" title="Calendars, sharing, following, Google, feeds">Settings</button>
       <button id="clock-btn" class="nav-btn" title="Clock format"></button>
       <div id="views">
         <button id="v-month" class="nav-btn view-btn">Month</button>
@@ -71,6 +68,7 @@
       </div>
       <div id="pop-time"></div>
       <div id="pop-note"></div>
+      <div id="pop-tags"></div>
       <div id="pop-actions">
         <button id="pop-edit" class="pop-act">Edit</button>
         <button id="pop-skip" class="pop-act">Skip this one</button>
@@ -188,6 +186,8 @@
         <input id="f-note" type="text">
         <label class="f">Calendar</label>
         <select id="f-cal"></select>
+        <label class="f">Tags (comma separated)</label>
+        <input id="f-tags" type="text" placeholder="work, family">
         <label class="f">Color</label>
         <input id="f-color" type="color" value="#4a6a8a">
         <div id="modal-foot">
@@ -197,12 +197,55 @@
       </div>
     </div>
 
-    <div id="google-back">
-      <div id="google-modal">
+
+
+  </div>
+    <div id="settings-back">
+      <div id="settings-modal">
         <div class="feeds-header">
-          <span>Google Calendar</span>
-          <button id="google-close" class="nav-btn">Close</button>
+          <span>Calendar settings</span>
+          <button id="settings-close" class="nav-btn">Close</button>
         </div>
+        <details class="sect" open>
+          <summary>Calendars</summary>
+          <div class="dav-hint">Local calendars live here. Followed and Google calendars are listed too; unlink them in their own sections.</div>
+          <div id="cals-list"></div>
+          <div class="nth-row">
+            <div><label class="f">New calendar</label><input id="cal-new-name" placeholder="name"></div>
+            <div><label class="f">Color</label><input id="cal-new-color" type="color" value="#101541"></div>
+          </div>
+          <div class="feeds-foot"><span id="cals-status"></span><button id="cal-new-add" class="nav-btn">Add calendar</button></div>
+        </details>
+        <details class="sect">
+          <summary>Sharing over CalDAV (Thunderbird, DAVx5, iOS)</summary>
+        <div class="dav-hint">Each client (Thunderbird, DAVx5, iOS) gets its own password. The URL is <code id="dav-url"></code>; the username is your ship name.</div>
+        <div id="dav-list"></div>
+        <div id="dav-new" class="hidden"></div>
+        <label class="f">New client</label>
+        <input id="dav-name" placeholder="Thunderbird on the laptop">
+        <div class="feeds-foot">
+          <span id="dav-status"></span>
+          <button id="dav-add" class="nav-btn">Mint a password</button>
+        </div>
+        </details>
+        <details class="sect">
+          <summary>Following a CalDAV calendar</summary>
+          <div class="dav-hint">Follow another ship's calendar, or a Nextcloud or Baïkal one. Edits here go back to the source. The other side must accept <code>X-HTTP-Method-Override</code> (ours does; iCloud does not).</div>
+          <div id="cdav-list"></div>
+          <label class="f">Calendar URL</label>
+          <input id="cdav-url" placeholder="https://host/apps/calendar/dav/cal/default/">
+          <div class="nth-row">
+            <div><label class="f">Username</label><input id="cdav-user" placeholder="~ship"></div>
+            <div><label class="f">Password</label><input id="cdav-pass" type="password"></div>
+          </div>
+          <div class="nth-row">
+            <div><label class="f">Name</label><input id="cdav-name" placeholder="their calendar"></div>
+            <div><label class="f">Color</label><input id="cdav-color" type="color" value="#f9a804"></div>
+          </div>
+          <div class="feeds-foot"><span id="cdav-status"></span><span><button id="cdav-sync" class="nav-btn">Sync now</button> <button id="cdav-add" class="nav-btn">Follow</button></span></div>
+        </details>
+        <details class="sect" id="google-sect">
+          <summary>Google Calendar</summary>
         <div id="google-status" class="dav-hint"></div>
         <details id="google-setup">
           <summary>Set up your own OAuth client (once)</summary>
@@ -231,33 +274,9 @@
           <span id="google-conflicts" class="dav-hint"></span>
           <button id="google-sync-now" class="nav-btn">Sync now</button>
         </div>
-      </div>
-    </div>
-
-    <div id="dav-back">
-      <div id="dav-modal">
-        <div class="feeds-header">
-          <span>CalDAV clients</span>
-          <button id="dav-close" class="nav-btn">Close</button>
-        </div>
-        <div class="dav-hint">Each client (Thunderbird, DAVx5, iOS) gets its own password. The URL is <code id="dav-url"></code>; the username is your ship name.</div>
-        <div id="dav-list"></div>
-        <div id="dav-new" class="hidden"></div>
-        <label class="f">New client</label>
-        <input id="dav-name" placeholder="Thunderbird on the laptop">
-        <div class="feeds-foot">
-          <span id="dav-status"></span>
-          <button id="dav-add" class="nav-btn">Mint a password</button>
-        </div>
-      </div>
-    </div>
-
-    <div id="feeds-back">
-      <div id="feeds-modal">
-        <div class="feeds-header">
-          <span>External Feeds</span>
-          <button id="feeds-close" class="nav-btn">Close</button>
-        </div>
+        </details>
+        <details class="sect">
+          <summary>ICS feeds (read-only)</summary>
         <div id="feeds-list"></div>
         <label class="f">Name</label>
         <input id="feed-name" placeholder="main">
@@ -267,9 +286,10 @@
           <span id="feeds-status"></span>
           <button id="feed-add" class="nav-btn">Add feed</button>
         </div>
+        </details>
       </div>
     </div>
-  </div>
+
   <script src="/apps/calendar/calendar.js"></script>
 </body>
 </html>

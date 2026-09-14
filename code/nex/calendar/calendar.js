@@ -100,7 +100,7 @@ function loadCals() {
 }
 
 function fetchWindow(fromMs, toMs, cb) {
-  fetch(CAL + '/window.json?from=' + fromMs + '&to=' + toMs)
+  fetch(CAL + '/window.json?from=' + fromMs + '&to=' + toMs + (state.tag ? '&tag=' + encodeURIComponent(state.tag) : ''))
     .then(function(x) { return x.json(); })
     .then(function(res) {
       var rows = res.rows || [];
@@ -114,6 +114,7 @@ function fetchWindow(fromMs, toMs, cb) {
         r.name = m.name || '';
         r.note = m.note || '';
         r.color = m.color || calColor(r.cal) || '';
+        r.tags = m.tags || [];
       });
       cb(rows);
     })
@@ -221,6 +222,10 @@ function showPop(ev, x, y) {
   var note = document.getElementById('pop-note');
   note.textContent = ev.note || '';
   note.style.display = ev.note ? '' : 'none';
+  var pt = document.getElementById('pop-tags');
+  pt.textContent = '';
+  (ev.tags || []).forEach(function(t) { var sp = document.createElement('span'); sp.textContent = '#' + t; pt.appendChild(sp); });
+  pt.style.display = (ev.tags || []).length ? '' : 'none';
   var series = (ev.cat !== 'date' && ev.kind !== 'once');
   document.getElementById('pop-skip').style.display = series ? '' : 'none';
   document.getElementById('pop-del').textContent =
@@ -523,6 +528,7 @@ var loaderTimer = null;
 function load() {
   syncUrl();
   setLabel();
+  loadTags();
   if (loaderTimer) clearTimeout(loaderTimer);
   loaderTimer = setTimeout(function() { loader.classList.add('on'); }, 150);
   var settle = function(fn) {
@@ -720,13 +726,6 @@ axisInput.onchange = function() {
 };
 
 // feeds modal: manage the named external ICS urls
-var feedsBack = document.getElementById('feeds-back');
-document.getElementById('feeds-btn').onclick = function() {
-  loadFeeds();
-  feedsBack.classList.add('open');
-};
-document.getElementById('feeds-close').onclick = function() { feedsBack.classList.remove('open'); };
-feedsBack.onclick = function(e) { if (e.target === feedsBack) feedsBack.classList.remove('open'); };
 
 function loadFeeds() {
   fetch(CAL + '/feeds.json')
@@ -777,14 +776,6 @@ document.getElementById('feed-add').onclick = function() {
 };
 
 // Google: the user's own OAuth client, connect, link calendars
-var googleBack = document.getElementById('google-back');
-document.getElementById('google-btn').onclick = function() {
-  document.getElementById('google-redirect').textContent = location.origin + CAL + '/google/callback';
-  loadGoogle();
-  googleBack.classList.add('open');
-};
-document.getElementById('google-close').onclick = function() { googleBack.classList.remove('open'); };
-googleBack.onclick = function(e) { if (e.target === googleBack) googleBack.classList.remove('open'); };
 
 function loadGoogle() {
   var st = document.getElementById('google-status');
@@ -850,18 +841,111 @@ document.getElementById('google-disconnect').onclick = function() {
 document.getElementById('google-sync-now').onclick = function() {
   fetch(CAL + '/google/sync', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then(function() { setTimeout(function() { loadGoogle(); load(); }, 3000); });
 };
-if (new URLSearchParams(location.search).get('google') === 'connected') { setTimeout(function() { document.getElementById('google-btn').click(); }, 500); }
+if (new URLSearchParams(location.search).get('google') === 'connected') { setTimeout(function() { openSettings(); document.getElementById('google-sect').open = true; }, 500); }
 
-// CalDAV clients: list, mint (the password shows once), revoke
-var davBack = document.getElementById('dav-back');
-document.getElementById('dav-btn').onclick = function() {
+// the settings screen: calendars, sharing, following, Google, feeds
+var settingsBack = document.getElementById('settings-back');
+function openSettings() {
   document.getElementById('dav-url').textContent = location.origin + CAL + '/dav/';
   document.getElementById('dav-new').classList.add('hidden');
-  loadDav();
-  davBack.classList.add('open');
+  document.getElementById('google-redirect').textContent = location.origin + CAL + '/google/callback';
+  loadCalsList(); loadDav(); loadCdav(); loadGoogle(); loadFeeds();
+  settingsBack.classList.add('open');
+}
+document.getElementById('settings-btn').onclick = openSettings;
+document.getElementById('settings-close').onclick = function() { settingsBack.classList.remove('open'); loadCals(); load(); };
+settingsBack.onclick = function(e) { if (e.target === settingsBack) { settingsBack.classList.remove('open'); loadCals(); load(); } };
+
+function loadCalsList() {
+  fetch(CAL + '/calendars.json').then(function(r) { return r.json(); }).then(function(cs) {
+    var list = document.getElementById('cals-list');
+    list.innerHTML = '';
+    cs.forEach(function(c) {
+      var row = document.createElement('div'); row.className = 'feed-row cal-row';
+      var color = document.createElement('input'); color.type = 'color'; color.value = c.color || '#101541';
+      var nm = document.createElement('input'); nm.value = c.name; nm.style.flex = '1';
+      var badge = document.createElement('span'); badge.className = 'kind-badge';
+      badge.textContent = c.kind === 'google' ? 'google' : c.kind === 'caldav' ? 'followed' : 'local';
+      var n = document.createElement('span'); n.className = 'fu'; n.style.flex = '0 0 auto'; n.textContent = c.count + (c.count === 1 ? ' event' : ' events');
+      var save = document.createElement('button'); save.className = 'fx'; save.textContent = '✓'; save.title = 'Save name and color'; save.style.display = 'none';
+      function dirty() { save.style.display = ''; }
+      nm.oninput = dirty; color.oninput = dirty;
+      save.onclick = function() { poke({ action: 'edit-calendar', id: c.id, name: nm.value.trim(), color: color.value }, function() { setTimeout(loadCalsList, 300); }); };
+      var del = document.createElement('button'); del.className = 'fx'; del.textContent = '✕'; del.title = 'Delete this calendar and its events';
+      if (c.id === 'default' || c.kind !== 'local') del.style.visibility = 'hidden';
+      del.onclick = function() { if (!confirm('Delete "' + c.name + '" and its ' + c.count + ' events?')) return; poke({ action: 'del-calendar', id: c.id }, function() { setTimeout(loadCalsList, 300); }); };
+      row.appendChild(color); row.appendChild(nm); row.appendChild(badge); row.appendChild(n); row.appendChild(save); row.appendChild(del);
+      list.appendChild(row);
+    });
+  }).catch(function() {});
+}
+document.getElementById('cal-new-add').onclick = function() {
+  var st = document.getElementById('cals-status');
+  var name = document.getElementById('cal-new-name').value.trim();
+  if (!name) { st.textContent = 'name required'; return; }
+  st.textContent = '';
+  var id = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || ('cal-' + Date.now());
+  poke({ action: 'add-calendar', id: id, name: name, color: document.getElementById('cal-new-color').value }, function(ok) {
+    if (!ok) { st.textContent = 'could not add'; return; }
+    document.getElementById('cal-new-name').value = '';
+    setTimeout(loadCalsList, 300);
+  });
 };
-document.getElementById('dav-close').onclick = function() { davBack.classList.remove('open'); };
-davBack.onclick = function(e) { if (e.target === davBack) davBack.classList.remove('open'); };
+
+// following: a remote CalDAV calendar
+function loadCdav() {
+  fetch(CAL + '/caldav/subscriptions.json').then(function(r) { return r.json(); }).then(function(subs) {
+    var list = document.getElementById('cdav-list');
+    list.innerHTML = '';
+    if (!subs.length) { list.innerHTML = '<div class="feed-row" style="border:none;color:#666">Not following any calendar.</div>'; return; }
+    subs.forEach(function(sub) {
+      var row = document.createElement('div'); row.className = 'feed-row';
+      var nm = document.createElement('span'); nm.className = 'fn'; nm.textContent = sub.user + ' @ ' + sub.url;
+      var u = document.createElement('span'); u.className = 'fu'; u.textContent = sub.last_ms ? 'synced ' + new Date(sub.last_ms).toLocaleString() : 'not synced yet';
+      var x = document.createElement('button'); x.className = 'fx'; x.textContent = 'Unfollow'; x.style.fontSize = '12px';
+      x.onclick = function() {
+        fetch(CAL + '/caldav/unsubscribe', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: sub.id }) })
+          .then(function() { loadCdav(); loadCalsList(); });
+      };
+      row.appendChild(nm); row.appendChild(u); row.appendChild(x);
+      list.appendChild(row);
+    });
+  }).catch(function() {});
+}
+document.getElementById('cdav-add').onclick = function() {
+  var st = document.getElementById('cdav-status');
+  var body = { url: document.getElementById('cdav-url').value.trim(), user: document.getElementById('cdav-user').value.trim(), password: document.getElementById('cdav-pass').value, name: document.getElementById('cdav-name').value.trim(), color: document.getElementById('cdav-color').value };
+  if (!body.url) { st.textContent = 'url required'; return; }
+  st.textContent = 'following…';
+  fetch(CAL + '/caldav/subscribe', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+    .then(function(r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+    .then(function() { st.textContent = ''; document.getElementById('cdav-url').value = ''; document.getElementById('cdav-pass').value = ''; setTimeout(function() { loadCdav(); loadCalsList(); }, 2000); })
+    .catch(function(e) { st.textContent = 'could not follow (' + e.message + ')'; });
+};
+document.getElementById('cdav-sync').onclick = function() {
+  fetch(CAL + '/caldav/sync', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then(function() { setTimeout(loadCdav, 3000); });
+};
+
+// tags: the filter in the header, from tags.json
+var tagFilter = document.getElementById('tag-filter');
+function loadTags() {
+  fetch(CAL + '/tags.json').then(function(r) { return r.json(); }).then(function(ts) {
+    var cur = tagFilter.value;
+    tagFilter.innerHTML = '';
+    var all = document.createElement('option'); all.value = ''; all.textContent = 'All tags'; tagFilter.appendChild(all);
+    ts.forEach(function(t) {
+      var o = document.createElement('option'); o.value = t.tag; o.textContent = t.tag + ' (' + t.count + ')'; tagFilter.appendChild(o);
+    });
+    tagFilter.value = cur;
+    tagFilter.style.display = ts.length ? '' : 'none';
+  }).catch(function() {});
+}
+tagFilter.onchange = function() { state.tag = tagFilter.value; load(); };
+function parseTags(text) {
+  return text.split(',').map(function(t) { return t.trim(); }).filter(function(t, i, a) { return t && a.indexOf(t) === i; });
+}
+
+// CalDAV clients: list, mint (the password shows once), revoke
 
 function loadDav() {
   fetch(CAL + '/dav-clients.json')
@@ -985,6 +1069,7 @@ function openModal(opts) {
   document.getElementById('f-date').value = p.y + '-' + pad2(p.m) + '-' + pad2(p.d);
   document.getElementById('f-name').value = '';
   document.getElementById('f-note').value = '';
+  document.getElementById('f-tags').value = '';
   document.getElementById('f-count').value = 0;
   document.getElementById('f-until').value = '';
   document.getElementById('f-days-n').value = 1;
@@ -1016,6 +1101,7 @@ function openEdit(d, target) {
   var dm = d.meta || {};
   document.getElementById('f-name').value = dm.name || '';
   document.getElementById('f-note').value = dm.note || '';
+  document.getElementById('f-tags').value = (dm.tags || []).join(', ');
   document.getElementById('f-color').value = dm.color || '#4a6a8a';
   if (d.cal) document.getElementById('f-cal').value = d.cal;
 
@@ -1091,6 +1177,8 @@ document.getElementById('f-save').onclick = function() {
   var color = document.getElementById('f-color').value;
   var note = document.getElementById('f-note').value;
   var body = { action: 'add-event', cat: cat, meta: { name: name, color: color, note: note } };
+  var tags = parseTags(document.getElementById('f-tags').value);
+  if (tags.length) body.meta.tags = tags;
   var calSel = document.getElementById('f-cal');
   if (calSel.value) body.cal = calSel.value;
 

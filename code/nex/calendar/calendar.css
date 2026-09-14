@@ -153,3 +153,20 @@ label.f { display: block; font-size: 11px; color: #888; margin: 10px 0 3px; lett
   .blk { font-size: 9px; padding: 1px 3px; }
   #month-label { font-size: 14px; }
 }
+
+/* the settings screen: one modal, sections */
+#settings-back { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 100; }
+#settings-back.open { display: flex; align-items: center; justify-content: center; }
+#settings-modal { background: #1a1a1a; border: 1px solid #333; border-radius: 14px; width: 92%; max-width: 560px; padding: 20px; max-height: 90vh; overflow-y: auto; }
+#settings-modal input:not([type=color]) { width: 100%; padding: 7px 9px; border-radius: 6px; border: 1px solid #333; background: #111; color: #eee; font-size: 13px; outline: none; }
+#settings-modal input:focus { border-color: #2563eb; }
+#settings-modal code { color: #93c5fd; font-size: 12px; user-select: all; }
+#settings-modal .sect { border-top: 1px solid #262626; padding: 8px 0 12px; }
+#settings-modal .sect > summary { cursor: pointer; font-size: 13px; font-weight: 500; color: #ddd; padding: 6px 0; list-style: none; }
+#settings-modal .sect > summary::before { content: '▸ '; color: #666; }
+#settings-modal .sect[open] > summary::before { content: '▾ '; }
+.kind-badge { font-size: 10px; color: #888; border: 1px solid #333; border-radius: 4px; padding: 1px 5px; margin-left: 4px; }
+.cal-row input[type=color] { width: 22px; height: 22px; border: none; background: none; padding: 0; cursor: pointer; }
+#tag-filter { font-size: 12px; padding: 5px 8px; border-radius: 8px; border: 1px solid #2e2e2e; background: #1a1a1a; color: #ccc; }
+#pop-tags { font-size: 11px; color: #93c5fd; margin-top: 4px; }
+#pop-tags span { margin-right: 6px; }
