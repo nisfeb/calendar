@@ -57,8 +57,8 @@ body { font-family: -apple-system, system-ui, sans-serif; background: #111; colo
 .feeds-header span { font-size: 14px; font-weight: 500; }
 .feeds-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 16px; }
 #feeds-status { font-size: 12px; color: #f87171; }
-.feed-row { display: flex; align-items: center; gap: 10px; font-size: 12px; padding: 7px 0; border-bottom: 1px solid #222; }
-.feed-row .fn { color: #ddd; font-weight: 500; }
+.feed-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 12px; padding: 7px 0; border-bottom: 1px solid #222; }
+.feed-row .fn { color: #ddd; font-weight: 500; min-width: 0; overflow-wrap: anywhere; }
 .feed-row .fu { flex: 1; color: #666; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .feed-row .fx { background: none; border: 1px solid #3a3a3a; color: #bbb; cursor: pointer; font-size: 13px; padding: 3px 9px; border-radius: 6px; white-space: nowrap; flex-shrink: 0; }
 .feed-row .fx:hover { color: #f87171; background: rgba(248,113,113,0.1); }
