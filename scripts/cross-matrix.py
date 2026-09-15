@@ -89,5 +89,48 @@ check('no conflict logged along the way', not [c for c in conf if c.get('cal') i
 curl(PEER, PJ, '/apps/calendar/caldav/unsubscribe', {'id': fid})
 poke(HOST, HJ, {'action': 'del-calendar', 'id': FCAL})
 curl(HOST, HJ, '/apps/calendar/dav-clients/revoke', {'id': pw.get('id')})
+if len(sys.argv) > 6:
+    FAKE = sys.argv[6]
+    print('== a Google-linked calendar shared onward (fake Google at %s)' % FAKE)
+    def ctl(body): return json.loads(subprocess.run(['curl', '-s', '-m', '60', '-X', 'POST', '-H', 'content-type: application/json', '-d', json.dumps(body), FAKE + '/__control'], capture_output=True, text=True).stdout or '{}')
+    def writes(): return ctl({'op': 'state'})['writes']
+    def gsync(): curl(HOST, HJ, '/apps/calendar/google/sync', {})
+    ctl({'op': 'reset'})
+    curl(HOST, HJ, '/apps/calendar/google/config', {'client_id': 'fake-client', 'client_secret': 'fake-secret', 'auth_url': FAKE + '/o/oauth2/v2/auth', 'token_url': FAKE + '/token', 'api_base': FAKE})
+    subprocess.run(['curl', '-s', '-m', '60', '-b', HJ, '-L', '-o', '/dev/null', HOST + '/apps/calendar/google/connect'])
+    for c in json.loads(curl(HOST, HJ, '/apps/calendar/calendars.json')):
+        if c['kind'] == 'google': curl(HOST, HJ, '/apps/calendar/google/unlink', {'id': c['id']})
+    ctl({'op': 'put', 'event': {'id': 'g-seed', 'summary': 'G seed', 'start': {'dateTime': '2026-11-02T10:00:00Z'}, 'end': {'dateTime': '2026-11-02T11:00:00Z'}}})
+    r = json.loads(curl(HOST, HJ, '/apps/calendar/google/link', {'google_id': 'primary@fake', 'name': 'Fake shared', 'color': '#4285f4'})); gc = r.get('id'); time.sleep(10)
+    check('host: google calendar linked and seeded', bool(gc) and 'G seed' in rows(HOST, HJ, gc), (gc, list(rows(HOST, HJ, gc))))
+    r = json.loads(curl(HOST, HJ, '/apps/calendar/share/share', {'id': gc, 'ship': PEERNAME, 'mode': 'edit'}))
+    check('host: a google calendar can be shared', r.get('ok') is True, r)
+    key = None
+    def offered2():
+        global key
+        for k, o in json.loads(curl(PEER, PJ, '/apps/calendar/share/shares.json'))['offers'].items():
+            if o['cal'] == gc: key = k; return True
+        return False
+    wait('peer: offer arrived', offered2, 30)
+    gsid = json.loads(curl(PEER, PJ, '/apps/calendar/share/accept', {'key': key}))['id']; sync(PEER, PJ)
+    wait('peer: google seed pulled through the host', lambda: 'G seed' in rows(PEER, PJ, gsid))
+    poke(PEER, PJ, {'action': 'add-event', 'cal': gsid, 'cat': 'timed', 'kind': 'once', 'start_ms': 1793700000000, 'fin': 'dur', 'dur_min': 30, 'meta': {'name': 'from peer'}})
+    wait('host: peer add arrived', lambda: 'from peer' in rows(HOST, HJ, gc))
+    gsync()
+    def gevents(): return json.dumps(ctl({'op': 'state'}).get('events', {}))
+    wait('google: peer add pushed up, once', lambda: [w[0] for w in writes()] == ['insert'] and 'from peer' in gevents())
+    ctl({'op': 'put', 'event': {'id': 'g-later', 'summary': 'G later', 'start': {'dateTime': '2026-11-03T10:00:00Z'}, 'end': {'dateTime': '2026-11-03T11:00:00Z'}}})
+    gsync(); time.sleep(4); sync(PEER, PJ)
+    wait('peer: a later google event reaches the peer', lambda: 'G later' in rows(PEER, PJ, gsid))
+    pu = rows(PEER, PJ, gsid)['from peer']['id']
+    poke(PEER, PJ, {'action': 'edit-event', 'cal': gsid, 'id': pu, 'cat': 'timed', 'kind': 'once', 'start_ms': 1793700000000, 'fin': 'dur', 'dur_min': 45, 'meta': {'name': 'from peer v2'}})
+    wait('host: peer edit arrived', lambda: 'from peer v2' in rows(HOST, HJ, gc))
+    gsync()
+    wait('google: the edit is one update, no echo', lambda: [w[0] for w in writes()] == ['insert', 'update'] and 'from peer v2' in gevents())
+    time.sleep(20); sync(PEER, PJ); gsync(); time.sleep(10)
+    check('no ping-pong after two more passes', [w[0] for w in writes()] == ['insert', 'update'] and rows(PEER, PJ, gsid)['from peer v2']['cat'] == 'timed', writes())
+    curl(HOST, HJ, '/apps/calendar/share/revoke', {'id': gc, 'ship': PEERNAME}); time.sleep(3)
+    poke(PEER, PJ, {'action': 'del-calendar', 'id': gsid})
+    curl(HOST, HJ, '/apps/calendar/google/unlink', {'id': gc}); ctl({'op': 'reset'})
 print('CROSS MATRIX ' + ('PASSED' if not fails else 'FAILED: ' + ', '.join(fails)))
 sys.exit(1 if fails else 0)

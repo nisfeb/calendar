@@ -963,12 +963,16 @@ function loadCalsList() {
       var del = document.createElement('button'); del.className = 'fx'; del.textContent = '✕'; del.title = 'Delete this calendar and its events';
       if (c.id === 'default' || c.kind !== 'local') del.style.visibility = 'hidden';
       var sh = document.createElement('button'); sh.className = 'fx'; sh.style.fontSize = '12px'; sh.textContent = 'Share…'; sh.title = 'Share this calendar with another ship';
-      if (c.kind !== 'local') sh.style.display = 'none';
+      if (c.kind === 'ship') sh.style.display = 'none';
       sh.onclick = function() {
         var ship = prompt('Share "' + c.name + '" with which ship? (e.g. ~sampel-palnet)');
         if (!ship) return;
         ship = ship.trim(); if (ship[0] !== '~') ship = '~' + ship;
         var edit = confirm('Let ' + ship + ' edit it too?\nOK = read and edit, Cancel = read only');
+        if (c.kind !== 'local') {
+          var src = c.kind === 'google' ? 'Google' : 'its source';
+          if (!confirm('"' + c.name + '" syncs with ' + src + '. ' + (edit ? ship + "'s edits will reach " + src + ' through this ship, as if you made them. ' : '') + 'A sync hiccup on either side could show ' + ship + ' a stale copy for a while. Share anyway?')) return;
+        }
         fetch(CAL + '/share/share', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: c.id, ship: ship, mode: edit ? 'edit' : 'read' }) })
           .then(function(r) { if (!r.ok) return r.text().then(function(t) { throw new Error(t); }); return r.json(); })
           .then(function(d) { loadShares(); if (!d.notified) alert(ship + ' could not be reached right now (down, or it has no calendar app yet). The share is recorded here; share again once it is up to send the offer.'); })

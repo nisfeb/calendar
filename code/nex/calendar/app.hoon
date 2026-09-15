@@ -2991,7 +2991,11 @@
     =/  c=calendar:cal  (cal-of cal-view)
     =/  k=(unit cal:cal)  (~(get by cals.c) id)
     ?~  k  (send-err 404 'calendar: no such calendar')
-    ?.  ?=(%local kind.props.u.k)  (send-err 400 'calendar: only a local calendar can be shared')
+    ::  a Google or followed calendar can be shared onward: the peer's
+    ::  edits land here and the sync carries them up to the source, as if
+    ::  made here. A calendar another ship shared with us is not ours to
+    ::  share again.
+    ?:  ?=(%ship kind.props.u.k)  (send-err 400 'calendar: a calendar shared with you cannot be shared onward')
     ::  1. the record
     ;<  shares=json  bind:m  (read-json-grub '../' 'shares.json')
     =/  all=(map @t json)  ?:(?=(%o -.shares) p.shares ~)

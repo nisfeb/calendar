@@ -71,13 +71,20 @@ here ever deletes a calendar for you.
 
 ## Sharing a calendar with a ship
 
-Settings → Calendars → **Share…** on a local calendar: name the ship
+Settings → Calendars → **Share…** on a calendar of yours (local, Google, or
+followed; not one another ship shared with you): name the ship
 (`~sampel-palnet`) and choose read-only or edit. The other ship sees an offer
 under Settings → Sharing with ships, and accepts or declines it. An accepted
 calendar appears there as a calendar of its own, marked *shared with you*;
 it is pulled every few minutes and on demand. With edit, their changes reach
 this ship within seconds and are merged like any other sync (conflicts land
 in the Google/CalDAV conflict list).
+
+Sharing a Google or followed calendar onward works the same way, with one
+thing to know: a peer with edit rights writes into that calendar on your
+ship, and your sync carries those edits up to Google or the source as if
+you made them. Two syncs in a row also means a hiccup on either can leave
+the peer with a stale copy until the next pass.
 
 No passwords: the host lays two usergroups per shared calendar,
 `cal-<id>-read` and `cal-<id>-edit`, and grubbery's cross-ship permissions
