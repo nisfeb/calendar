@@ -1847,10 +1847,31 @@
   =/  m  (fiber:fiber:nexus ,[status=@ud headers=(list [@t @t]) body=@t])
   ^-  form:m
   ;<  ~  bind:m  (send-request:io request)
-  ;<  res=client-response:iris  bind:m  take-client-response:io
-  ?.  ?=(%finished -.res)  (pure:m [0 ~ ''])
-  =/  body=@t  ?~(full-file.res '' q.data.u.full-file.res)
-  (pure:m [status-code.response-header.res headers.response-header.res body])
+  ::  a response that never comes (iris forgot the request across a
+  ::  reload; seen on ricsul 2026-09-14, where it wedged the sync fiber
+  ::  and every sync route with it) is status 0 after two minutes.
+  ::  iris answers carry no request id, so a late answer to a timed-out
+  ::  request is a stray poke the sync loop's take-any swallows.
+  ;<  now=@da  bind:m  get-time:io
+  ;<  ~  bind:m  (set-timer:io /fetch (add now ~m2))
+  ;<  res=(unit client-response:iris)  bind:m
+    |=  input:fiber:nexus
+    :+  ~  q.state
+    ?+  in  [%skip ~]
+        ~  [%wait ~]
+        [~ %veto *]  [%done ~]
+        [~ %poke * *]
+      ?:  =([/ %timer-wake] p.sage.u.in)
+        ?.(?=([%fetch *] !<(path q.sage.u.in)) [%skip ~] [%done ~])
+      ?.  =([/ %http-response] p.sage.u.in)  [%skip ~]
+      =/  resp=client-response:iris  !<(client-response:iris q.sage.u.in)
+      ?:(?=(%cancel -.resp) [%done ~] [%done `resp])
+    ==
+  ;<  ~  bind:m  (cancel-timer:io /fetch)
+  ?~  res  (pure:m [0 ~ ''])
+  ?.  ?=(%finished -.u.res)  (pure:m [0 ~ ''])
+  =/  body=@t  ?~(full-file.u.res '' q.data.u.full-file.u.res)
+  (pure:m [status-code.response-header.u.res headers.response-header.u.res body])
 ++  form-body
   |=  kvs=(list [k=tape v=tape])
   ^-  octs
