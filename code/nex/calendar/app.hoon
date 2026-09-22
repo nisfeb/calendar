@@ -174,6 +174,30 @@
           ?~  new  $
           ;<  ~  bind:m  (replace:io (put-ev c id u.new))
           $
+        ::  skip-at skips the occurrence that starts at a given moment.
+        ::  skip-event needs an occurrence index, which only the expansion
+        ::  of the recurrence knows, so a client that holds a time and not
+        ::  an index (orrery's ship-side executor) has no way to name the
+        ::  occurrence it means; this action does that counting here.
+        ?:  =('skip-at' act)
+          =/  id=@ta  (crip (trip (gs jon 'id')))
+          =/  ms=(unit @ud)  (gn jon 'start_ms')
+          ?:  |(=('' id) ?=(~ ms))  $
+          =/  ev=(unit event:cal)  (~(get by (events-all:cal c)) id)
+          ?~  ev  $
+          =/  when=@da  (ms-to-da u.ms)
+          =/  idx=(unit @ud)  (occurrence-index u.ev when)
+          ::  no occurrence starts there, so there is nothing to skip
+          ?~  idx  $
+          =/  new=(unit event:cal)
+            ?-  -.u.ev
+              ?(%date %todo)  ~        ::  a date or a task can't be skipped
+              %timed   `u.ev(except.bound (~(put in except.bound.u.ev) u.idx))
+              %allday  `u.ev(except.bound (~(put in except.bound.u.ev) u.idx))
+            ==
+          ?~  new  $
+          ;<  ~  bind:m  (replace:io (put-ev c id u.new))
+          $
         ?:  =('add-calendar' act)
           =/  id=@ta  (crip (trip (gs jon 'id')))
           =/  nm=@t  (gs jon 'name')
@@ -3660,6 +3684,42 @@
   |=  =rail:tarball
   ^-  (unit kind:rules)
   (~(get by kind-table) name.rail)
+::  +occurrence-index: which occurrence of an event starts at a moment
+::
+::  except.bound counts occurrences by index, and only the expansion of
+::  the recurrence knows that count, so a client that holds a start time
+::  must ask the calendar to do the counting. This walks +inflate:cal,
+::  the same expansion the month and list views read, so the index it
+::  answers is the one the page would skip. It inflates a day past when
+::  because the walk's horizon is the naive wall moment, and a zone ahead
+::  of UTC realizes a wall moment to an earlier instant. An occurrence
+::  already skipped is absent from the index, so asking twice answers ~
+::  rather than an index that has moved.
+::
+++  occurrence-index
+  |=  [ev=event:cal when=@da]
+  ^-  (unit @ud)
+  =/  rail=(unit rail:tarball)
+    ?-  -.ev
+      ?(%date %todo)  ~   ::  a date or a task has no recurrence to walk
+      %timed   `kind.recur.ev
+      %allday  `kind.recur.ev
+    ==
+  ?~  rail  ~
+  =/  k=(unit kind:rules)  (kind-for u.rail)
+  ?~  k  ~
+  =/  kinds=(map rail:tarball kind:rules)
+    (~(put by *(map rail:tarball kind:rules)) u.rail u.k)
+  =/  events=(map eid:cal event:cal)
+    (~(put by *(map eid:cal event:cal)) 'it' ev)
+  =/  [stops=(map eid:cal @da) o=order:cal]
+    (inflate:cal events kinds (add when ~d1))
+  ::  both edges of a span are indexed, so only a left edge is a start
+  =/  hits=(list ref:cal)  ~(tap in (fall (get:on-order:cal o when) ~))
+  |-  ^-  (unit @ud)
+  ?~  hits  ~
+  ?:  =(when l.span.i.hits)  `idx.i.hits
+  $(hits t.hits)
 ++  resolve-kinds
   |=  rails=(list rail:tarball)
   =/  m  (fiber:fiber:nexus ,(map rail:tarball kind:rules))
