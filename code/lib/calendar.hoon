@@ -368,6 +368,14 @@
 ::  +recur-json: kind + anchor + args. args pass through verbatim —
 ::  the kind file is the only place that knows what they mean.
 ::
+::  +except-json: the occurrence indices a repeat has dropped. A client
+::  that asked for a skip reads this back to see that the skip took;
+::  the poke itself is silent, so this is the only proof there is.
+::
+++  except-json
+  |=  except=(set @ud)
+  ^-  json
+  [%a (turn (sort ~(tap in except) lth) |=(i=@ud `json`(numb:enjs:format i)))]
 ++  recur-json
   |=  =recur
   ^-  (list [@t json])
@@ -411,6 +419,7 @@
         ^-  (list [@t json])
         :~  ['zone' `json`?~(zone.e s+'none' s+u.zone.e)]
             ['count' (numb:enjs:format (fall dom.bound.e 0))]
+            ['except' (except-json except.bound.e)]
         ==
         fin-fields
       ==
@@ -419,6 +428,7 @@
       %+  weld  (recur-json recur.e)
       :~  ['span_days' (numb:enjs:format days.e)]
           ['count' (numb:enjs:format (fall dom.bound.e 0))]
+          ['except' (except-json except.bound.e)]
       ==
     ==
   [%o (~(gas by *(map @t json)) (weld common rest))]
