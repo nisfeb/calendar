@@ -20,7 +20,7 @@
 ++  get
   |=  [j=json k=@t]
   ^-  (unit json)
-  ?.  ?=(%o -.j)  ~
+  ?.  ?=([%o *] j)  ~
   (~(get by p.j) k)
 ++  str
   |=  [j=json k=@t]
@@ -125,7 +125,7 @@
   =/  end=(unit when:ics)  (when-of (obj item 'end'))
   =/  lines=(list @t)
     %+  murn  (arr item 'recurrence')
-    |=(j=json ?:(?=(%s -.j) `p.j ~))
+    |=(j=json ?:(?=([%s *] j) `p.j ~))
   =/  rrule=@t
     =/  hit=(list @t)  (skim lines |=(l=@t =("RRULE:" (scag 6 (trip l)))))
     ?~(hit '' (crip (slag 6 (trip i.hit))))

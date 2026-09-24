@@ -6,8 +6,9 @@ the refusals a host says back: an edit whose UID another host calendar
 holds, and an edit after the host made the share read-only without the
 peer hearing yet. The peer keeps its copy as a conflict, goes read-only in
 the second case, and the next pull takes the refused object back out.
-Last, how a peer reads: a big calendar comes whole the first time, and a
+Then how a peer reads: a big calendar comes whole the first time, and a
 change after that by the host's index and the one object that moved.
+Last, writes into another calendar while pulls land are all kept.
 PEERNAME is the peer's @p as the host names it (e.g. ~feb)."""
 import json, subprocess, sys, time
 HOST, HJ, PEER, PJ, PEERNAME = sys.argv[1:6]
@@ -235,6 +236,49 @@ def run_index():
         time.sleep(3)
         poke(PEER, PJ, {'action': 'del-calendar', 'id': sid})
 
+def run_writes_during_pulls():
+    print('== writes while pulls land')
+    import threading
+    poke(HOST, HJ, {'action': 'del-calendar', 'id': CAL})
+    poke(HOST, HJ, {'action': 'add-calendar', 'id': CAL, 'name': 'ssm', 'color': '#336699'})
+    poke(HOST, HJ, {'action': 'add-event', 'cal': CAL, **ev('churn', 1795000000000)})
+    curl(HOST, HJ, '/apps/calendar/share/share', {'id': CAL, 'ship': PEERNAME, 'mode': 'read'})
+    key = None
+    def offered():
+        nonlocal key
+        for k, o in shares(PEER, PJ)['offers'].items():
+            if o['cal'] == CAL: key = k; return True
+        return False
+    if not wait('peer: offer arrived', offered, 30): return
+    sid = json.loads(curl(PEER, PJ, '/apps/calendar/share/accept', {'key': key}))['id']
+    wait('peer: pulled', lambda: names(PEER, PJ, sid) == ['churn'])
+    u = uids(HOST, HJ, CAL)['churn']
+    stop = []
+    def churn():
+        # the host changes the event and the peer pulls, over and over, so
+        # the peer's pulls keep writing its calendar
+        n = 0
+        while not stop:
+            n += 1
+            poke(HOST, HJ, {'action': 'edit-event', 'cal': CAL, 'id': u, **ev('churn', 1795000000000, 30 + n % 50)})
+            curl(PEER, PJ, '/apps/calendar/share/sync', {})
+    t = threading.Thread(target=churn); t.start()
+    try:
+        for i in range(30):
+            poke(PEER, PJ, {'action': 'add-event', 'cat': 'todo', 'meta': {'name': 'wdp %02d' % i}})
+            time.sleep(0.3)
+    finally:
+        stop.append(1); t.join()
+    mine = lambda: sorted(e['meta']['name'] for e in json.loads(curl(PEER, PJ, '/apps/calendar/events.json?cat=todo') or '[]') if e['meta']['name'].startswith('wdp '))
+    wait('peer: all 30 writes kept through the pulls', lambda: len(mine()) == 30, 30)
+    if len(mine()) != 30: print('       kept', len(mine()), 'of 30')
+    for e in json.loads(curl(PEER, PJ, '/apps/calendar/events.json?cat=todo') or '[]'):
+        if e['meta']['name'].startswith('wdp '): poke(PEER, PJ, {'action': 'del-event', 'id': e['id'], 'home': e['cal']})
+    curl(HOST, HJ, '/apps/calendar/share/revoke', {'id': CAL, 'ship': PEERNAME})
+    poke(HOST, HJ, {'action': 'del-calendar', 'id': CAL})
+    time.sleep(3)
+    poke(PEER, PJ, {'action': 'del-calendar', 'id': sid})
+
 run_round('edit')
 run_round('read')
 # the copy from the first round stayed (local) under the mug id; a fresh share must still be acceptable
@@ -253,5 +297,6 @@ poke(HOST, HJ, {'action': 'del-calendar', 'id': CAL})
 for k in KEEP: poke(PEER, PJ, {'action': 'del-calendar', 'id': k})
 run_refusal()
 run_index()
+run_writes_during_pulls()
 print('SHIP SHARE MATRIX ' + ('PASSED' if not fails else 'FAILED: ' + ', '.join(fails)))
 sys.exit(1 if fails else 0)

@@ -776,13 +776,15 @@
     ?:  &(=(%every kind) =(~s0 (fall (mole |.((mins:~(. ja:rules p.u.j) 'period'))) ~s0)))  ~
     ?.  (~(has by p.u.j) 'at')  `p.u.j
     =/  tod=@dr  (sub sd (day-floor:rules sd))
-    ?.  |(=(~s0 tod) =(tod (mins:~(. ja:rules p.u.j) 'at')))  ~
+    =/  at=(unit @dr)  (mole |.((mins:~(. ja:rules p.u.j) 'at')))
+    ?.  &(?=(^ at) |(=(~s0 tod) =(tod u.at)))  ~
     `p.u.j
   ::  a retired preset read back from an old export becomes the rrule it
   ::  phrases (+as-rrule)
   =/  rc=recur:cal
     ?:  &(!=('' kind.ve) ?=(^ own-args))
-      (as-rrule [[/lib/rules kind.ve] u.own-args sd])
+      =/  own=recur:cal  [[/lib/rules kind.ve] u.own-args sd]
+      (fall (mole |.((as-rrule own))) own)
     ?:  =('' rrule.ve)
       [[/lib/rules %once] ~ sd]
     [[/lib/rules %rrule] (~(put by *(map @t json)) 'rrule' s+rrule.ve) sd]

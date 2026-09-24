@@ -420,7 +420,7 @@
   ^-  (list @t)
   =/  j=(unit json)  (~(get by m) 'tags')
   ?.  ?=([~ %a *] j)  ~
-  (murn p.u.j |=(x=json ?:(?=(%s -.x) `p.x ~)))
+  (murn p.u.j |=(x=json ?:(?=([%s *] x) `p.x ~)))
 ::  +meta-str: a string key from a meta map, '' when absent
 ++  meta-str
   |=  [m=meta k=@t]
@@ -521,7 +521,7 @@
       |=  [u=uid e=entry]
       ^-  json
       =/  base=json  (event-json u event.e)
-      ?.  ?=(%o -.base)  base
+      ?.  ?=([%o *] base)  base
       :-  %o
       %-  ~(gas by p.base)
       :~  ['uid' s+u]

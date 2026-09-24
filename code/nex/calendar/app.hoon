@@ -54,6 +54,9 @@
           [%fall %& [/ %'order.calendar-cache'] [[/ %calendar-cache] *cache:cal]]
           [%fall %& [/ %'index.calendar-cache'] [[/ %calendar-cache] *cache:cal]]
           [%fall %& [/ %'order-ver.json'] [[/ %json] [%o ~]]]
+          ::  rise.json: per fiber, its crashes in a row and when it tries
+          ::  again (+rise-later)
+          [%fall %& [/ %'rise.json'] [[/ %json] [%o ~]]]
           [%fall %& [/ %'gcal-feeds.json'] [[/ %json] [%o ~]]]
           :*  %fall  %&  [/ %'reminders.json']
               :-  [/ %json]
@@ -121,18 +124,32 @@
         =/  c0=calendar:cal  (lift:cal raw0)
         =/  c1=calendar:cal  (migrate-kinds c0)
         ;<  ~  bind:m  ?:(=(c0 c1) (pure:m ~) (replace:io c1))
+        ;<  our=@p  bind:m  get-our:io
         |-
+        ::  a poke is acknowledged when it is taken, so a reload between
+        ::  taking and writing loses it: what a poke needs is fetched before
+        ::  (entropy, drawn while idle) or not at all, and a branch that must
+        ::  wait (the clock) reads the state after. The state is read after
+        ::  every wait: a write from another fiber (a sync pass, a CalDAV
+        ::  client) that landed meanwhile would be undone by writing back a
+        ::  copy read before it.
+        ;<  eny=@uvJ  bind:m  get-entropy:io
         ;<  [=from:fiber:nexus =sage:tarball]  bind:m  take-poke-from:io
         =/  jon=json  (fall (mole |.(!<(json q.sage))) *json)
-        ?.  ?=(%o -.jon)  $
+        ?.  ?=([%o *] jon)  $
         =/  act=@t  (gs jon 'action')
+        =/  src=(unit @p)  (get-poke-src:io from)
+        ;<  shares=json  bind:m
+          ?~(src (pure:(fiber:fiber:nexus ,json) *json) (read-json-grub './' 'shares.json'))
+        ::  the clock, only for what stamps a time
+        ;<  now=@da  bind:m
+          ?.  ?=(?(%'add-calendar' %'done-event') act)  (pure:(fiber:fiber:nexus ,@da) *@da)
+          get-time:io
         ;<  raw=*  bind:m  (get-state-as:io ,*)
         =/  c=calendar:cal  (lift:cal raw)
         ::  a foreign ship: only an edit to a calendar shared with it
-        =/  src=(unit @p)  (get-poke-src:io from)
         ?^  src
           =/  cid=@ta  (crip (trip (gs jon 'cal')))
-          ;<  shares=json  bind:m  (read-json-grub './' 'shares.json')
           =/  mode=@t  (gs (obj:gcal shares cid) (scot %p u.src))
           ::  a refused edit is said back to the peer (the poke's ack only
           ::  says it arrived), so it is not lost silently: the peer keeps
@@ -235,8 +252,6 @@
             ~&  >>>  "%calendar: bad split-event"
             $
           ;<  new=event:cal  bind:m  (apply-until (carry-skips u.old u.ev) (gn jon 'until_ms'))
-          ;<  eny=@uvJ  bind:m  get-entropy:io
-          ;<  our=@p  bind:m  get-our:io
           =/  nid=@ta  (crip "{(scow %uv (end [3 8] eny))}@{(scow %p our)}")
           =/  capped=event:cal
             ?-  -.u.old
@@ -251,7 +266,6 @@
           ::  an id goes into hrefs and index keys: a knot, no slash
           ?:  |(=('' id) =('' nm) !((sane %ta) id) (~(has by cals.c) id))  $
           =/  color=@t  (gs jon 'color')
-          ;<  now=@da  bind:m  get-time:io
           =/  k=cal:cal  (born now)
           =.  props.k  [nm ?:(=('' color) '#1e3a5f' color) %local ~]
           ;<  ~  bind:m  (replace:io c(cals (~(put by cals.c) id k)))
@@ -293,14 +307,14 @@
           =/  url=@t  (gs jon 'url')
           ?:  |(=('' nm) =('' url))  $
           ;<  fj=json  bind:m  (read-json-grub './' 'gcal-feeds.json')
-          =/  feeds=(map @t json)  ?.(?=(%o -.fj) ~ p.fj)
+          =/  feeds=(map @t json)  ?.(?=([%o *] fj) ~ p.fj)
           ;<  ~  bind:m  (write-json-grub './' 'gcal-feeds.json' [%o (~(put by feeds) nm s+url)])
           $
         ?:  =('del-feed' act)
           =/  nm=@t  (gs jon 'name')
           ?:  =('' nm)  $
           ;<  fj=json  bind:m  (read-json-grub './' 'gcal-feeds.json')
-          =/  feeds=(map @t json)  ?.(?=(%o -.fj) ~ p.fj)
+          =/  feeds=(map @t json)  ?.(?=([%o *] fj) ~ p.fj)
           ;<  ~  bind:m  (write-json-grub './' 'gcal-feeds.json' [%o (~(del by feeds) nm)])
           $
         ?:  =('sync-feeds' act)
@@ -309,9 +323,9 @@
           ::  VEVENTs are skipped for now)
           ;<  fj=json  bind:m  (read-json-grub './' 'gcal-feeds.json')
           =/  feeds=(list [nm=@t url=@t])
-            ?.  ?=(%o -.fj)  ~
+            ?.  ?=([%o *] fj)  ~
             %+  murn  ~(tap by p.fj)
-            |=([k=@t v=json] ?.(?=(%s -.v) ~ `[k p.v]))
+            |=([k=@t v=json] ?.(?=([%s *] v) ~ `[k p.v]))
           ?~  feeds
             ~&  >>>  "%calendar sync: no feeds configured"
             $
@@ -352,7 +366,6 @@
           =/  old=(unit event:cal)  (event-of c home id)
           ?~  old  $
           ?.  ?=(%todo -.u.old)  $
-          ;<  now=@da  bind:m  get-time:io
           =/  done=(unit @da)
             =/  j=(unit json)  (~(get by p.jon) 'done')
             ?:(?=([~ %b %.n] j) ~ `now)
@@ -381,8 +394,6 @@
           ~&  >>>  "%calendar: bad add-event"
           $
         ;<  ev2=event:cal  bind:m  (apply-until u.ev (gn jon 'until_ms'))
-        ;<  eny=@uvJ  bind:m  get-entropy:io
-        ;<  our=@p  bind:m  get-our:io
         =/  id=@ta  (crip "{(scow %uv (end [3 8] eny))}@{(scow %p our)}")
         ;<  ~  bind:m  (replace:io (put-ev-in c (cal-arg jon) '' id ev2))
         $
@@ -464,20 +475,20 @@
         =/  src=(unit @p)  (get-poke-src:io from)
         ?~  src  $
         =/  jon=json  (fall (mole |.(!<(json q.sage))) *json)
-        ?.  ?=(%o -.jon)  $
+        ?.  ?=([%o *] jon)  $
         =/  act=@t  (gs jon 'action')
         =/  cal-id=@t  (gs jon 'cal')
         ?:  =('' cal-id)  $
         =/  key=@t  (crip "{(scow %p u.src)}/{(trip cal-id)}")
         ;<  offers=json  bind:m  (read-json-grub './' 'share-offers.json')
-        =/  cur=(map @t json)  ?:(?=(%o -.offers) p.offers ~)
+        =/  cur=(map @t json)  ?:(?=([%o *] offers) p.offers ~)
         ?:  =('offer' act)
           ;<  now=@da  bind:m  get-time:io
           =/  mode=@t  ?:(=('edit' (gs jon 'mode')) 'edit' 'read')
           ::  already accepted: the host changed the mode; the row and the
           ::  calendar follow, no second offer
           ;<  rows=json  bind:m  (read-json-grub './' 'ship-remotes.json')
-          =/  rm=(map @t json)  ?:(?=(%o -.rows) p.rows ~)
+          =/  rm=(map @t json)  ?:(?=([%o *] rows) p.rows ~)
           =/  hit=(list [id=@t row=json])  (skim ~(tap by rm) |=([* r=json] =(key (gs r 'key'))))
           ;<  c=calendar:cal  bind:m  (read-cal './')
           =/  live=(unit [id=@t row=json k=cal:cal])
@@ -490,10 +501,9 @@
             ?:  |(?=(~ hit) ?=(^ live))  (pure:(fiber:fiber:nexus ,~) ~)
             (write-json-grub './' 'ship-remotes.json' [%o (~(del by rm) id.i.hit)])
           ?^  live
-            =/  row=json  ?.(?=(%o -.row.u.live) row.u.live [%o (~(put by p.row.u.live) 'mode' s+mode)])
+            =/  row=json  ?.(?=([%o *] row.u.live) row.u.live [%o (~(put by p.row.u.live) 'mode' s+mode)])
             ;<  ~  bind:m  (write-json-grub './' 'ship-remotes.json' [%o (~(put by rm) id.u.live row)])
-            =.  remote.props.k.u.live  `(crip "{(trip key)}#{(trip mode)}")
-            ;<  ~  bind:m  (dav-write './' c(cals (~(put by cals.c) id.u.live k.u.live)))
+            ;<  ~  bind:m  (set-remote './' (crip (trip id.u.live)) `(crip "{(trip key)}#{(trip mode)}"))
             ~&  >  [%calendar-share-mode key mode]
             $
           ::  ponytail: a full inbox drops new offers; 200 is far past
@@ -531,7 +541,7 @@
             ?.  &(=('read' (gs jon 'mode')) ?=(^ k))  (pure:(fiber:fiber:nexus ,~) ~)
             ;<  ~  bind:(fiber:fiber:nexus ,~)
               (write-json-grub './' 'ship-remotes.json' [%o (~(put by rm) id.i.hit (row-put row.i.hit ~[['mode' s+'read']]))])
-            (dav-write './' c(cals (~(put by cals.c) id u.k(remote.props `(crip "{(trip key)}#read")))))
+            (set-remote './' id `(crip "{(trip key)}#read"))
           ::  a pull now, so the host's copy replaces ours at once
           ;<  ~  bind:m  (google-prod './')
           $
@@ -540,7 +550,7 @@
           ::  an accepted calendar stays, with its data: it becomes a
           ::  local calendar of ours, the same flip migrate does
           ;<  rows=json  bind:m  (read-json-grub './' 'ship-remotes.json')
-          =/  rm=(map @t json)  ?:(?=(%o -.rows) p.rows ~)
+          =/  rm=(map @t json)  ?:(?=([%o *] rows) p.rows ~)
           =/  hit=(list [id=@t row=json])  (skim ~(tap by rm) |=([* r=json] =(key (gs r 'key'))))
           ?~  hit  $
           ;<  ~  bind:m  (write-json-grub './' 'ship-remotes.json' [%o (~(del by rm) id.i.hit)])
@@ -596,7 +606,7 @@
         ;<  ~  bind:m  (send-pushes (alarm-pushes ahead (keyed c) from now zone.c))
         =/  new-st=json
           :-  %o
-          %-  ~(gas by ?:(?=(%o -.st) p.st ~))
+          %-  ~(gas by ?:(?=([%o *] st) p.st ~))
           :~  ['fired_ms' (numb:enjs:format (da-to-ms now))]
               ['thru_ms' (numb:enjs:format (da-to-ms (max hi lo)))]
           ==
@@ -673,13 +683,13 @@
           ;<  auth=json  bind:m  (google-auth '../')
           ;<  sync=json  bind:m  (google-sync '../')
           =/  masked=json
-            ?.  ?=(%o -.cfg)  cfg
+            ?.  ?=([%o *] cfg)  cfg
             =/  sec=@t  (gs cfg 'client_secret')
             :-  %o
             %-  ~(put by p.cfg)
             ['client_secret' s+?:(=('' sec) '' '••••••••')]
           %+  send-json  eyre-id
-          ?.  ?=(%o -.masked)  masked
+          ?.  ?=([%o *] masked)  masked
           :-  %o
           %-  ~(gas by p.masked)
           :~  ['connected' b+!=('' (gs auth 'refresh_token'))]
@@ -692,7 +702,7 @@
           ;<  clients=json  bind:m  dav-clients
           =/  rows=json
             :-  %a
-            %+  turn  ?:(?=(%a -.clients) p.clients ~)
+            %+  turn  ?:(?=([%a *] clients) p.clients ~)
             |=  c=json
             ^-  json
             :-  %o
@@ -723,7 +733,7 @@
                 ['hash' s+(dav-hash salt password)]
                 ['made_ms' (numb:enjs:format (da-to-ms now))]
             ==
-          =/  new=json  [%a (snoc ?:(?=(%a -.clients) p.clients ~) row)]
+          =/  new=json  [%a (snoc ?:(?=([%a *] clients) p.clients ~) row)]
           ;<  ~  bind:m  (write-json-grub '../' 'dav-clients.json' new)
           %+  send-json  eyre-id
           %-  pairs:enjs:format
@@ -739,7 +749,7 @@
           ;<  clients=json  bind:m  dav-clients
           =/  new=json
             :-  %a
-            %+  skip  ?:(?=(%a -.clients) p.clients ~)
+            %+  skip  ?:(?=([%a *] clients) p.clients ~)
             |=(c=json =(id (gs c 'id')))
           ;<  ~  bind:m  (write-json-grub '../' 'dav-clients.json' new)
           (send-json eyre-id (pairs:enjs:format ~[['ok' b+&]]))
@@ -808,7 +818,7 @@
             (send-text eyre-id 404 'No such event')
           =/  ev=event:cal  event.e.u.got
           =/  ej=json  (event-json:cal id ev)
-          ?.  ?=(%o -.ej)  (send-json eyre-id ej)
+          ?.  ?=([%o *] ej)  (send-json eyre-id ej)
           ::  count is how many occurrences, not index slots (+count-of);
           ::  before, with ?idx=, how many lie below that index, for a
           ::  "this and following" split to count the rest
@@ -818,8 +828,8 @@
           =/  extra=(list [@t json])
             ?~  rc  ~
             ;:  weld
-              ?~(dom.u.rc ~ ~[['count' (numb:enjs:format (count-of:ics recur.u.rc u.dom.u.rc))]])
-              ?~(idx ~ ~[['before' (numb:enjs:format (count-of:ics recur.u.rc u.idx))]])
+              ?~(dom.u.rc ~ ~[['count' (numb:enjs:format (fall (mole |.((count-of:ics recur.u.rc u.dom.u.rc))) u.dom.u.rc))]])
+              ?~(idx ~ ~[['before' (numb:enjs:format (fall (mole |.((count-of:ics recur.u.rc u.idx))) u.idx))]])
             ==
           (send-json eyre-id [%o (~(gas by (~(put by p.ej) 'cal' s+cid.u.got)) extra)])
         ::  /tags.json: every tag in use, with how many events carry it
@@ -884,7 +894,7 @@
         ::  /feeds.json: the named external ICS feeds
         ?:  ?=([%'feeds.json' ~] suffix)
           ;<  feeds=json  bind:m  (read-json-grub '../' 'gcal-feeds.json')
-          (send-json eyre-id ?:(?=(%o -.feeds) feeds [%o ~]))
+          (send-json eyre-id ?:(?=([%o *] feeds) feeds [%o ~]))
         ::  /calendars.json: every calendar: id, props, seq, entry count,
         ::  and whether it takes edits here (a calendar shared with us
         ::  read-only does not; the page offers none)
@@ -931,10 +941,10 @@
             (send-text eyre-id 405 'POST an .ics body')
           =/  body=@t  ?~(body.request.req '' q.u.body.request.req)
           =/  target=@ta  (fall (get-key:kv:html-utils 'cal' args) %default)
+          ;<  now=@da  bind:m  get-time:io
           ;<  c=calendar:cal  bind:m  (read-cal '../')
           ?:  (ship-read-only c target)
             (send-text eyre-id 403 'calendar: this calendar is shared with you read-only')
-          ;<  now=@da  bind:m  get-time:io
           =/  k=cal:cal  (fall (~(get by cals.c) target) (born now))
           =/  ves=(list vevent:ics)  ?:(=('' body) ~ (events:ics body))
           =/  res=[k=cal:cal imported=@ud skipped=@ud]
@@ -999,29 +1009,64 @@
     --
 |%
 ++  srv  ~(. http-res:io [%| 1 %& ~ %'main.sig'])
-::  +rise-later: a fiber that crashed goes on a minute later on its own.
-::  rise-wait waits for a %sig poke nobody sends (the page pokes json),
-::  so one bad write or sync pass wedged the fiber until a hand restart.
-::  Pokes that come meanwhile keep their turn; the minute keeps a crash
-::  on rise from spinning.
+::  +rise-later: a fiber that crashed goes on after a while by itself (a
+::  %sig poke no one sends used to be the only way back). A crash that
+::  comes again waits longer each time, 1, 2, 4 and up to 60 minutes (the
+::  count starts over an hour after the last), and only the first two
+::  print their whole trace, so a fiber that crashes on the same data every
+::  time neither floods the console nor keeps the ship busy. A poke that
+::  comes while it waits is refused at once (a nack) rather than held:
+::  held pokes hang whoever sent them, and grubbery offers every held one
+::  again on each step, which is what locked a ship up.
 ++  rise-later
   |=  [=prod:fiber:nexus msg=tape]
   =/  m  (fiber:fiber:nexus ,~)
   ^-  form:m
-  ?~  prod  (pure:m ~)
-  %-  (slog leaf+msg u.prod)
+  ::  a clean start takes down any wait an earlier run left set: its wake
+  ::  would come to a fiber no longer waiting for it
+  ?~  prod  (cancel-timer:io /rise)
+  =/  key=@t  (crip msg)
+  ::  what a refused poke fails with; the restart that follows is not a crash
+  =/  note=tang  ~[leaf+"{msg}: waiting after a crash; the poke was refused"]
   ;<  now=@da  bind:m  get-time:io
-  ;<  ~  bind:m  (set-timer:io /rise (add now ~m1))
+  ;<  log=json  bind:m  (read-json-grub './' 'rise.json')
+  =/  row=json  (fall (~(get by (omap log)) key) [%o ~])
+  =/  crash=?  !=(note u.prod)
+  =/  n=@ud
+    =/  was=@ud  (fall (gn row 'n') 0)
+    ?.  crash  was
+    ?:((gth now (add (ms-to-da (fall (gn row 'last_ms') 0)) ~h1)) 1 +(was))
+  =/  until=@da
+    ?.  crash  (ms-to-da (fall (gn row 'until_ms') 0))
+    (add now (min ~h1 (mul ~m1 (bex (dec (min n 7))))))
+  ?.  (gth until now)  (pure:m ~)
+  ;<  ~  bind:m
+    =/  m  (fiber:fiber:nexus ,~)
+    ?.  crash  (pure:m ~)
+    %-  %-  slog
+        ?:  (lte n 2)  [leaf+msg u.prod]
+        ~[leaf+"{msg} again ({(a-co:co n)} times running); next try in {(a-co:co (div (sub until now) ~m1))} min"]
+    ;<  *  bind:m
+      %^  over-as-soft:io  (grub-road './' 'rise.json')
+        :-  [/ %json]
+        :-  %o
+        %+  ~(put by (omap log))  key
+        %-  pairs:enjs:format
+        :~  ['n' (numb:enjs:format n)]
+            ['last_ms' (numb:enjs:format (da-to-ms now))]
+            ['until_ms' (numb:enjs:format (da-to-ms until))]
+        ==
+      [/ %json]
+    (pure:m ~)
+  ;<  ~  bind:m  (set-timer:io /rise until)
   |=  input:fiber:nexus
   :+  ~  q.state
-  ?+  in  [%skip ~]
-      ~  [%wait ~]
+  ?+  in  [%wait ~]
       [~ %poke * *]
-    ?.  =([/ %timer-wake] p.sage.u.in)  [%skip ~]
-    ?.  ?=([%rise *] !<(path q.sage.u.in))  [%skip ~]
+    ?.  =([/ %timer-wake] p.sage.u.in)  [%fail note]
+    ?.  ?=([%rise *] !<(path q.sage.u.in))  [%wait ~]
     [%done ~]
   ==
-::
 ::  +cal-of: a stored calendar view, or a fresh one when there is none.
 ::  The typed vase is taken as it is (cheap); an older shape is lifted.
 ::  One that is there but reads as neither is a crash, not an empty
@@ -1366,7 +1411,7 @@
   ?~  at  |
   =/  password=@t  (crip (slag +(u.at) pair))
   ?:  =('' password)  |
-  %+  lien  ?:(?=(%a -.clients) p.clients ~)
+  %+  lien  ?:(?=([%a *] clients) p.clients ~)
   |=  c=json
   =((gs c 'hash') (dav-hash (gs c 'salt') password))
 ::  +dav-request: the CalDAV handler. rest = the path after /dav.
@@ -1416,6 +1461,27 @@
   ?:  =('PROPPATCH' verb)
     (dav-proppatch eyre-id c res body)
   (send-text eyre-id 501 'calendar: not yet')
+::  +edit-cals: the calendar changed by f, read and written with no wait
+::  between. Every writer that is not the calendar's own fiber keeps that
+::  shape (its waits before the read, or after the write): one that read
+::  the calendar, waited on the network, the clock or another file, and
+::  wrote back what it read would undo whatever was written meanwhile,
+::  an event poked into any calendar included.
+++  edit-cals
+  |=  [pre=@t f=$-(calendar:cal calendar:cal)]
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  ;<  c=calendar:cal  bind:m  (read-cal pre)
+  =/  new=calendar:cal  (f c)
+  ?:  =(new c)  (pure:m ~)
+  (dav-write pre new)
+::  +set-remote: one calendar's remote string (+edit-cals)
+++  set-remote
+  |=  [pre=@t id=@ta r=(unit @t)]
+  %+  edit-cals  pre
+  |=  c=calendar:cal
+  =/  k=(unit cal:cal)  (~(get by cals.c) id)
+  ?~(k c c(cals (~(put by cals.c) id u.k(remote.props r))))
 ::  +dav-write: the calendar back to its grub
 ++  dav-write
   |=  [pre=@t c=calendar:cal]
@@ -1706,7 +1772,10 @@
   ;<  now=@da  bind:m  get-time:io
   =/  k=cal:cal  (born now)
   =.  props.k  [?:(=('' name) id.res name) ?:(=('' color) '#1e3a5f' color) %local ~]
-  ;<  ~  bind:m  (dav-write '../' c(cals (~(put by cals.c) id.res k)))
+  ::  onto the calendar as it is now, not as the request first read it
+  ;<  ~  bind:m
+    %+  edit-cals  '../'
+    |=(c=calendar:cal ?:((~(has by cals.c) id.res) c c(cals (~(put by cals.c) id.res k))))
   (send-simple:srv eyre-id [[201 ~] ~])
 ::  +dav-proppatch: displayname and calendar-color on a calendar
 ++  dav-proppatch
@@ -2247,7 +2316,7 @@
   ::  config: the user's client, and the endpoints (the gate swaps them)
   ?:  &(post ?=([%config ~] rest))
     ;<  cfg=json  bind:m  (google-config '../')
-    =/  cur=(map @t json)  ?:(?=(%o -.cfg) p.cfg ~)
+    =/  cur=(map @t json)  ?:(?=([%o *] cfg) p.cfg ~)
     =/  new=(map @t json)
       %+  roll  `(list @t)`~['client_id' 'client_secret' 'auth_url' 'token_url' 'api_base']
       |=  [k=@t acc=_cur]
@@ -2267,7 +2336,7 @@
     ;<  auth=json  bind:m  (google-auth '../')
     ;<  ~  bind:m
       %^  write-json-grub  '../'  'google-auth.json'
-      [%o (~(put by ?:(?=(%o -.auth) p.auth ~)) 'state' s+state)]
+      [%o (~(put by ?:(?=([%o *] auth) p.auth ~)) 'state' s+state)]
     =/  q=(list [tape tape])
       :~  ["client_id" (trip cid)]
           ["redirect_uri" redirect]
@@ -2326,10 +2395,10 @@
     ;<  sync=json  bind:m  (google-sync '../')
     =/  linked=(map @t @t)
       %-  ~(gas by *(map @t @t))
-      %+  turn  ?:(?=(%o -.sync) ~(tap by p.sync) ~)
+      %+  turn  ?:(?=([%o *] sync) ~(tap by p.sync) ~)
       |=([id=@t v=json] [(gs v 'google_id') id])
     =/  items=(list json)
-      =/  it=(unit json)  ?:(?=(%o -.res) (~(get by p.res) 'items') ~)
+      =/  it=(unit json)  ?:(?=([%o *] res) (~(get by p.res) 'items') ~)
       ?:(?=([~ %a *] it) p.u.it ~)
     %+  send-json  eyre-id
     :-  %a
@@ -2341,19 +2410,19 @@
     :~  ['id' s+gid]
         ['name' s+(gs it 'summary')]
         ['color' s+(gs it 'backgroundColor')]
-        ['primary' b+?=([~ %b %.y] (~(get by ?:(?=(%o -.it) p.it ~)) 'primary'))]
+        ['primary' b+?=([~ %b %.y] (~(get by ?:(?=([%o *] it) p.it ~)) 'primary'))]
         ['linked' ?~(l=(~(get by linked) gid) ~ s+u.l)]
     ==
   ::  link: a ship calendar of kind google for one of them
   ?:  &(post ?=([%link ~] rest))
     =/  gid=@t  (gs jon 'google_id')
     ?:  =('' gid)  (send-text eyre-id 400 'calendar: need google_id')
+    ;<  now=@da  bind:m  get-time:io
     ;<  c=calendar:cal  bind:m  (read-cal '../')
     =/  id=@ta  (crip "g-{(trip (scot %uw (mug gid)))}")
     ?:  (~(has by cals.c) id)  (send-text eyre-id 409 'calendar: already linked')
     =/  nm=@t  (gs jon 'name')
     =/  color=@t  (gs jon 'color')
-    ;<  now=@da  bind:m  get-time:io
     =/  k=cal:cal  (born now)
     =.  props.k  [?:(=('' nm) gid nm) ?:(=('' color) '#1e3a5f' color) %google `gid]
     ;<  ~  bind:m  (dav-write '../' c(cals (~(put by cals.c) id k)))
@@ -2367,7 +2436,7 @@
           ['ids' [%o ~]]
       ==
     ;<  ~  bind:m
-      (write-json-grub '../' 'google-sync.json' [%o (~(put by ?:(?=(%o -.sync) p.sync ~)) id row)])
+      (write-json-grub '../' 'google-sync.json' [%o (~(put by ?:(?=([%o *] sync) p.sync ~)) id row)])
     ;<  ~  bind:m  (google-prod '../')
     (send-json eyre-id (pairs:enjs:format ~[['id' s+id]]))
   ?:  &(post ?=([%unlink ~] rest))
@@ -2377,7 +2446,7 @@
     (send-json eyre-id (pairs:enjs:format ~[['ok' b+&]]))
   ?:  ?=([%'conflicts.json' ~] rest)
     ;<  cs=json  bind:m  (read-json-grub '../' 'google-conflicts.json')
-    (send-json eyre-id ?:(?=(%a -.cs) cs [%a ~]))
+    (send-json eyre-id ?:(?=([%a *] cs) cs [%a ~]))
   ?:  &(post ?=([%conflicts %clear ~] rest))
     ;<  ~  bind:m  (write-json-grub '../' 'google-conflicts.json' [%a ~])
     (send-json eyre-id (pairs:enjs:format ~[['ok' b+&]]))
@@ -2404,7 +2473,7 @@
         ['remote_updated' s+remote-updated]
     ==
   ~&  >>  [%calendar-google-conflict uid why]
-  =/  rest=(list json)  (skip ?:(?=(%a -.cs) p.cs ~) |=(c=json =(uid (gs c 'uid'))))
+  =/  rest=(list json)  (skip ?:(?=([%a *] cs) p.cs ~) |=(c=json =(uid (gs c 'uid'))))
   (write-json-grub pre 'google-conflicts.json' [%a (snoc rest row)])
 ::  +log-clashes: a conflict row for each uid a pull let the remote win
 ::  over a local change: [uid, the local copy it replaced, the remote's
@@ -2426,11 +2495,11 @@
   %+  murn  (arr:gcal row 'suppressed')
   |=  j=json
   ^-  (unit [@t @ud])
-  ?.  ?=(%a -.j)  ~
+  ?.  ?=([%a *] j)  ~
   ?.  ?=([* * ~] p.j)  ~
   =/  u=json  i.p.j
   =/  k=json  i.t.p.j
-  ?.  &(?=(%s -.u) ?=(%n -.k))  ~
+  ?.  &(?=([%s *] u) ?=([%n *] k))  ~
   `[p.u (fall (rush p.k dem) 0)]
 ::  +suppress-json: the set back to the row, pruned of rows the
 ::  watermark has passed
@@ -2515,12 +2584,12 @@
     [%wait ~]
   ==
 ::  +omap: a json object's map, or none
-++  omap  |=(j=json ^-((map @t json) ?:(?=(%o -.j) p.j ~)))
+++  omap  |=(j=json ^-((map @t json) ?:(?=([%o *] j) p.j ~)))
 ::  +row-put: fields onto a sync row
 ++  row-put
   |=  [row=json kvs=(list [@t json])]
   ^-  json
-  ?.  ?=(%o -.row)  row
+  ?.  ?=([%o *] row)  row
   [%o (~(gas by p.row) kvs)]
 ::  +save-row: one sync row back to its file, onto a fresh read (a link
 ::  or an unlink may have changed the file meanwhile). A row whose
@@ -2629,6 +2698,9 @@
   ?.  =(200 status)
     ~&  >>>  [%calendar-google-pull-failed id status]
     (pure:m row)
+  ::  from the read to the write nothing waits (+edit-cals); the clock is
+  ::  read first and the conflicts are logged after
+  ;<  now=@da  bind:m  get-time:io
   ;<  c=calendar:cal  bind:m  (read-cal pre)
   =/  k=cal:cal  (fall (~(get by cals.c) id) fresh-cal:cal)
   ?.  ?=(%google kind.props.k)  (pure:m row)
@@ -2638,7 +2710,7 @@
   ::  The same map places every item.
   =/  by-gid=(map @t uid:cal)
     %-  ~(gas by *(map @t uid:cal))
-    (murn ~(tap by ids) |=([u=@t v=json] ?.(?=(%s -.v) ~ `[p.v u])))
+    (murn ~(tap by ids) |=([u=@t v=json] ?.(?=([%s *] v) ~ `[p.v u])))
   =/  items=(list gitem:gcal)
     %+  turn  (murn (arr:gcal res 'items') item-of:gcal)
     |=  g=gitem:gcal
@@ -2667,17 +2739,19 @@
   =/  seq-at-peek=@ud  seq.k
   =/  clashes=(list gitem:gcal)
     (skim items |=(g=gitem:gcal &(?=(~ rid.g) (~(has in pending) uid.ve.g))))
-  ;<  ~  bind:m
-    %:  log-clashes  pre  id
-      (turn clashes |=(g=gitem:gcal [uid.ve.g (~(get by entries.k) uid.ve.g) updated.g]))
-      'changed on both sides; google kept'
-    ==
+  =/  clash-rows=(list [uid:cal (unit entry:cal) @t])
+    (turn clashes |=(g=gitem:gcal [uid.ve.g (~(get by entries.k) uid.ve.g) updated.g]))
   ::  parents first, so an instance finds its parent
   =/  parents=(list gitem:gcal)  (skip items |=(g=gitem:gcal ?=(^ rid.g)))
   =/  insts=(list gitem:gcal)  (skim items |=(g=gitem:gcal ?=(^ rid.g)))
   =/  res2=[k=cal:cal ids=(map @t json) seen=(set uid:cal)]
     %+  roll  (weld parents insts)
     |=  [g=gitem:gcal acc=_[k=k ids=ids seen=seen]]
+    ::  an item this side cannot read is skipped, as the other pulls skip
+    ::  one: a crash here would come back at every pull
+    %+  fall
+      %-  mole  |.
+      ^+  acc
     =/  u=uid:cal  uid.ve.g
     =/  extra=(list [@t @t])  ~[['X-GOOGLE-ID' gid.g] ['X-GOOGLE-UPDATED' updated.g]]
     ?^  rid.g
@@ -2692,6 +2766,7 @@
     =/  put=(unit [k=cal:cal =uid:cal])  (put-parent k.acc ve.g zone.c u extra &)
     ?~  put  acc
     acc(k k.u.put, ids (~(put by ids.acc) u s+gid.g), seen (~(put in seen.acc) u))
+    acc
   =.  k  k.res2
   =.  ids  ids.res2
   =.  seen  (~(uni in seen) seen.res2)
@@ -2707,16 +2782,12 @@
     ?:  |((dav-is-child e) (~(has in seen) u))  ~
     ?.  (lien props.e |=([key=@t *] =('X-GOOGLE-ID' key)))  ~
     `u
-  ;<  ~  bind:m
-    %:  log-clashes  pre  id
-      (murn gone |=(u=uid:cal ?.((~(has in pending) u) ~ `[u (~(get by entries.k) u) ''])))
-      'deleted on google; changed here'
-    ==
+  =/  gone-rows=(list [uid:cal (unit entry:cal) @t])
+    (murn gone |=(u=uid:cal ?.((~(has in pending) u) ~ `[u (~(get by entries.k) u) ''])))
   =.  k  (roll gone |=([u=uid:cal acc=_k] (del-object acc u)))
   ::  a full listing's instance that came before its parent (on an
   ::  earlier page) skips it now
   =?  k  &(full last)  (reskip k)
-  ;<  now=@da  bind:m  get-time:io
   ::  what this pull wrote is not for pushing back, nor is the local
   ::  change a clash replaced
   =/  won=(set uid:cal)
@@ -2731,6 +2802,8 @@
         ['suppressed' (suppress-json sup2 since)]
     ==
   ;<  ~  bind:m  (dav-write pre c(cals (~(put by cals.c) id k)))
+  ;<  ~  bind:m  (log-clashes pre id clash-rows 'changed on both sides; google kept')
+  ;<  ~  bind:m  (log-clashes pre id gone-rows 'deleted on google; changed here')
   ;<  ~  bind:m  (save-row pre 'google-sync.json' id row2)
   ?.  last  $(page next-page, row row2)
   (pure:m row2)
@@ -2905,7 +2978,7 @@
     ;<  rows=json  bind:m  (caldav-remotes '../')
     %+  send-json  eyre-id
     :-  %a
-    %+  turn  ?:(?=(%o -.rows) ~(tap by p.rows) ~)
+    %+  turn  ?:(?=([%o *] rows) ~(tap by p.rows) ~)
     |=  [id=@t row=json]
     ^-  json
     %-  pairs:enjs:format
@@ -2918,12 +2991,12 @@
   ?:  &(post ?=([%subscribe ~] rest))
     =/  url=@t  (gs jon 'url')
     ?:  =('' url)  (send-text eyre-id 400 'calendar: need url')
+    ;<  now=@da  bind:m  get-time:io
     ;<  c=calendar:cal  bind:m  (read-cal '../')
     =/  id=@ta  (crip "c-{(trip (scot %uw (mug url)))}")
     ?:  (~(has by cals.c) id)  (send-text eyre-id 409 'calendar: already followed')
     =/  nm=@t  (gs jon 'name')
     =/  color=@t  (gs jon 'color')
-    ;<  now=@da  bind:m  get-time:io
     =/  k=cal:cal  (born now)
     =.  props.k  [?:(=('' nm) url nm) ?:(=('' color) '#101541' color) %caldav `url]
     ;<  ~  bind:m  (dav-write '../' c(cals (~(put by cals.c) id k)))
@@ -2939,7 +3012,7 @@
           ['ids' [%o ~]]
       ==
     ;<  ~  bind:m
-      (write-json-grub '../' 'caldav-remotes.json' [%o (~(put by ?:(?=(%o -.rows) p.rows ~)) id row)])
+      (write-json-grub '../' 'caldav-remotes.json' [%o (~(put by ?:(?=([%o *] rows) p.rows ~)) id row)])
     ;<  ~  bind:m  (google-prod '../')
     (send-json eyre-id (pairs:enjs:format ~[['id' s+id]]))
   ?:  &(post ?=([%unsubscribe ~] rest))
@@ -3097,7 +3170,9 @@
       $(todo t.todo, failed &)
     =/  et=@t  ?:(=('' etag.i.todo) (dav-unquote (hdr-of hs 'etag')) etag.i.todo)
     $(todo t.todo, fetched [[href.i.todo et | body] fetched])
-  ::  2. the calendar, once
+  ::  2. the calendar, once, read and written with nothing waiting between
+  ::  (+edit-cals): the clock first, the conflicts after
+  ;<  now=@da  bind:m  get-time:io
   ;<  c=calendar:cal  bind:m  (read-cal pre)
   =/  k=cal:cal  (fall (~(get by cals.c) id) fresh-cal:cal)
   ?.  ?=(%caldav kind.props.k)  (pure:m row)
@@ -3126,8 +3201,6 @@
     =?  clashes.acc  &(?=(^ old) (~(has in pending) uid.u.put) !=(k.acc k.u.put))  [[uid.u.put old ''] clashes.acc]
     =.  k.acc  k.u.put
     acc(ids (~(put by ids.acc) uid.u.put (pairs:enjs:format ~[['href' s+(crip href)] ['etag' s+etag]])))
-  ;<  ~  bind:m  (log-clashes pre id clashes.res 'changed on both sides; the remote kept')
-  ;<  now=@da  bind:m  get-time:io
   =/  won=(set uid:cal)  (~(gas in *(set uid:cal)) (turn clashes.res |=([u=uid:cal *] u)))
   =/  sup2=(set [@t @ud])
     (~(uni in (~(uni in sup) (wrote-between k.res seq-at-peek seq.k.res))) (rows-of k.res since won))
@@ -3142,6 +3215,7 @@
   ;<  ~  bind:m
     ?:  =(k.res k)  (pure:(fiber:fiber:nexus ,~) ~)
     (dav-write pre c(cals (~(put by cals.c) id k.res)))
+  ;<  ~  bind:m  (log-clashes pre id clashes.res 'changed on both sides; the remote kept')
   ;<  ~  bind:m  (save-row pre 'caldav-remotes.json' id row2)
   (pure:m row2)
 ::  +caldav-push: the log past the watermark, out as PUT and DELETE. No
@@ -3407,7 +3481,7 @@
     =/  accepted=json
       :-  %o
       %-  ~(gas by *(map @t json))
-      %+  turn  ?:(?=(%o -.rows) ~(tap by p.rows) ~)
+      %+  turn  ?:(?=([%o *] rows) ~(tap by p.rows) ~)
       |=  [id=@t r=json]
       :-  id
       %-  pairs:enjs:format
@@ -3440,7 +3514,7 @@
     ?:  ?=(%ship kind.props.u.k)  (send-text eyre-id 400 'calendar: a calendar shared with you cannot be shared onward')
     ::  1. the record
     ;<  shares=json  bind:m  (read-json-grub '../' 'shares.json')
-    =/  all=(map @t json)  ?:(?=(%o -.shares) p.shares ~)
+    =/  all=(map @t json)  ?:(?=([%o *] shares) p.shares ~)
     =/  mine=(map @t json)  =/(j (~(get by all) id) ?:(?=([~ %o *] j) p.u.j ~))
     =.  mine  (~(put by mine) (scot %p u.shp) s+mode)
     ;<  ~  bind:m  (write-json-grub '../' 'shares.json' [%o (~(put by all) id [%o mine])])
@@ -3469,7 +3543,7 @@
     ;<  base=(unit path)  bind:m  self-base
     ?~  base  (send-text eyre-id 500 'calendar: cannot find where this app is installed')
     ;<  shares=json  bind:m  (read-json-grub '../' 'shares.json')
-    =/  all=(map @t json)  ?:(?=(%o -.shares) p.shares ~)
+    =/  all=(map @t json)  ?:(?=([%o *] shares) p.shares ~)
     =/  mine=(map @t json)  =/(j (~(get by all) id) ?:(?=([~ %o *] j) p.u.j ~))
     =.  mine  (~(del by mine) (scot %p u.shp))
     ;<  ~  bind:m
@@ -3484,11 +3558,11 @@
   ?:  &(post ?=([%accept ~] rest))
     =/  key=@t  (gs jon 'key')
     ;<  offers=json  bind:m  (read-json-grub '../' 'share-offers.json')
-    =/  cur=(map @t json)  ?:(?=(%o -.offers) p.offers ~)
+    =/  cur=(map @t json)  ?:(?=([%o *] offers) p.offers ~)
     =/  offer=(unit json)  (~(get by cur) key)
     ?~  offer  (send-text eyre-id 404 'calendar: no such offer')
-    ;<  c=calendar:cal  bind:m  (read-cal '../')
     ;<  now=@da  bind:m  get-time:io
+    ;<  c=calendar:cal  bind:m  (read-cal '../')
     =/  id=@ta
       =/  first=@ta  (crip "s-{(trip (scot %uw (mug key)))}")
       ::  a copy from an earlier share of the same calendar (revoked, now
@@ -3513,14 +3587,14 @@
           ['pushed_seq' (numb:enjs:format 0)]
           ['last_ms' (numb:enjs:format 0)]
       ==
-    ;<  ~  bind:m  (write-json-grub '../' 'ship-remotes.json' [%o (~(put by ?:(?=(%o -.rows) p.rows ~)) id row)])
+    ;<  ~  bind:m  (write-json-grub '../' 'ship-remotes.json' [%o (~(put by ?:(?=([%o *] rows) p.rows ~)) id row)])
     ;<  ~  bind:m  (write-json-grub '../' 'share-offers.json' [%o (~(del by cur) key)])
     ;<  ~  bind:m  (google-prod '../')
     (send-json eyre-id (pairs:enjs:format ~[['id' s+id]]))
   ?:  &(post ?=([%decline ~] rest))
     =/  key=@t  (gs jon 'key')
     ;<  offers=json  bind:m  (read-json-grub '../' 'share-offers.json')
-    ;<  ~  bind:m  (write-json-grub '../' 'share-offers.json' [%o (~(del by ?:(?=(%o -.offers) p.offers ~)) key)])
+    ;<  ~  bind:m  (write-json-grub '../' 'share-offers.json' [%o (~(del by ?:(?=([%o *] offers) p.offers ~)) key)])
     (send-json eyre-id (pairs:enjs:format ~[['ok' b+&]]))
   ?:  &(post ?=([%sync ~] rest))
     ;<  ~  bind:m  (google-prod '../')
@@ -3538,11 +3612,11 @@
   =/  readers=(set @p)
     %-  ~(gas in *(set @p))
     %+  murn  ~(tap by mine)
-    |=([s=@t v=json] ?:(?=(%s -.v) (slaw %p s) ~))
+    |=([s=@t v=json] ?:(?=([%s *] v) (slaw %p s) ~))
   =/  editors=(set @p)
     %-  ~(gas in *(set @p))
     %+  murn  ~(tap by mine)
-    |=([s=@t v=json] ?:(&(?=(%s -.v) =('edit' p.v)) (slaw %p s) ~))
+    |=([s=@t v=json] ?:(&(?=([%s *] v) =('edit' p.v)) (slaw %p s) ~))
   ;<  ~  bind:m  (ug-set (group-name id 'read') readers (sy ~[file folder]) ~)
   (ug-set (group-name id 'edit') editors (sy ~[file folder]) (sy ~[cal-road]))
 ::  +remote-poke-wait: a poke to another ship's grubbery, answered or
@@ -3689,6 +3763,9 @@
   =/  rseq=@ud  (fall (gn share 'seq') 0)
   =/  objects=(map @t json)  (omap (obj:gcal share 'objects'))
   =/  etags=(map @t json)  (omap (obj:gcal row 'etags'))
+  ::  read and written with nothing waiting between (+edit-cals): the
+  ::  clock first, the conflicts after
+  ;<  now=@da  bind:m  get-time:io
   ;<  c=calendar:cal  bind:m  (read-cal pre)
   =/  k=cal:cal  (fall (~(get by cals.c) id) fresh-cal:cal)
   ?.  ?=(%ship kind.props.k)  (pure:m row)
@@ -3723,8 +3800,6 @@
     ?~  old  acc
     =?  clashes.acc  (~(has in pending) u)  [[u old ''] clashes.acc]
     acc(k (del-object k.acc u))
-  ;<  ~  bind:m  (log-clashes pre id clashes.res2 'changed on both sides; the host kept')
-  ;<  now=@da  bind:m  get-time:io
   =/  won=(set uid:cal)  (~(gas in *(set uid:cal)) (turn clashes.res2 |=([u=uid:cal *] u)))
   =/  sup2=(set [@t @ud])
     (~(uni in (~(uni in sup) (wrote-between k.res2 seq-at-peek seq.k.res2))) (rows-of k.res2 since won))
@@ -3743,6 +3818,7 @@
   ;<  ~  bind:m
     ?:  =(k.res2 k)  (pure:(fiber:fiber:nexus ,~) ~)
     (dav-write pre c(cals (~(put by cals.c) id k.res2)))
+  ;<  ~  bind:m  (log-clashes pre id clashes.res2 'changed on both sides; the host kept')
   ;<  ~  bind:m  (save-row pre 'ship-remotes.json' id row2)
   (pure:m row2)
 ::  +ship-push: our changes to an edit-mode shared calendar, as pokes to
@@ -3862,17 +3938,17 @@
 ++  gs
   |=  [jon=json k=@t]
   ^-  @t
-  ?.  ?=(%o -.jon)  ''
+  ?.  ?=([%o *] jon)  ''
   =/  j=(unit json)  (~(get by p.jon) k)
   ?:(?=([~ %s *] j) p.u.j '')
 ::
 ++  gn
   |=  [jon=json k=@t]
   ^-  (unit @ud)
-  ?.  ?=(%o -.jon)  ~
+  ?.  ?=([%o *] jon)  ~
   =/  j=(unit json)  (~(get by p.jon) k)
   ?~  j  ~
-  ?.  ?=(%n -.u.j)  ~
+  ?.  ?=([%n *] u.j)  ~
   (rush p.u.j dem)
 ::
 ++  ms-to-da  |=(ms=@ud `@da`(add ~1970.1.1 (div (mul ms ~s1) 1.000)))
@@ -4086,7 +4162,10 @@
     |=  [e=entry:cal acc=_k]
     =/  ev=event:cal  event.e
     ?:  ?=(?(%date %todo) -.ev)  acc
-    =/  rc=recur:cal  (as-rrule:ics recur.ev)
+    ::  args the preset cannot read (a day named "Monday", say) leave the
+    ::  event as it is: quiet, as the preset kind left it, never a crash
+    ::  at every start
+    =/  rc=recur:cal  (fall (mole |.((as-rrule:ics recur.ev))) recur.ev)
     ?:  =(rc recur.ev)  acc
     %+  put-entry:cal  acc
     ?-  -.ev
@@ -4189,8 +4268,8 @@
   =/  kn=(unit @tas)  (slaw %tas kind)
   ?~  kn  ~
   ::  a preset kind (daily, weekly, ...) from an older client is the rrule
-  ::  it phrases
-  `(as-rrule:ics [[/lib/rules u.kn] args u.start])
+  ::  it phrases; args it cannot read make the poke a bad one, not a crash
+  (mole |.((as-rrule:ics [[/lib/rules u.kn] args u.start])))
 ::  +parse-event: json -> one of the three event shapes. dz is the
 ::  calendar's default zone for timed events with none named.
 ::
@@ -4223,7 +4302,7 @@
       ?^  c  ?:(=(0 u.c) ~ c)
       ?.  =(%rrule name.kind.u.rec)  ~
       (biff (of-args:rr args.u.rec) |=(r=rule:rr count.r))
-    ?~(n ~ `(dom-of:ics u.rec u.n))
+    ?~(n ~ `(fall (mole |.((dom-of:ics u.rec u.n))) u.n))
   =/  =bound:cal  [dom ~]
   ?:  =('allday' cat)
     =/  days=@ud  (max 1 (fall (gn jon 'span_days') 1))

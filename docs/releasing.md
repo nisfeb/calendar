@@ -235,3 +235,12 @@ file.
 Fake ships derive every keypair from the `@p`, so anything key-dependent
 behaves differently there than on a real ship. Verify crypto paths on ricsul,
 not only on wex.
+
+Test the upgrade, not just the new code. Put the previous release on the test
+ship, give it the data real ships have (including what the old code accepted
+without checking), then switch to the new release and watch the console for a
+few minutes. Calendar 18 skipped this: its one-time conversion of preset
+repeats crashed at every start on an event version 17 had stored unchecked,
+and its crash retry turned that into an endless loop on a subscriber's ship.
+Anything that runs at start must not crash on old data, and a retry must back
+off (see `+rise-later`).
