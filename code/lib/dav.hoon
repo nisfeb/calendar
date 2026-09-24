@@ -65,7 +65,8 @@
     =/  at=(unit @ud)  (find "?>" t)
     ?~(at t (slag (add 2 u.at) t))
   =.  t  (skip-ws t)
-  (de-xml:html (crip t))
+  ::  de-xml's whitespace has no \0d: a CRLF body would not parse
+  (de-xml:html (crip (skip t |=(c=@t =('\0d' c)))))
 ++  skip-ws
   |=  t=tape
   ^-  tape

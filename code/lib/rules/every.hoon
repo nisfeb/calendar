@@ -1,5 +1,4 @@
 ::  every: fixed period from the anchor. args: {period: minutes}.
-::  Use frame %wall zone=~ — the phase is real time, not wall-clock.
 ::
 /<  rules  /lib/rules.hoon
 ^-  kind:rules

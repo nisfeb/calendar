@@ -6,6 +6,7 @@
 /<  cal    /lib/calendar.hoon
 /<  rules  /lib/rules.hoon
 /<  rr     /lib/rrule.hoon
+/<  pytz   /lib/pytz.hoon
 |%
 +$  gitem
   $:  ve=vevent:ics
@@ -14,6 +15,7 @@
       cancelled=?
       rid=(unit @t)             ::  an exception instance: RECURRENCE-ID text
       rid-key=@t                ::  its ICS key, with a TZID param when local
+      recur=@t                  ::  recurringEventId: the series' Google id
   ==
 ++  get
   |=  [j=json k=@t]
@@ -78,8 +80,10 @@
   ?~  t  ~
   ?:  |(=('+' i.t) =('-' i.t) =('Z' i.t))  t
   $(t t.t)
-::  +when-of: a Google start/end object to a when. A timeZone names the
-::  wall clock's zone; without one, the offset makes it UTC.
+::  +when-of: a Google start/end object to a when. The dateTime is the
+::  wall clock at its offset, which is the calendar's zone, not always
+::  the event's; the instant goes to UTC and then to the wall clock of
+::  the event's timeZone. No offset: the clock is already that zone's.
 ++  when-of
   |=  o=json
   ^-  (unit when:ics)
@@ -92,11 +96,15 @@
   =/  p  (parse-rfc3339 dt)
   ?~  p  ~
   =/  zone=@t  (str o 'timeZone')
-  ?:  &(!=('' zone) (known-zone:rules zone))  `[%local zone naive.u.p]
-  ?~  off.u.p  `[%utc naive.u.p]
-  ::  local clock with an offset: back to UTC
-  `[%utc ?:(neg.u.off.u.p (add naive.u.p d.u.off.u.p) (sub naive.u.p d.u.off.u.p))]
-::  +rid-text: an originalStartTime as RECURRENCE-ID text, with its key
+  =/  known=?  &(!=('' zone) (known-zone:rules zone))
+  ?:  &(known !utc.u.p ?=(~ off.u.p))  `[%local zone naive.u.p]
+  =/  utc=@da
+    ?~  off.u.p  naive.u.p
+    ?:(neg.u.off.u.p (add naive.u.p d.u.off.u.p) (sub naive.u.p d.u.off.u.p))
+  ?.  known  `[%utc utc]
+  =/  wall=(unit @da)  (bind (~(utc-to-tz zn:pytz zone) utc) tail)
+  ?~(wall `[%utc utc] `[%local zone u.wall])
+::  +rid-of: an originalStartTime as RECURRENCE-ID text, with its key
 ++  rid-of
   |=  o=json
   ^-  (unit [key=@t val=@t])
@@ -130,8 +138,8 @@
     =/  at=(unit @ud)  (find ":" t)
     ?~  at  ~
     =/  key=@t  (crip (scag u.at t))
-    %+  murn  (split-commas (slag +(u.at) t))
-    |=(v=tape (when-of:ics key (crip v)))
+    %+  murn  (split:rr ',' (crip (slag +(u.at) t)))
+    |=(v=@t (when-of:ics key v))
   =/  alarms=(list alarm:cal)
     =/  rem=json  (obj item 'reminders')
     %+  turn  (arr rem 'overrides')
@@ -179,6 +187,7 @@
       cancelled
       ?~(rid ~ `val.u.rid)
       ?~(rid '' key.u.rid)
+      (str item 'recurringEventId')
   ==
 ::  ---- the other way: an entry to a Google event ----
 ++  rfc3339-of
@@ -200,7 +209,8 @@
   |=  [d=@da zone=(unit @t) all=?]
   ^-  json
   ?:  all  (pairs:enjs:format ~[['date' s+(crip (date-of d))]])
-  ?~  zone  (pairs:enjs:format ~[['dateTime' s+(crip (weld (rfc3339-of d) "Z"))]])
+  ::  Google wants a timeZone on a recurring event, UTC included
+  ?~  zone  (pairs:enjs:format ~[['dateTime' s+(crip (weld (rfc3339-of d) "Z"))] ['timeZone' s+'UTC']])
   (pairs:enjs:format ~[['dateTime' s+(crip (rfc3339-of d))] ['timeZone' s+u.zone]])
 ::  +json-of: a parent entry as a Google event body. exdates are the
 ::  skipped occurrences realized by the caller.
@@ -208,13 +218,13 @@
   |=  [e=entry:cal exdates=(list @da)]
   ^-  json
   =/  ev=event:cal  event.e
-  =/  m=meta:cal  ?-(-.ev %timed meta.ev, %allday meta.ev, %date meta.ev, %todo meta.ev)
+  =/  m=meta:cal  (meta-of:cal ev)
   =/  name=@t  (meta-str:cal m 'name')
   =/  base=(list [@t json])
     :~  ['summary' s+?:(=('' name) 'Untitled' name)]
         ['description' s+(meta-str:cal m 'note')]
         ['location' s+(meta-str:cal m 'location')]
-        ['iCalUID' s+uid.e]
+        ['iCalUID' s+=/(own (get-prop:ics props.e 'X-GRUBBERY-UID') ?~(own uid.e v.u.own))]
         :-  'reminders'
         %-  pairs:enjs:format
         :~  ['useDefault' b+|]
@@ -268,7 +278,7 @@
     ?:  ?=(?(%date %todo) -.ev)  ~
     =/  rc=recur:cal  recur.ev
     =/  dom=(unit @ud)  ?-(-.ev %timed dom.bound.ev, %allday dom.bound.ev)
-    =/  rt=(unit @t)  (preset-rrule:ics name.kind.rc args.rc start.rc dom)
+    =/  rt=(unit @t)  (fall (mole |.((preset-rrule:ics name.kind.rc args.rc start.rc dom))) ~)
     ?~  rt  ~
     =/  zone=(unit @t)  ?:(?=(%timed -.ev) zone.ev ~)
     =/  ex=(list json)
@@ -280,13 +290,4 @@
       s+(crip "EXDATE;TZID={(trip u.zone)}:{(dt-text:ics x)}")
     ~[['recurrence' [%a [s+(cat 3 'RRULE:' u.rt) ex]]]]
   (pairs:enjs:format :(weld base timing recurrence))
-++  split-commas
-  |=  t=tape
-  ^-  (list tape)
-  =|  cur=tape
-  =|  out=(list tape)
-  |-
-  ?~  t  (flop [(flop cur) out])
-  ?:  =(',' i.t)  $(t t.t, out [(flop cur) out], cur ~)
-  $(t t.t, cur [i.t cur])
 --

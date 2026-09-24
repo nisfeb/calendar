@@ -12,6 +12,7 @@
 /<  rules  /lib/rules.hoon
 /<  cal    /lib/calendar.hoon
 /<  rr     /lib/rrule.hoon
+/<  pytz   /lib/pytz.hoon
 |%
 +$  when
   $%  [%utc d=@da]              ::  ...Z
@@ -68,7 +69,7 @@
   =/  out=(list @t)  ~
   |-
   ?~  trimmed  (flop out)
-  ?:  &(?=(^ out) =(' ' (cut 3 [0 1] i.trimmed)))
+  ?:  &(?=(^ out) |(=(' ' (cut 3 [0 1] i.trimmed)) =('\09' (cut 3 [0 1] i.trimmed))))
     %=  $
       trimmed  t.trimmed
       out  [(cat 3 i.out (cut 3 [1 (dec (met 3 i.trimmed))] i.trimmed)) t.out]
@@ -101,13 +102,31 @@
     ?~  alarm  $(lines t.lines)
     $(lines t.lines, alarm ~, cur `u.cur(alarms [(flop u.alarm) alarms.u.cur]))
   =/  t=tape  (trip l)
-  =/  i=(unit @ud)  (find ":" t)
+  =/  i=(unit @ud)  (name-end t)
   ?~  i  $(lines t.lines)
   =/  p=prop  [(crip (scag u.i t)) (crip (slag +(u.i) t))]
   ?^  alarm
     $(lines t.lines, alarm `[p u.alarm])
   $(lines t.lines, cur `u.cur(props [p props.u.cur]))
-::  +base-key: the property name without parameters
+::  +name-end: where a content line's name and params end: the first
+::  colon outside a quoted param value (ATTENDEE;CN="Doe: J":mailto:..)
+++  name-end
+  |=  t=tape
+  ^-  (unit @ud)
+  =/  i=@ud  0
+  =/  q=?  |
+  |-
+  ?~  t  ~
+  ?:  =('"' i.t)  $(t t.t, i +(i), q !q)
+  ?:  &(!q =(':' i.t))  `i
+  $(t t.t, i +(i))
+::  +naive: a read moment as its wall clock, whatever its form
+++  naive
+  |=  w=when
+  ^-  @da
+  ?-(-.w %utc d.w, %local d.w, %day d.w)
+::  +base-key: the property name without parameters (DTSTART;TZID=x
+::  -> DTSTART)
 ++  base-key
   |=  k=@t
   ^-  @t
@@ -151,11 +170,10 @@
       (murn alarms parse-alarm)
       (fall (rush (gr 'SEQUENCE') dem) 0)
       (gr 'X-GRUBBERY-KIND')
-      (gr 'X-GRUBBERY-ARGS')
+      (gv 'X-GRUBBERY-ARGS')
       ?:(todo 'todo' (gr 'X-GRUBBERY-CAT'))
       (parse-when props 'DUE')
-      =/  c=(unit when)  (parse-when props 'COMPLETED')
-      ?~(c ~ `?-(-.u.c %utc d.u.c, %local d.u.c, %day d.u.c))
+      (bind (parse-when props 'COMPLETED') naive)
       (gr 'STATUS')
       (skip props |=(p=prop (~(has in eaten) (base-key k.p))))
   ==
@@ -171,9 +189,11 @@
     `[[%abs d.u.dt] desc]
   =/  s=tape  (trip v.u.tr)
   ?~  s  ~
-  =/  neg=?  =('-' i.s)
-  =/  d=@dr  (parse-duration (crip ?:(neg t.s s)))
-  `[[%rel ?:(neg d ~s0)] desc]
+  =/  late=?  !=('-' i.s)
+  =/  d=@dr  (parse-duration v.u.tr)
+  =/  end=?  =('END' (key-param k.u.tr 'RELATED'))
+  ?:  &(!end |(!late =(~s0 d)))  `[[%rel d] desc]
+  `[[%off end late d] desc]
 ::  +parse-duration: P[nW][nD][T[nH][nM][nS]], leading sign ignored
 ++  parse-duration
   |=  v=@t
@@ -206,7 +226,7 @@
   %+  turn  (all-props props 'EXDATE')
   |=  p=prop
   ^-  (list when)
-  %+  murn  (split ',' v.p)
+  %+  murn  (split:rr ',' v.p)
   |=  one=@t
   (when-of k.p one)
 ::  +parse-when: a DTSTART/DTEND property to a typed moment
@@ -223,9 +243,9 @@
   ?~  dt  ~
   ?:  =(8 (met 3 val))  `[%day d.u.dt]
   ?:  z.u.dt  `[%utc d.u.dt]
-  =/  zone=@t  (key-param key 'TZID')
-  ?:  =('' zone)  `[%utc d.u.dt]   ::  floating time: treat as UTC
-  `[%local zone d.u.dt]
+  ::  floating time (no TZID) is local with no zone named; the reader
+  ::  places it in the calendar's zone
+  `[%local (key-param key 'TZID') d.u.dt]
 ::  +key-param: extract ;PARAM=value from a property key
 ++  key-param
   |=  [key=@t param=@t]
@@ -235,6 +255,9 @@
   =/  i=(unit @ud)  (find needle t)
   ?~  i  ''
   =/  rest=tape  (slag (add u.i (lent needle)) t)
+  ::  a quoted value (TZID="America/New_York") is the text inside
+  ?:  &(?=(^ rest) =('"' i.rest))
+    (crip (scag (fall (find ~['"'] t.rest) (lent t.rest)) t.rest))
   =/  j=(unit @ud)  (find ";" rest)
   (crip ?~(j rest (scag u.j rest)))
 ::  +parse-dt: 'yyyymmdd' | 'yyyymmddThhmmss[Z]' -> [@da utc?]
@@ -255,24 +278,6 @@
   =/  d=@da
     (year [[%.y yy] mm [dd (nu 9 2) (nu 11 2) (nu 13 2) ~]])
   `[d utc]
-++  split
-  |=  [sep=@t t=@t]
-  ^-  (list @t)
-  =/  s=tape  (trip t)
-  =|  cur=tape
-  =|  out=(list @t)
-  |-
-  ?~  s  (flop [(crip (flop cur)) out])
-  ?:  =(i.s sep)  $(s t.s, cur ~, out [(crip (flop cur)) out])
-  $(s t.s, cur [i.s cur])
-::  +unescape / +escape: TEXT values, RFC 5545 3.3.11
-::  +key-name: a property key without its params (DTSTART;TZID=x -> DTSTART)
-++  key-name
-  |=  k=@t
-  ^-  @t
-  =/  t=tape  (trip k)
-  =/  at=(unit @ud)  (find ";" t)
-  ?~(at k (crip (scag u.at t)))
 ::  +split-categories: a CATEGORIES value on its unescaped commas, each
 ::  part unescaped and trimmed of spaces
 ++  split-categories
@@ -303,6 +308,7 @@
   ?~  t  ~
   ?:  =(' ' i.t)  $(t t.t)
   t
+::  +unescape / +escape: TEXT values, RFC 5545 3.3.11
 ++  unescape
   |=  v=@t
   ^-  @t
@@ -341,6 +347,13 @@
   |-
   ?:  (gte at len)  out
   =/  take=@ud  (min (sub len at) ?:(=(0 at) 75 74))
+  ::  a fold never splits a UTF-8 character: back off while the next
+  ::  octet continues one
+  =.  take
+    |-  ^-  @ud
+    ?:  |((lte take 1) (gte (add at take) len))  take
+    ?.  =(0x80 (dis 0xc0 (cut 3 [(add at take) 1] c)))  take
+    $(take (dec take))
   =/  piece=tape  (trip (cut 3 [at take] c))
   =/  chunk=tape  ?:(=(0 at) (weld piece crlf) :(weld " " piece crlf))
   $(at (add at take), out (weld out chunk))
@@ -384,62 +397,151 @@
   |=  [k=tape v=tape]
   ^-  tape
   (fold :(weld k ":" v))
-::  +preset-rrule: a shipped kind and its args as RRULE text, ~ when the
-::  kind has no RRULE shape (once, cron, an `every` that is not whole
-::  days). COUNT is appended from the bound.
+::  +preset-text: the RRULE a retired preset kind's args phrase (daily,
+::  weekly, monthly, monthly-nth, yearly), ~ when they phrase none
+++  preset-text
+  |=  [kind=@ta args=(map @t json) start=@da]
+  ^-  (unit tape)
+  =/  a  ~(. ja:rules args)
+  ?+    kind  ~
+      %daily    `"FREQ=DAILY"
+      %weekly
+    =/  ds=(list wkd:rules)  (wkds:a 'days')
+    ?~  ds  ~
+    `(weld "FREQ=WEEKLY;BYDAY=" (sep-join:rr "," (turn ds wkd-text:rr)))
+      %monthly
+    =/  d=@ud  (num:a 'day')
+    ?:(=(0 d) ~ `"FREQ=MONTHLY;BYMONTHDAY={(a-co:co d)}")
+      %monthly-nth
+    =/  o=@t  (str:a 'ord')
+    =/  w=(unit wkd:rules)  (rush (str:a 'day') (perk %mon %tue %wed %thu %fri %sat %sun ~))
+    ?~  w  ~
+    =/  n=(unit tape)
+      ?+  o  ~
+        %first   `"1"
+        %second  `"2"
+        %third   `"3"
+        %fourth  `"4"
+        %last    `"-1"
+      ==
+    ?~  n  ~
+    `:(weld "FREQ=MONTHLY;BYDAY=" u.n (wkd-text:rr u.w))
+      %yearly
+    =/  d=@ud  (num:a 'day')
+    ::  the month the kind read; the start's only when there is none
+    =/  mo=@ud  =/(n (num:a 'month') ?:(=(0 n) m:(yore start) n))
+    ?:(=(0 d) ~ `"FREQ=YEARLY;BYMONTH={(a-co:co mo)};BYMONTHDAY={(a-co:co d)}")
+  ==
+::  +cron-rule: a cron kind that fires once a day on a plain pattern (every
+::  day, some weekdays, or some days of the month, every month) as RRULE
+::  text and its time of day; ~ for anything richer
+++  cron-rule
+  |=  args=(map @t json)
+  ^-  (unit [text=tape at=@dr])
+  =/  a  ~(. ja:rules args)
+  =/  mins=(list @ud)  (nums:a 'mins')
+  =/  hrs=(list @ud)  (nums:a 'hrs')
+  ?.  &(?=([@ ~] mins) ?=([@ ~] hrs))  ~
+  ?.  (gte ~(wyt in (sy (nums:a 'mons'))) 12)  ~
+  =/  doms=(set @ud)  (sy (nums:a 'doms'))
+  =/  dows=(set @ud)  (sy (nums:a 'dows'))
+  =/  at=@dr  (add (mul i.hrs ~h1) (mul i.mins ~m1))
+  =/  day  |=(n=@ud (snag (mod n 7) `(list tape)`~["SU" "MO" "TU" "WE" "TH" "FR" "SA"]))
+  ?:  &((gte ~(wyt in doms) 31) (gte ~(wyt in dows) 7))  `["FREQ=DAILY" at]
+  ?:  (gte ~(wyt in doms) 31)
+    `[(weld "FREQ=WEEKLY;BYDAY=" (sep-join:rr "," (turn (sort ~(tap in dows) lth) day))) at]
+  ?:  (gte ~(wyt in dows) 7)
+    `[(weld "FREQ=MONTHLY;BYMONTHDAY=" (sep-join:rr "," (turn (sort ~(tap in doms) lth) a-co:co))) at]
+  ~
+::  +as-rrule: a retired preset kind (daily, weekly, monthly, monthly-nth,
+::  yearly; cron when +cron-rule phrases it) as the rrule kind, with the
+::  same occurrences at the same indices, so skips and caps stay where
+::  they were. The preset counted from the first day of its period
+::  (the start's day, month or year) at the time its args named; the
+::  rule starts there. Any other recur comes back as it was, and so does
+::  a preset whose args phrase no rule.
+++  as-rrule
+  |=  rc=recur:cal
+  ^-  recur:cal
+  =/  kind=@ta  name.kind.rc
+  ?.  ?=(?(%daily %weekly %monthly %monthly-nth %yearly %cron) kind)  rc
+  =/  got=(unit [text=tape at=@dr])
+    ?:  =(%cron kind)  (cron-rule args.rc)
+    %+  bind  (preset-text kind args.rc start.rc)
+    |=(t=tape [t (mins:~(. ja:rules args.rc) 'at')])
+  ?~  got  rc
+  =/  =date  (yore (day-floor:rules start.rc))
+  =/  base=@da
+    ?+  kind  (day-floor:rules start.rc)
+      ?(%monthly %monthly-nth)  (year [[%.y y.date] m.date 1 0 0 0 ~])
+      %yearly                   (year [[%.y y.date] 1 1 0 0 0 ~])
+    ==
+  [[/lib/rules %rrule] (~(put by *(map @t json)) 'rrule' s+(crip text.u.got)) (add base at.u.got)]
+::  +preset-rrule: a kind and its args as RRULE text for export: the rrule
+::  kind's own text, a whole-day `every`, or a retired preset's (read back
+::  from an old export); ~ for one that has none (once, cron, an `every`
+::  that is not whole days). COUNT is how many occurrences lie below the
+::  bound (+count-of).
 ++  preset-rrule
   |=  [kind=@ta args=(map @t json) start=@da dom=(unit @ud)]
   ^-  (unit @t)
   =/  a  ~(. ja:rules args)
-  =/  wkd-text
-    |=  w=wkd:rules
-    ^-  tape
-    ?-(w %mon "MO", %tue "TU", %wed "WE", %thu "TH", %fri "FR", %sat "SA", %sun "SU")
   =/  body=(unit tape)
-    ?+    kind  ~
+    ?+    kind  (preset-text kind args start)
         %rrule    `(trip (str:a 'rrule'))
-        %daily    `"FREQ=DAILY"
-        %weekly
-      =/  ds=(list wkd:rules)  (wkds:a 'days')
-      ?~  ds  ~
-      `(weld "FREQ=WEEKLY;BYDAY=" (sep-join:rr "," (turn ds wkd-text)))
-        %monthly
-      =/  d=@ud  (num:a 'day')
-      ?:(=(0 d) ~ `"FREQ=MONTHLY;BYMONTHDAY={(a-co:co d)}")
-        %monthly-nth
-      =/  o=@t  (str:a 'ord')
-      =/  w=(unit wkd:rules)  (rush (str:a 'day') (perk %mon %tue %wed %thu %fri %sat %sun ~))
-      ?~  w  ~
-      =/  n=(unit tape)
-        ?+  o  ~
-          %first   `"1"
-          %second  `"2"
-          %third   `"3"
-          %fourth  `"4"
-          %last    `"-1"
-        ==
-      ?~  n  ~
-      `:(weld "FREQ=MONTHLY;BYDAY=" u.n (wkd-text u.w))
-        %yearly
-      =/  d=@ud  (num:a 'day')
-      =/  =date  (yore start)
-      ?:(=(0 d) ~ `"FREQ=YEARLY;BYMONTH={(a-co:co m.date)};BYMONTHDAY={(a-co:co d)}")
         %every
       =/  p=@dr  (mins:a 'period')
       ?:  |(=(~s0 p) !=(0 (mod p ~d1)))  ~
       `"FREQ=DAILY;INTERVAL={(a-co:co (div p ~d1))}"
     ==
   ?~  body  ~
-  ?:  &(?=(^ dom) !=(%rrule kind))
-    `(crip :(weld u.body ";COUNT=" (a-co:co u.dom)))
-  `(crip u.body)
+  ?~  dom  `(crip u.body)
+  ::  the cap is the count; an rrule's own COUNT or UNTIL gives way to
+  ::  it (a series capped here, "this and following", ends there too)
+  =/  own=(list tape)
+    ?.  =(%rrule kind)  ~[u.body]
+    %+  skip  (turn (split:rr ';' (crip u.body)) trip)
+    |=(p=tape |(=("COUNT=" (cuss (scag 6 p))) =("UNTIL=" (cuss (scag 6 p)))))
+  =/  n=@ud  (count-of [[/lib/rules kind] args start] u.dom)
+  `(crip :(weld (sep-join:rr ";" own) ";COUNT=" (a-co:co n)))
+::  +dom-of, +count-of: a COUNT as the index bound that holds that many
+::  occurrences, and back. Only an rrule has slots with none (the 31st of
+::  April); every other kind's indices are all occurrences.
+++  dom-of
+  |=  [rc=recur:cal n=@ud]
+  ^-  @ud
+  ?.  =(%rrule name.kind.rc)  n
+  =/  r=(unit rule:rr)  (of-args:rr args.rc)
+  ?~(r n (count-dom:rr u.r start.rc n))
+++  count-of
+  |=  [rc=recur:cal dom=@ud]
+  ^-  @ud
+  ?.  =(%rrule name.kind.rc)  dom
+  =/  r=(unit rule:rr)  (of-args:rr args.rc)
+  ?~(r dom (dom-count:rr u.r start.rc dom))
+::  +series-wall: a read moment as the wall clock of a series in zone (~
+::  is UTC). An EXDATE or RECURRENCE-ID in UTC, or in another zone, names
+::  the series' instant only once it is moved there; a floating one, or
+::  one in a zone pytz does not know, is the series' own wall already.
+++  series-wall
+  |=  [w=when zone=(unit @t)]
+  ^-  @da
+  ?-    -.w
+    %day  d.w
+    %utc  (wall:rules zone d.w)
+  ::
+      %local
+    ?.  (known-zone:rules zone.w)  d.w
+    ?:  =(`zone.w zone)  d.w
+    (wall:rules zone (fall (place:rules `zone.w d.w) d.w))
+  ==
 ::  +write-entry: one VEVENT. exdates are the skipped occurrences as
 ::  naive moments, realized by the caller through the kind.
 ++  write-entry
   |=  [e=entry:cal exdates=(list @da) now=@da]
   ^-  tape
   =/  ev=event:cal  event.e
-  =/  m=meta:cal  ?-(-.ev %timed meta.ev, %allday meta.ev, %date meta.ev, %todo meta.ev)
+  =/  m=meta:cal  (meta-of:cal ev)
   =/  bd=bound:cal  ?-(-.ev %timed bound.ev, %allday bound.ev, ?(%date %todo) *bound:cal)
   =/  comp=tape  ?:(?=(%todo -.ev) "VTODO" "VEVENT")
   =/  ms  |=(k=@t (meta-str:cal m k))
@@ -493,11 +595,11 @@
         ?(%timed %allday)
       =/  rc=recur:cal  recur.ev
       =/  kind=@ta  name.kind.rc
-      =/  rt=(unit @t)  (preset-rrule kind args.rc start.rc dom.bd)
+      =/  rt=(unit @t)  (fall (mole |.((preset-rrule kind args.rc start.rc dom.bd))) ~)
       =/  zone=(unit @t)  ?:(?=(%timed -.ev) zone.ev ~)
       ;:  weld
         ?~(rt ~ ~[(line "RRULE" (trip u.rt))])
-        ~[(line "X-GRUBBERY-KIND" (trip kind)) (line "X-GRUBBERY-ARGS" (trip (en:json:html [%o args.rc])))]
+        ~[(line "X-GRUBBERY-KIND" (trip kind)) (line "X-GRUBBERY-ARGS" (escape (en:json:html [%o args.rc])))]
         ?:(?=(%allday -.ev) ~[(line "X-GRUBBERY-CAT" "allday")] ~)
         %+  turn  exdates
         |=  x=@da
@@ -516,6 +618,9 @@
         ?-  -.trigger.a
           %rel  (line "TRIGGER" (weld "-" (duration-text before.trigger.a)))
           %abs  (line "TRIGGER;VALUE=DATE-TIME" (weld (dt-text at.trigger.a) "Z"))
+            %off
+          %+  line  ?:(end.trigger.a "TRIGGER;RELATED=END" "TRIGGER")
+          (weld ?:(late.trigger.a "" "-") (duration-text d.trigger.a))
         ==
         (line "DESCRIPTION" (escape ?:(=('' desc.a) (ms 'name') desc.a)))
         (weld "END:VALARM" crlf)
@@ -523,9 +628,12 @@
   %-  zing
   ;:  weld
     ~[(weld "BEGIN:" (weld comp crlf))]
-    ::  an override child carries its parent's UID, as RFC 5545 wants
-    =/  parent=(list prop)  (skim props.e |=(p=prop =('X-GRUBBERY-PARENT' k.p)))
-    ~[(line "UID" (trip ?~(parent uid.e v.i.parent)))]
+    ::  the object's own UID: kept aside when a client stored it under
+    ::  another name (+alias-object in the app), or an override child's
+    ::  parent's, as RFC 5545 wants
+    =/  own=(unit prop)  (get-prop props.e 'X-GRUBBERY-UID')
+    =/  parent=(unit prop)  (get-prop props.e 'X-GRUBBERY-PARENT')
+    ~[(line "UID" (trip ?^(own v.u.own ?^(parent v.u.parent uid.e))))]
     ~[(line "DTSTAMP" (weld (dt-text now) "Z"))]
     ~[(line "SEQUENCE" (a-co:co seq.e))]
     ~[(line "SUMMARY" (escape (ms 'name')))]
@@ -533,7 +641,7 @@
     ?:(=('' (ms 'note')) ~ ~[(line "DESCRIPTION" (escape (ms 'note')))])
     =/  tags=(list @t)  (meta-tags:cal m)
     ?~(tags ~ ~[(line "CATEGORIES" (sep-join:rr "," (turn tags |=(t=@t (escape t)))))])
-    ?:(=('' (ms 'color')) ~ ~[(line "COLOR" (trip (ms 'color')))])
+    ?:(=('' (ms 'color')) ~ ~[(line "COLOR" (escape (ms 'color')))])
     timing
     recur-lines
     alarm-lines
@@ -541,6 +649,10 @@
       %+  skip  props.e
       |=  p=prop
       ?|  =('X-GRUBBERY-PARENT' k.p)
+          =('X-GRUBBERY-KIDS' k.p)
+          =('X-GRUBBERY-UID' k.p)
+          ::  the Google ids are this ship's bookkeeping, not the event's
+          =("X-GOOGLE-" (scag 9 (trip k.p)))
           ?&  ?=(%todo -.ev)  ?=(^ done.ev)
               ?=(^ (find ~[(base-key k.p)] ~['STATUS' 'PERCENT-COMPLETE' 'COMPLETED']))
       ==  ==
@@ -561,17 +673,35 @@
     bodies
     ~[(weld "END:VCALENDAR" crlf)]
   ==
-::  +to-entry: a read VEVENT as an entry (uid kept, etag and seq left for
-::  +put-entry) plus its EXDATEs as naive moments for the caller to map to
-::  indices through the kind. ~ when there is no usable start.
-::  +todo-meta: name, note, location, tags of a read component
-++  todo-meta
+::  +local-until: an RRULE's UNTIL in UTC (a Z on it) as the wall clock
+::  of the event's zone, which the kind compares with its naive
+::  occurrences; kept in args beside the rule, which goes out as it came
+++  local-until
+  |=  [rc=recur:cal zone=@t]
+  ^-  recur:cal
+  =/  text=@t  (str:~(. ja:rules args.rc) 'rrule')
+  =/  u=(list @t)
+    (skim (split:rr ';' text) |=(p=@t =("UNTIL=" (cuss (scag 6 (trip p))))))
+  ?~  u  rc
+  =/  v=tape  (slag 6 (trip i.u))
+  ?.  &(?=(^ v) =('Z' (rear v)))  rc
+  =/  r=(unit rule:rr)  (parse:rr text)
+  ?~  r  rc
+  ?~  until.u.r  rc
+  =/  wall=(unit @da)  (bind (~(utc-to-tz zn:pytz zone) u.until.u.r) tail)
+  ?~  wall  rc
+  rc(args (~(put by args.rc) 'until_naive' (numb:enjs:format (da-to-ms:cal u.wall))))
+::  +read-meta: name, note, location, tags, color of a read component.
+::  CATEGORIES (RFC 5545) are the tags and COLOR (RFC 7986) the color;
+::  they ride in meta, not props
+++  read-meta
   |=  ve=vevent
   ^-  meta:cal
   =/  tags=(list @t)
     %-  zing
-    %+  turn  (skim extra.ve |=(p=prop =('CATEGORIES' (key-name k.p))))
+    %+  turn  (skim extra.ve |=(p=prop =('CATEGORIES' (base-key k.p))))
     |=(p=prop (split-categories v.p))
+  =/  color=(unit prop)  (get-prop extra.ve 'COLOR')
   %-  ~(gas by *(map @t json))
   ^-  (list [@t json])
   ;:  weld
@@ -583,10 +713,23 @@
     ?:(=('' description.ve) ~ ~[['note' s+description.ve]])
     ^-  (list [@t json])
     ?~(tags ~ ~[['tags' [%a (turn tags |=(t=@t `json`s+t))]]])
+    ^-  (list [@t json])
+    ?~(color ~ ~[['color' s+(unescape v.u.color)]])
   ==
+::  +meta-prop: a prop read into meta, so not kept verbatim as well
+++  meta-prop  |=(p=prop ?=(?(%'CATEGORIES' %'COLOR') (base-key k.p)))
+::  +to-entry: a read VEVENT as an entry (uid kept, etag and seq left for
+::  +put-entry) plus its EXDATEs as naive moments of the series (for the
+::  caller to map to indices through the kind). ~ when there is no usable
+::  start. dz is the calendar's zone: a floating time, or a TZID pytz does
+::  not know (a Windows name from Outlook, say), is read in it, not a
+::  crash in the walker and not UTC.
 ++  to-entry
   |=  [ve=vevent dz=(unit @t)]
   ^-  (unit [e=entry:cal exdates=(list @da)])
+  =/  zone-of  |=(z=@t ^-((unit @t) ?:((known-zone:rules z) `z dz)))
+  =/  =meta:cal  (read-meta ve)
+  =.  extra.ve  (skip extra.ve meta-prop)
   ::  a task: DUE (or DTSTART) is the due moment; COMPLETED or
   ::  STATUS:COMPLETED marks it done
   ?:  =('todo' cat.ve)
@@ -595,11 +738,10 @@
     =/  abs
       |=  w=when
       ^-  @da
-      ?-  -.w
-        %utc    d.w
-        %day    d.w
-        %local  ?.((known-zone:rules zone.w) d.w (fall (mole |.((snag 0 (realize:rules `zone.w d.w)))) d.w))
-      ==
+      ?.  ?=(%local -.w)  (naive w)
+      =/  z=(unit @t)  (zone-of zone.w)
+      ?~  z  d.w
+      (fall (place:rules z d.w) d.w)
     =/  due=(unit @da)
       ?^  due.ve  `(abs u.due.ve)
       ?:  &(?=(^ start.ve) ?=(^ duration.ve))  `(add (abs u.start.ve) u.duration.ve)
@@ -607,63 +749,68 @@
     =/  done=(unit @da)
       ?^  completed.ve  completed.ve
       ?:(=('COMPLETED' status.ve) `~1970.1.1 ~)
-    `[[[%todo due done (todo-meta ve)] uid.ve '' 0 alarms.ve (skip extra.ve |=(p=prop =('CATEGORIES' (key-name k.p))))] ~]
+    `[[[%todo due done meta] uid.ve '' 0 alarms.ve extra.ve] ~]
   ?~  start.ve  ~
   =/  s=when  u.start.ve
-  =/  sd=@da  ?-(-.s %utc d.s, %local d.s, %day d.s)
-  ::  CATEGORIES (RFC 5545) are the tags; they ride in meta, not props
-  =/  tags=(list @t)
-    %-  zing
-    %+  turn  (skim extra.ve |=(p=prop =('CATEGORIES' (key-name k.p))))
-    |=(p=prop (split-categories v.p))
-  =.  extra.ve  (skip extra.ve |=(p=prop =('CATEGORIES' (key-name k.p))))
-  =/  =meta:cal
-    %-  ~(gas by *(map @t json))
-    ^-  (list [@t json])
-    ;:  weld
-      ^-  (list [@t json])
-      ~[['name' s+?:(=('' summary.ve) 'Untitled' summary.ve)]]
-      ^-  (list [@t json])
-      ?:(=('' location.ve) ~ ~[['location' s+location.ve]])
-      ^-  (list [@t json])
-      ?:(=('' description.ve) ~ ~[['note' s+description.ve]])
-      ^-  (list [@t json])
-      ?~(tags ~ ~[['tags' [%a (turn tags |=(t=@t `json`s+t))]]])
-    ==
+  =/  sd=@da  (naive s)
+  ::  a rule with its COUNT left out, for comparing two phrasings of it
+  =/  bare  |=(t=@t (bind (parse:rr t) |=(r=rule:rr r(count ~))))
+  ::  our own kind and args, only while the object still says what they
+  ::  say: a client that moved the time or changed the repeat wins, and
+  ::  the event becomes the rule the client wrote. A time-of-day kind
+  ::  exported at midnight (before the first occurrence was the start)
+  ::  still reads as ours. Args the kind cannot run are not ours either.
   =/  own-args=(unit (map @t json))
-    ?:  =('' args.ve)  ~
+    ?:  |(=('' args.ve) =('' kind.ve))  ~
     =/  j=(unit json)  (de:json:html args.ve)
-    ?.(?=([~ %o *] j) ~ `p.u.j)
+    ?.  ?=([~ %o *] j)  ~
+    =/  kind=@ta  kind.ve
+    =/  said=(unit (unit @t))  (mole |.((preset-rrule kind p.u.j sd ~)))
+    ?~  said  ~
+    =/  same-rule=?
+      ?~  u.said  =('' rrule.ve)
+      ?|  =(u.u.said rrule.ve)
+          &(?=(^ (bare rrule.ve)) =((bare u.u.said) (bare rrule.ve)))
+      ==
+    ?.  same-rule  ~
+    ?:  &(=(%every kind) =(~s0 (fall (mole |.((mins:~(. ja:rules p.u.j) 'period'))) ~s0)))  ~
+    ?.  (~(has by p.u.j) 'at')  `p.u.j
+    =/  tod=@dr  (sub sd (day-floor:rules sd))
+    ?.  |(=(~s0 tod) =(tod (mins:~(. ja:rules p.u.j) 'at')))  ~
+    `p.u.j
+  ::  a retired preset read back from an old export becomes the rrule it
+  ::  phrases (+as-rrule)
   =/  rc=recur:cal
     ?:  &(!=('' kind.ve) ?=(^ own-args))
-      [[/lib/rules kind.ve] u.own-args sd]
+      (as-rrule [[/lib/rules kind.ve] u.own-args sd])
     ?:  =('' rrule.ve)
       [[/lib/rules %once] ~ sd]
     [[/lib/rules %rrule] (~(put by *(map @t json)) 'rrule' s+rrule.ve) sd]
+  ::  COUNT is how many occurrences there are: the bound is the index
+  ::  that holds that many (+dom-of)
   =/  dom=(unit @ud)
-    ?:  =('' rrule.ve)  ~
-    =/  r=(unit rule:rr)  (parse:rr rrule.ve)
-    ?~(r ~ count.u.r)
-  =/  ex=(list @da)
-    %+  turn  exdates.ve
-    |=(w=when ?-(-.w %utc d.w, %local d.w, %day d.w))
+    =/  n=(unit @ud)  ?:(=('' rrule.ve) ~ (biff (parse:rr rrule.ve) |=(r=rule:rr count.r)))
+    ?~(n ~ `(dom-of rc u.n))
   =/  common  [uid.ve '' 0 alarms.ve extra.ve]
   ?:  =('date' cat.ve)
     =/  =date  (yore sd)
-    `[[[%date m.date d.t.date meta] common] ex]
+    `[[[%date m.date d.t.date meta] common] ~]
   ?:  |(?=(%day -.s) =('allday' cat.ve))
     =/  days=@ud
       ?~  end.ve  1
       ?.  ?=(%day -.u.end.ve)  1
+      ?:  (lte d.u.end.ve sd)  1
       (max 1 (div (sub d.u.end.ve sd) ~d1))
-    `[[[%allday rc days [dom ~] meta] common] ex]
-  ::  an unknown TZID falls back to UTC rather than a crash in the walker
-  =/  zone=(unit @t)  ?:(&(?=(%local -.s) (known-zone:rules zone.s)) `zone.s ~)
+    `[[[%allday rc days [dom ~] meta] common] (turn exdates.ve naive)]
+  =/  zone=(unit @t)  ?:(?=(%local -.s) (zone-of zone.s) ~)
+  =?  rc  &(?=(^ zone) =(%rrule name.kind.rc))  (local-until rc u.zone)
   =/  =fin:cal
     ?^  duration.ve  [%dur u.duration.ve]
     ?~  end.ve  [%dur ~s0]
-    =/  ed=@da  ?-(-.u.end.ve %utc d.u.end.ve, %local d.u.end.ve, %day d.u.end.ve)
+    =/  ed=@da  (series-wall u.end.ve zone)
     ?:  =('' rrule.ve)  [%to ed]
     [%dur ?:((gth ed sd) (sub ed sd) ~s0)]
-  `[[[%timed rc zone fin [dom ~] meta] common] ex]
+  :-  ~
+  :-  [[%timed rc zone fin [dom ~] meta] common]
+  (turn exdates.ve |=(w=when (series-wall w zone)))
 --

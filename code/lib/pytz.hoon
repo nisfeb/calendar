@@ -177,14 +177,23 @@
   %-  parse-zone-rows
   %-  ~(got by files)
   (to-filename i.names)
+:: per zone, every offset it has used; and the names sorted. Both once,
+:: at build, not per conversion or per lookup
+::
+=/  offs=(map @t (set delta))
+  %-  ~(run by zones)
+  |=  z=zone
+  (~(gas in *(set delta)) (turn (tap:zon z) (cork tail head)))
+=/  sorted=(list @t)  (sort ~(tap in ~(key by zones)) aor)
 :: timezone conversion core
 ::
 |%
 ::  +zone-names: every zone in the dataset, sorted
 ::
-++  zone-names
-  ^-  (list @t)
-  (sort ~(tap in ~(key by zones)) aor)
+++  zone-names  sorted
+::  +has-zone: a name the dataset knows
+::
+++  has-zone  |=(z=@t (~(has by zones) z))
 ++  zn
   |_  name=@t
   ++  zone   (~(got by zones) name)
@@ -200,11 +209,7 @@
     (bind (active-rule utc-time) (cork tail head))
   :: set of all offsets in the timezone
   ::
-  ++  offsets
-    ^-  (set delta)
-    %-  ~(gas in *(set delta))
-    %+  turn  (tap:zon zone)
-    (cork tail head)
+  ++  offsets  (~(got by offs) name)
   ::
   ++  utc-to-tz
     |=  utc-time=@da

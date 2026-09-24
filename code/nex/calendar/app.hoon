@@ -1,7 +1,8 @@
 ::  calendar: events over the rules library
 ::
 ::  /calendar.calendar   portable intent: config + events (poke CRUD)
-::  /order.calendar-cache     derived index, reinflated on calendar news
+::  /order.calendar-cache     derived index by uid, reinflated on news
+::  /index.calendar-cache     the same keyed <calendar>/<uid>, ours
 ::  /main.sig            binds /apps/calendar
 ::  /requests            window.json + events.json endpoints
 ::
@@ -12,19 +13,13 @@
 /<  rr     /lib/rrule.hoon
 /<  dav    /lib/dav.hoon
 /<  gcal   /lib/gcal.hoon
-::  the rule kinds, compiled in. The ball-era calendar loaded them at run
-::  time from /code/lib/rules/ through a granted road; a desk install has
-::  no such road to grant, and the kinds are ours, so they are part of the
-::  nexus. Events still name a kind by rail ([/lib/rules %weekly]); only
-::  the lookup changed.
-/<  k-cron         /lib/rules/cron.hoon
-/<  k-daily        /lib/rules/daily.hoon
+::  the rule kinds, compiled in: a single moment, a fixed period, and an
+::  RFC 5545 RRULE for everything else. Events name a kind by rail
+::  ([/lib/rules %rrule]); the name is the lookup key. The preset kinds
+::  (daily, weekly, monthly, monthly-nth, yearly, cron) are retired into
+::  rrule: +as-rrule:ics, on every way in and once at rise.
 /<  k-every        /lib/rules/every.hoon
-/<  k-monthly      /lib/rules/monthly.hoon
-/<  k-monthly-nth  /lib/rules/monthly-nth.hoon
 /<  k-once         /lib/rules/once.hoon
-/<  k-weekly       /lib/rules/weekly.hoon
-/<  k-yearly       /lib/rules/yearly.hoon
 /<  k-rrule        /lib/rules/rrule.hoon
 /&  icon      icon.svg
 /&  cal-html  calendar.html
@@ -49,7 +44,16 @@
           [%over %& [/ %'weir.json'] [[/ %json] weir-json]]
           [%fall %& [/ %'main.sig'] [[/ %sig] ~]]
           [%fall %& [/ %'calendar.calendar'] [[/ %calendar] fresh-calendar:cal]]
+          ::  order.calendar-cache: the occurrence index by uid, the shape
+          ::  and keys other apps read (orrery clams it with its own copy
+          ::  of the type and finds an event's occurrences by its uid).
+          ::  index.calendar-cache: the same keyed <calendar>/<uid>, so the
+          ::  same UID in two calendars is two events; this app reads that
+          ::  one. order-ver.json: the calendar both were built from
+          ::  (+cache-ver).
           [%fall %& [/ %'order.calendar-cache'] [[/ %calendar-cache] *cache:cal]]
+          [%fall %& [/ %'index.calendar-cache'] [[/ %calendar-cache] *cache:cal]]
+          [%fall %& [/ %'order-ver.json'] [[/ %json] [%o ~]]]
           [%fall %& [/ %'gcal-feeds.json'] [[/ %json] [%o ~]]]
           :*  %fall  %&  [/ %'reminders.json']
               :-  [/ %json]
@@ -63,7 +67,6 @@
           [%over %& [/ %'calendar.html'] [[/ %mime] cal-html]]
           [%over %& [/ %'calendar.css'] [[/ %mime] cal-css]]
           [%over %& [/ %'calendar.js'] [[/ %mime] cal-js]]
-          [%fall %& [/ %'carried.json'] [[/ %json] b+|]]
           ::  dav-clients.json: the CalDAV client passwords, hashed
           [%fall %& [/ %'dav-clients.json'] [[/ %json] [%a ~]]]
           ::  google.json: the user's own OAuth client and the endpoints
@@ -102,11 +105,7 @@
       ?+    rail  stay:m
           ::
           [~ %'main.sig']
-        ;<  ~  bind:m  (rise-wait:io prod "%calendar main: failed")
-        ::  a ship that ran the ball-era calendar has its data in a dormant
-        ::  instance at /apps/calendar.calendar. Copy it across once, on the
-        ::  first rise after the move; the old copy is left untouched.
-        ;<  ~  bind:m  carry-old-data
+        ;<  ~  bind:m  (rise-later prod "%calendar main: failed")
         ;<  ~  bind:m  (bind-http-self:io [~ /apps/calendar])
         ::  any ship may poke our share inbox: the road rides on /public
         ;<  ~  bind:m  lay-inbox-road
@@ -115,7 +114,13 @@
           ::  /calendar.calendar: poke CRUD on events
           ::
           [~ %'calendar.calendar']
-        ;<  ~  bind:m  (rise-wait:io prod "%calendar events: failed")
+        ;<  ~  bind:m  (rise-later prod "%calendar events: failed")
+        ::  events of a retired preset kind become the rrules they phrase,
+        ::  once: after the first rise this changes nothing
+        ;<  raw0=*  bind:m  (get-state-as:io ,*)
+        =/  c0=calendar:cal  (lift:cal raw0)
+        =/  c1=calendar:cal  (migrate-kinds c0)
+        ;<  ~  bind:m  ?:(=(c0 c1) (pure:m ~) (replace:io c1))
         |-
         ;<  [=from:fiber:nexus =sage:tarball]  bind:m  take-poke-from:io
         =/  jon=json  (fall (mole |.(!<(json q.sage))) *json)
@@ -129,81 +134,125 @@
           =/  cid=@ta  (crip (trip (gs jon 'cal')))
           ;<  shares=json  bind:m  (read-json-grub './' 'shares.json')
           =/  mode=@t  (gs (obj:gcal shares cid) (scot %p u.src))
+          ::  a refused edit is said back to the peer (the poke's ack only
+          ::  says it arrived), so it is not lost silently: the peer keeps
+          ::  its copy as a conflict and, told the calendar is read-only,
+          ::  stops offering edits. A ship we share nothing with hears nothing.
+          =/  tell
+            |=  [u=@t why=@t]
+            =/  m  (fiber:fiber:nexus ,~)
+            ^-  form:m
+            ~&  >>>  [%calendar-share-poke-refused u.src cid u why]
+            ?:  =('' mode)  (pure:m ~)
+            ;<  *  bind:m
+              %^  remote-poke-wait  u.src  [%& cal-instance %'shares.sig']
+              %-  pairs:enjs:format
+              :~  ['action' s+'refused']
+                  ['cal' s+cid]
+                  ['uid' s+u]
+                  ['why' s+why]
+                  ['mode' s+mode]
+              ==
+            (pure:m ~)
           ?.  =('edit' mode)
-            ~&  >>>  [%calendar-share-poke-refused u.src cid act]
+            ;<  ~  bind:m  (tell (gs jon 'uid') 'the calendar is shared with you read-only')
             $
           =/  k=(unit cal:cal)  (~(get by cals.c) cid)
-          ?~  k  $
+          ?~  k
+            ;<  ~  bind:m  (tell (gs jon 'uid') 'the host has no such calendar')
+            $
           ?:  =('share-put' act)
-            =/  ves=(list vevent:ics)  (fall (mole |.((events:ics (gs jon 'ics')))) ~)
-            =/  put=(unit [k=cal:cal =uid:cal])  (put-object u.k ves zone.c '' ~)
-            ?~  put  $
+            =/  ves0=(list vevent:ics)  (fall (mole |.((events:ics (gs jon 'ics')))) ~)
+            =/  real=@t  (fall (bind (lead-of ves0) |=(v=vevent:ics uid.v)) '')
+            ::  the key the peer holds it under (an older peer names none)
+            =/  u=@t  =/(n (gs jon 'uid') ?:(=('' n) real n))
+            =/  al=[ves=(list vevent:ics) extra=(list [@t @t])]  (alias-object ves0 u)
+            ::  an object needs its UID, and a UID that lives in another of
+            ::  our calendars is not the peer's to write
+            =/  home=(unit [id=@ta e=entry:cal])  (find-entry:cal c u)
+            ?:  |(=('' u) &(?=(^ home) !=(cid id.u.home)))
+              ;<  ~  bind:m  (tell u 'another calendar of the host holds this UID')
+              $
+            =/  put=(unit [k=cal:cal =uid:cal])  (fall (mole |.((put-object u.k ves.al zone.c u extra.al))) ~)
+            ?~  put
+              ;<  ~  bind:m  (tell u 'the host could not read the event')
+              $
             ;<  ~  bind:m  (replace:io c(cals (~(put by cals.c) cid k.u.put)))
             $
           ?:  =('share-del' act)
-            =/  u=@t  (gs jon 'uid')
-            =/  kk=cal:cal
-              %+  roll  (dav-children u.k u)
-              |=([ch=entry:cal acc=_u.k] (del-entry:cal acc uid.ch))
-            ;<  ~  bind:m  (replace:io c(cals (~(put by cals.c) cid (del-entry:cal kk u))))
+            ;<  ~  bind:m  (replace:io c(cals (~(put by cals.c) cid (del-object u.k (gs jon 'uid')))))
             $
           $
         ::  a read-only shared calendar takes no local edits; an action
-        ::  that names only an id is judged by the calendar that owns it
+        ::  that names only an id is judged by the calendar that owns it.
+        ::  home names that calendar when the same UID lives in two.
         =/  named=@ta  (crip (trip (gs jon 'cal')))
-        =/  owner=@ta  (fall (~(get by (owners c)) (crip (trip (gs jon 'id')))) '')
+        =/  home=@ta  (crip (trip (gs jon 'home')))
+        =/  owner=@ta  (fall (bind (locate c home (gs jon 'id')) head) '')
         ?:  &(!=('' named) (ship-read-only c named))  $
         ?:  &(!=('' owner) (ship-read-only c owner))  $
         ?:  =('del-event' act)
           =/  id=@ta  (crip (trip (gs jon 'id')))
           ?:  =('' id)  $
-          ;<  ~  bind:m  (replace:io (del-ev c id))
+          ;<  ~  bind:m  (replace:io (del-ev c home id))
           $
-        ?:  =('skip-event' act)
+        ::  skip-event names the occurrence by index; skip-at by the
+        ::  moment it starts, for a client that holds a time and not an
+        ::  index (the page, orrery's ship-side executor). Only the
+        ::  expansion of the recurrence knows the index, so skip-at does
+        ::  that counting here.
+        ::  unskip-at puts back an occurrence skip-at took out (the page's
+        ::  undo): its index is counted as if nothing were skipped
+        ?:  |(=('skip-event' act) =('skip-at' act) =('unskip-at' act))
           =/  id=@ta  (crip (trip (gs jon 'id')))
-          =/  idx=(unit @ud)  (gn jon 'idx')
-          ?:  |(=('' id) ?=(~ idx))  $
-          =/  ev=(unit event:cal)  (~(get by (events-all:cal c)) id)
+          =/  ev=(unit event:cal)  (event-of c home id)
           ?~  ev  $
-          =/  new=(unit event:cal)
-            ?-  -.u.ev
-              ?(%date %todo)  ~        ::  a date or a task can't be skipped
-              %timed   `u.ev(except.bound (~(put in except.bound.u.ev) u.idx))
-              %allday  `u.ev(except.bound (~(put in except.bound.u.ev) u.idx))
-            ==
-          ?~  new  $
-          ;<  ~  bind:m  (replace:io (put-ev c id u.new))
-          $
-        ::  skip-at skips the occurrence that starts at a given moment.
-        ::  skip-event needs an occurrence index, which only the expansion
-        ::  of the recurrence knows, so a client that holds a time and not
-        ::  an index (orrery's ship-side executor) has no way to name the
-        ::  occurrence it means; this action does that counting here.
-        ?:  =('skip-at' act)
-          =/  id=@ta  (crip (trip (gs jon 'id')))
-          =/  ms=(unit @ud)  (gn jon 'start_ms')
-          ?:  |(=('' id) ?=(~ ms))  $
-          =/  ev=(unit event:cal)  (~(get by (events-all:cal c)) id)
-          ?~  ev  $
-          =/  when=@da  (ms-to-da u.ms)
-          =/  idx=(unit @ud)  (occurrence-index u.ev when)
+          =/  un=?  =('unskip-at' act)
+          =/  idx=(unit @ud)
+            ?:  =('skip-event' act)  (gn jon 'idx')
+            =/  walk=event:cal  ?:(un (set-skips u.ev ~) u.ev)
+            (biff (gn jon 'start_ms') |=(ms=@ud (occurrence-index walk (ms-to-da ms))))
           ::  no occurrence starts there, so there is nothing to skip
           ?~  idx  $
-          =/  new=(unit event:cal)
-            ?-  -.u.ev
-              ?(%date %todo)  ~        ::  a date or a task can't be skipped
-              %timed   `u.ev(except.bound (~(put in except.bound.u.ev) u.idx))
-              %allday  `u.ev(except.bound (~(put in except.bound.u.ev) u.idx))
+          ::  a date or a task has none to skip; add-skips leaves it be
+          =/  new=event:cal
+            ?.  un  (add-skips u.ev (sy u.idx ~))
+            (set-skips u.ev (~(del in (skips-of u.ev)) u.idx))
+          ;<  ~  bind:m  (replace:io (put-ev c home id new))
+          $
+        ::  split-event: "this and following" as one step. The series ends
+        ::  before occurrence idx and a new one (the poke's own fields, in
+        ::  the calendar it names) starts there, keeping the old one's skips
+        ::  that fall on its days. Two pokes could leave half of it done.
+        ?:  =('split-event' act)
+          =/  id=@ta  (crip (trip (gs jon 'id')))
+          =/  old=(unit event:cal)  (event-of c home id)
+          =/  cap=(unit @ud)  (gn jon 'idx')
+          ?:  |(?=(~ old) ?=(~ cap))  $
+          ?.  ?=(?(%timed %allday) -.u.old)  $
+          =/  ev=(unit event:cal)  (parse-event jon zone.c)
+          ?~  ev
+            ~&  >>>  "%calendar: bad split-event"
+            $
+          ;<  new=event:cal  bind:m  (apply-until (carry-skips u.old u.ev) (gn jon 'until_ms'))
+          ;<  eny=@uvJ  bind:m  get-entropy:io
+          ;<  our=@p  bind:m  get-our:io
+          =/  nid=@ta  (crip "{(scow %uv (end [3 8] eny))}@{(scow %p our)}")
+          =/  capped=event:cal
+            ?-  -.u.old
+              %timed   u.old(dom.bound `u.cap)
+              %allday  u.old(dom.bound `u.cap)
             ==
-          ?~  new  $
-          ;<  ~  bind:m  (replace:io (put-ev c id u.new))
+          ;<  ~  bind:m  (replace:io (put-ev-in (put-ev c home id capped) (cal-arg jon) '' nid new))
           $
         ?:  =('add-calendar' act)
           =/  id=@ta  (crip (trip (gs jon 'id')))
           =/  nm=@t  (gs jon 'name')
-          ?:  |(=('' id) =('' nm) (~(has by cals.c) id))  $
+          ::  an id goes into hrefs and index keys: a knot, no slash
+          ?:  |(=('' id) =('' nm) !((sane %ta) id) (~(has by cals.c) id))  $
           =/  color=@t  (gs jon 'color')
-          =/  k=cal:cal  fresh-cal:cal
+          ;<  now=@da  bind:m  get-time:io
+          =/  k=cal:cal  (born now)
           =.  props.k  [nm ?:(=('' color) '#1e3a5f' color) %local ~]
           ;<  ~  bind:m  (replace:io c(cals (~(put by cals.c) id k)))
           $
@@ -229,96 +278,92 @@
           =/  zo=@t  (gs jon 'zone')
           =/  hd=(unit @ud)  (gn jon 'horizon_days')
           =.  title.c  ?:(=('' ti) title.c ti)
-          =.  zone.c  ?:(=('' zo) zone.c ?:(=('none' zo) ~ `zo))
-          =.  horizon.c  ?~(hd horizon.c (mul u.hd ~d1))
+          ::  a zone pytz does not know is not taken (every timed event
+          ::  with none of its own would be placed in it)
+          =.  zone.c
+            ?:  =('' zo)  zone.c
+            ?:  =('none' zo)  ~
+            ?:((known-zone:rules zo) `zo zone.c)
+          ::  ponytail: ten years is as far as the index is walked ahead
+          =.  horizon.c  ?~(hd horizon.c (mul (max 1 (min 3.650 u.hd)) ~d1))
           ;<  ~  bind:m  (replace:io c)
           $
         ?:  =('add-feed' act)
           =/  nm=@t   (gs jon 'name')
           =/  url=@t  (gs jon 'url')
           ?:  |(=('' nm) =('' url))  $
-          ;<  fv=view:nexus  bind:m
-            (peek:io (cord-to-road:tarball './gcal-feeds.json') ~)
-          =/  feeds=(map @t json)
-            ?.  ?=([%file *] fv)  ~
-            =/  j=json  (fall (mole |.(!<(json (need-vase:tarball sang.fv)))) *json)
-            ?.(?=(%o -.j) ~ p.j)
-          ;<  ~  bind:m
-            %+  over:io  (cord-to-road:tarball './gcal-feeds.json')
-            [[/ %json] `json`[%o (~(put by feeds) nm s+url)]]
+          ;<  fj=json  bind:m  (read-json-grub './' 'gcal-feeds.json')
+          =/  feeds=(map @t json)  ?.(?=(%o -.fj) ~ p.fj)
+          ;<  ~  bind:m  (write-json-grub './' 'gcal-feeds.json' [%o (~(put by feeds) nm s+url)])
           $
         ?:  =('del-feed' act)
           =/  nm=@t  (gs jon 'name')
           ?:  =('' nm)  $
-          ;<  fv=view:nexus  bind:m
-            (peek:io (cord-to-road:tarball './gcal-feeds.json') ~)
-          =/  feeds=(map @t json)
-            ?.  ?=([%file *] fv)  ~
-            =/  j=json  (fall (mole |.(!<(json (need-vase:tarball sang.fv)))) *json)
-            ?.(?=(%o -.j) ~ p.j)
-          ;<  ~  bind:m
-            %+  over:io  (cord-to-road:tarball './gcal-feeds.json')
-            [[/ %json] `json`[%o (~(del by feeds) nm)]]
+          ;<  fj=json  bind:m  (read-json-grub './' 'gcal-feeds.json')
+          =/  feeds=(map @t json)  ?.(?=(%o -.fj) ~ p.fj)
+          ;<  ~  bind:m  (write-json-grub './' 'gcal-feeds.json' [%o (~(del by feeds) nm)])
           $
         ?:  =('sync-feeds' act)
           ::  materialize external ICS feeds as events: drop all
           ::  prior feed-tagged events, re-add fresh (recurring
           ::  VEVENTs are skipped for now)
-          ;<  feeds-view=view:nexus  bind:m
-            (peek:io (cord-to-road:tarball './gcal-feeds.json') ~)
+          ;<  fj=json  bind:m  (read-json-grub './' 'gcal-feeds.json')
           =/  feeds=(list [nm=@t url=@t])
-            ?.  ?=([%file *] feeds-view)  ~
-            =/  j=json
-              (fall (mole |.(!<(json (need-vase:tarball sang.feeds-view)))) *json)
-            ?.  ?=(%o -.j)  ~
-            %+  murn  ~(tap by p.j)
+            ?.  ?=(%o -.fj)  ~
+            %+  murn  ~(tap by p.fj)
             |=([k=@t v=json] ?.(?=(%s -.v) ~ `[k p.v]))
           ?~  feeds
             ~&  >>>  "%calendar sync: no feeds configured"
             $
           ;<  now=@da  bind:m  get-time:io
           ;<  [synced=(map eid:cal event:cal) skipped=@ud]  bind:m
-            (do-sync feeds (sub now (mul 90 ~d1)) (add now (mul 2 ~d365)))
+            (do-sync feeds (sub now (mul 90 ~d1)) (add now (mul 2 ~d365)) zone.c)
+          ::  the fetches took a while: apply onto the calendar as it is
+          ::  now, not as it was when the poke came in
+          ;<  now-raw=*  bind:m  (get-state-as:io ,*)
+          =.  c  (lift:cal now-raw)
+          ::  a feed event the feeds no longer carry goes; the rest are put
+          ::  (an unchanged one is no change)
           =/  stale=(list @ta)
             %+  murn  ~(tap by (events-all:cal c))
             |=  [id=@ta e=event:cal]
-            ?:(=('' (meta-str:cal (get-meta e) 'feed')) ~ `id)
-          =.  c  (roll stale |=([id=@ta acc=_c] (del-ev acc id)))
-          =.  c  (roll ~(tap by synced) |=([[id=@ta e=event:cal] acc=_c] (put-ev acc id e)))
+            ?:(|(=('' (meta-str:cal (meta-of:cal e) 'feed')) (~(has by synced) id)) ~ `id)
+          =.  c  (roll stale |=([id=@ta acc=_c] (del-ev acc '' id)))
+          =.  c  (roll ~(tap by synced) |=([[id=@ta e=event:cal] acc=_c] (put-ev acc '' id e)))
           ~&  >  "%calendar sync: {(scow %ud ~(wyt by synced))} synced, {(scow %ud skipped)} recurring skipped"
           ;<  ~  bind:m  (replace:io c)
           $
         ?:  =('edit-event' act)
           =/  id=@ta  (crip (trip (gs jon 'id')))
-          =/  old=(unit event:cal)  (~(get by (events-all:cal c)) id)
+          =/  old=(unit event:cal)  (event-of c home id)
           ?~  old  $
           =/  ev=(unit event:cal)  (parse-event jon zone.c)
           ?~  ev
             ~&  >>>  "%calendar: bad edit-event"
             $
           ::  the shape is replaced but exceptions survive the edit
-          =/  merged=event:cal  (carry-except u.old u.ev)
+          =/  merged=event:cal  (carry-skips u.old u.ev)
           ;<  new=event:cal  bind:m  (apply-until merged (gn jon 'until_ms'))
-          ;<  ~  bind:m  (replace:io (put-ev-in c (cal-arg jon) id new))
+          ;<  ~  bind:m  (replace:io (put-ev-in c (cal-arg jon) home id new))
           $
         ?:  =('done-event' act)
           ::  tick or untick a task
           =/  id=@ta  (crip (trip (gs jon 'id')))
-          =/  old=(unit event:cal)  (~(get by (events-all:cal c)) id)
+          =/  old=(unit event:cal)  (event-of c home id)
           ?~  old  $
           ?.  ?=(%todo -.u.old)  $
           ;<  now=@da  bind:m  get-time:io
           =/  done=(unit @da)
             =/  j=(unit json)  (~(get by p.jon) 'done')
             ?:(?=([~ %b %.n] j) ~ `now)
-          ;<  ~  bind:m  (replace:io (put-ev c id u.old(done done)))
+          ;<  ~  bind:m  (replace:io (put-ev c home id u.old(done done)))
           $
         ?:  =('cap-event' act)
           ::  end the series before index dom (this-and-following edits)
           =/  id=@ta  (crip (trip (gs jon 'id')))
           =/  cap=(unit @ud)  (gn jon 'dom')
           ?:  |(=('' id) ?=(~ cap))  $
-          =/  old=(unit event:cal)  (~(get by (events-all:cal c)) id)
+          =/  old=(unit event:cal)  (event-of c home id)
           ?~  old  $
           =/  new=(unit event:cal)
             ?-  -.u.old
@@ -328,7 +373,7 @@
               %allday  `u.old(dom.bound `u.cap)
             ==
           ?~  new  $
-          ;<  ~  bind:m  (replace:io (put-ev c id u.new))
+          ;<  ~  bind:m  (replace:io (put-ev c home id u.new))
           $
         ?.  =('add-event' act)  $
         =/  ev=(unit event:cal)  (parse-event jon zone.c)
@@ -339,76 +384,81 @@
         ;<  eny=@uvJ  bind:m  get-entropy:io
         ;<  our=@p  bind:m  get-our:io
         =/  id=@ta  (crip "{(scow %uv (end [3 8] eny))}@{(scow %p our)}")
-        ;<  ~  bind:m  (replace:io (put-ev-in c (cal-arg jon) id ev2))
+        ;<  ~  bind:m  (replace:io (put-ev-in c (cal-arg jon) '' id ev2))
         $
           ::
           ::  /order.calendar-cache: reinflate on calendar news
           ::
           [~ %'order.calendar-cache']
-        ;<  ~  bind:m  (rise-wait:io prod "%calendar cache: failed")
+        ;<  ~  bind:m  (rise-later prod "%calendar cache: failed")
         =/  road  (cord-to-road:tarball './calendar.calendar')
         ;<  *  bind:m  (keep:io /cal road ~)
+        ::  news that leaves the events and the horizon as they were (a
+        ::  rename, a sync stamping remote ids) inflates nothing: the
+        ::  cache is only marked current. One window.json already built
+        ::  for this calendar is left as it is.
+        =|  last=(unit [(map eid:cal event:cal) @dr])
         |-
         ;<  =view:nexus  bind:m  (peek:io road ~)
         ?.  ?=([%file *] view)
           ;<  *  bind:m  (take-news:io /cal)
           $
         =/  c=calendar:cal  (cal-of view)
-        =/  rails=(list rail:tarball)
-          %~  tap  in
-          %-  sy
-          %+  murn  ~(tap by (events-all:cal c))
-          |=  [@ta e=event:cal]
-          ^-  (unit rail:tarball)
-          ?-  -.e
-            %date   ~
-            %todo   ~
-            %timed   `kind.recur.e
-            %allday  `kind.recur.e
-          ==
-        ;<  kinds=(map rail:tarball kind:rules)  bind:m  (resolve-kinds rails)
+        =/  ver=@uv  (cache-ver:cal c)
+        ;<  have=@uv  bind:m  (read-cache-ver './')
+        =/  key=(unit [(map eid:cal event:cal) @dr])  `[(keyed-events c) horizon.c]
+        ?:  =(ver have)
+          ;<  *  bind:m  (take-news:io /cal)
+          $(last key)
+        ?:  =(last key)
+          ;<  ~  bind:m  (write-cache-ver './' ver)
+          ;<  *  bind:m  (take-news:io /cal)
+          $
         ;<  now=@da  bind:m  get-time:io
-        =/  thru=@da  (add now horizon.c)
-        =/  [stops=(map eid:cal @da) o=order:cal]  (inflate:cal (events-all:cal c) kinds thru)
-        ;<  ~  bind:m  (replace:io `cache:cal`[thru stops o])
+        =/  new=cache:cal  (inflate-all c (add now horizon.c))
+        ;<  ~  bind:m  (replace:io (by-uid new))
+        ;<  ~  bind:m  (over:io (grub-road './' 'index.calendar-cache') [[/ %calendar-cache] new])
+        ;<  ~  bind:m  (write-cache-ver './' ver)
         ;<  *  bind:m  (take-news:io /cal)
-        $
+        $(last key)
           ::
-          ::  /reminders.json: tick on utc 5-minute marks, push-notify
-          ::  timed events starting lead_min ahead. fired_ms is the
-          ::  watermark: everything due in (fired, now] goes out once.
-          ::
-          ::
-          ::  /google.sig: the Google sync fiber (phase 4 task 2 fills it)
+          ::  /google.sig: the sync fiber, every backend (Google, followed
+          ::  CalDAV calendars, sharing both ways)
           ::
           [~ %'google.sig']
-        ;<  ~  bind:m  (rise-wait:io prod "%calendar google: failed")
+        ;<  ~  bind:m  (rise-later prod "%calendar google: failed")
         ::  a pass on every tick and prod (pull then push); on calendar
-        ::  news, push only — a pass's own writes wake it, and a push-only
-        ::  pass with nothing past the watermark does nothing
+        ::  news, push only: a pass's own writes wake it, and a push-only
+        ::  pass with nothing past the watermark does nothing. The tick is
+        ::  due a period after the last pull, not after the last news, so a
+        ::  calendar that keeps changing still gets pulled.
         =/  cal-road  (cord-to-road:tarball './calendar.calendar')
         ;<  *  bind:m  (keep:io /cal cal-road ~)
+        =|  pulled=@da
         |-
         ;<  cfg=json  bind:m  (google-config './')
         =/  tick=@dr  (mul ~m1 (max 1 (fall (gn cfg 'tick_min') 5)))
         ;<  now=@da  bind:m  get-time:io
-        ;<  ~  bind:m  (set-timer:io /tick (add now tick))
+        ;<  ~  bind:m  (set-timer:io /tick (max now (add pulled tick)))
         ;<  what=?(%news %poke)  bind:m  (take-any /cal)
         ;<  ~  bind:m  (cancel-timer:io /tick)
-        ;<  ~  bind:m  (google-pass =(%poke what))
-        ;<  ~  bind:m  (caldav-pass =(%poke what))
+        =/  pull=?  =(%poke what)
+        ;<  ~  bind:m  (sync-pass %google pull)
+        ;<  ~  bind:m  (sync-pass %caldav pull)
         ;<  ~  bind:m  share-pass
-        ;<  ~  bind:m  (ship-pass =(%poke what))
+        ;<  ~  bind:m  (sync-pass %ship pull)
         ::  a grant approved after the rise: the inbox road lands here
         ;<  ~  bind:m  lay-inbox-road
-        $
+        ?.  pull  $
+        ;<  now=@da  bind:m  get-time:io
+        $(pulled now)
           ::
           ::  /shares.sig: other ships poke offers (and revocations) of
           ::  calendars they share with us. The sender is the transport's;
           ::  the payload is data. An offer waits until the owner accepts.
           ::
           [~ %'shares.sig']
-        ;<  ~  bind:m  (rise-wait:io prod "%calendar shares inbox: failed")
+        ;<  ~  bind:m  (rise-later prod "%calendar shares inbox: failed")
         |-
         ;<  [=from:fiber:nexus =sage:tarball]  bind:m  take-poke-from:io
         =/  src=(unit @p)  (get-poke-src:io from)
@@ -429,8 +479,7 @@
           ;<  rows=json  bind:m  (read-json-grub './' 'ship-remotes.json')
           =/  rm=(map @t json)  ?:(?=(%o -.rows) p.rows ~)
           =/  hit=(list [id=@t row=json])  (skim ~(tap by rm) |=([* r=json] =(key (gs r 'key'))))
-          ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road './' 'calendar.calendar') ~)
-          =/  c=calendar:cal  (cal-of cal-view)
+          ;<  c=calendar:cal  bind:m  (read-cal './')
           =/  live=(unit [id=@t row=json k=cal:cal])
             ?~  hit  ~
             =/  k=(unit cal:cal)  (~(get by cals.c) id.i.hit)
@@ -463,6 +512,29 @@
           ;<  ~  bind:m  (write-json-grub './' 'share-offers.json' [%o (~(put by cur) key row)])
           ~&  >  [%calendar-share-offered key]
           $
+        ::  refused: the host would not take an edit of ours. Our copy is kept
+        ::  as a conflict (the next pull brings the host's back), and a
+        ::  calendar the host says is read-only becomes read-only here.
+        ?:  =('refused' act)
+          ;<  rows=json  bind:m  (read-json-grub './' 'ship-remotes.json')
+          =/  rm=(map @t json)  (omap rows)
+          =/  hit=(list [id=@t row=json])  (skim ~(tap by rm) |=([* r=json] =(key (gs r 'key'))))
+          ?~  hit  $
+          ;<  c=calendar:cal  bind:m  (read-cal './')
+          =/  id=@ta  (crip (trip id.i.hit))
+          =/  u=@t  (gs jon 'uid')
+          =/  local=(unit entry:cal)  (biff (~(get by cals.c) id) |=(k=cal:cal (~(get by entries.k) u)))
+          ;<  ~  bind:m
+            (google-conflict './' id u local '' (crip "the host refused this edit: {(trip (gs jon 'why'))}"))
+          =/  k=(unit cal:cal)  (~(get by cals.c) id)
+          ;<  ~  bind:m
+            ?.  &(=('read' (gs jon 'mode')) ?=(^ k))  (pure:(fiber:fiber:nexus ,~) ~)
+            ;<  ~  bind:(fiber:fiber:nexus ,~)
+              (write-json-grub './' 'ship-remotes.json' [%o (~(put by rm) id.i.hit (row-put row.i.hit ~[['mode' s+'read']]))])
+            (dav-write './' c(cals (~(put by cals.c) id u.k(remote.props `(crip "{(trip key)}#read")))))
+          ::  a pull now, so the host's copy replaces ours at once
+          ;<  ~  bind:m  (google-prod './')
+          $
         ?:  =('revoke' act)
           ;<  ~  bind:m  (write-json-grub './' 'share-offers.json' [%o (~(del by cur) key)])
           ::  an accepted calendar stays, with its data: it becomes a
@@ -472,8 +544,7 @@
           =/  hit=(list [id=@t row=json])  (skim ~(tap by rm) |=([* r=json] =(key (gs r 'key'))))
           ?~  hit  $
           ;<  ~  bind:m  (write-json-grub './' 'ship-remotes.json' [%o (~(del by rm) id.i.hit)])
-          ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road './' 'calendar.calendar') ~)
-          =/  c=calendar:cal  (cal-of cal-view)
+          ;<  c=calendar:cal  bind:m  (read-cal './')
           =/  k=(unit cal:cal)  (~(get by cals.c) id.i.hit)
           ?~  k  $
           =.  props.u.k  props.u.k(kind %local, remote ~)
@@ -481,8 +552,13 @@
           ~&  >  [%calendar-share-revoked key]
           $
         $
+          ::
+          ::  /reminders.json: tick on utc 5-minute marks, push-notify
+          ::  timed events starting lead_min ahead. fired_ms is the
+          ::  watermark: everything due in (fired, now] goes out once.
+          ::
           [~ %'reminders.json']
-        ;<  ~  bind:m  (rise-wait:io prod "%calendar reminders: failed")
+        ;<  ~  bind:m  (rise-later prod "%calendar reminders: failed")
         |-
         ;<  now=@da  bind:m  get-time:io
         =/  tick=@da  (add (sub now (mod now ~m5)) ~m5)
@@ -497,32 +573,33 @@
         ::  reminders on wake
         =/  floor=@da  (sub now ~m15)
         =/  from=@da  ?:((gth fired floor) fired floor)
-        ;<  cache-view=view:nexus  bind:m
-          (peek:io (cord-to-road:tarball './order.calendar-cache') ~)
-        ;<  cal-view=view:nexus  bind:m
-          (peek:io (cord-to-road:tarball './calendar.calendar') ~)
-        =/  ca=cache:cal
-          ?.  ?=([%file *] cache-view)  *cache:cal
-          (fall (mole |.(!<(cache:cal (need-vase:tarball sang.cache-view)))) *cache:cal)
-        =/  c=calendar:cal  (cal-of cal-view)
-        =/  lo=@da  (add from lead)
+        ;<  c=calendar:cal  bind:m  (read-cal './')
+        ;<  ca=cache:cal  bind:m  (fresh-cache './' c (add now (add lead ~d31)))
+        ::  the lead window goes on from where the last one ended
+        ::  (thru_ms), so a longer lead skips no starts and a shorter
+        ::  one sends none twice
         =/  hi=@da  (add now lead)
+        =/  lo=@da
+          =/  t=(unit @ud)  (gn st 'thru_ms')
+          (max (add floor lead) ?~(t (add from lead) (ms-to-da u.t)))
         =/  due=(list ref:cal)
           %+  skim  ~(tap in (window:cal order.ca lo hi))
           |=  r=ref:cal
           &((gth l.span.r lo) (lte l.span.r hi))
-        ;<  ~  bind:m  (send-reminders due (events-all:cal c) now)
+        ;<  ~  bind:m  (send-pushes (lead-pushes due (keyed-events c) now))
         ::  alarms: a relative one fires when its occurrence minus the
         ::  lead falls in (from, now]; an absolute one when its moment
         ::  does. Occurrences up to 31 days out are considered — the
         ::  ceiling for a relative lead.
         =/  ahead=(list ref:cal)
           ~(tap in (window:cal order.ca from (add now ~d31)))
-        ;<  ~  bind:m  (send-pushes (alarm-pushes ahead (entries-all:cal c) from now))
+        ;<  ~  bind:m  (send-pushes (alarm-pushes ahead (keyed c) from now zone.c))
         =/  new-st=json
           :-  %o
-          %-  ~(put by ?:(?=(%o -.st) p.st ~))
-          ['fired_ms' (numb:enjs:format (da-to-ms now))]
+          %-  ~(gas by ?:(?=(%o -.st) p.st ~))
+          :~  ['fired_ms' (numb:enjs:format (da-to-ms now))]
+              ['thru_ms' (numb:enjs:format (da-to-ms (max hi lo)))]
+          ==
         ;<  ~  bind:m  (replace:io new-st)
         $
           ::
@@ -541,71 +618,49 @@
         ?:  ?=([%dav *] suffix)
           (dav-request eyre-id req our t.suffix args)
         ?.  =(src our)
-          ;<  ~  bind:m  (send-simple:srv eyre-id [[403 ~] `(as-octs:mimes:html 'Forbidden')])
-          (pure:m ~)
-        ::  /dav-clients.json, /dav-clients, /dav-clients/revoke: the owner
-        ::  mints and revokes CalDAV client passwords. The password is
-        ::  answered once and stored only as a salted hash.
+          (send-text eyre-id 403 'Forbidden')
+        ::  a change must come from this origin: the owner's cookie rides
+        ::  along on a form any other site submits (eyre sets no
+        ::  SameSite), and no route here wants one
+        ?:  &(=('POST' method.request.req) (cross-site req))
+          (send-text eyre-id 403 'calendar: cross-site request refused')
         ?:  ?=([%google *] suffix)
           (google-request eyre-id req our t.suffix args)
         ?:  ?=([%caldav *] suffix)
           (caldav-request eyre-id req t.suffix)
         ?:  ?=([%share *] suffix)
           (share-request eyre-id req our t.suffix)
-        ::  POST /migrate {id}: a followed or Google calendar becomes a
-        ::  local one — one last pull, then the sync row goes and the
+        ::  POST /migrate {id}: a followed, Google or shared calendar
+        ::  becomes a local one: its sync row goes, one last pull, and the
         ::  remote ids come off the events. The source is never touched;
         ::  deleting it there is the user's own act.
         ?:  &(=('POST' method.request.req) ?=([%migrate ~] suffix))
           =/  jon=json
             (fall (de:json:html ?~(body.request.req '' q.u.body.request.req)) *json)
           =/  id=@ta  (crip (trip (gs jon 'id')))
-          ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road '../' 'calendar.calendar') ~)
-          =/  c=calendar:cal  (cal-of cal-view)
+          ;<  c=calendar:cal  bind:m  (read-cal '../')
           =/  k=(unit cal:cal)  (~(get by cals.c) id)
           ?~  k
-            ;<  ~  bind:m  (send-simple:srv eyre-id [[404 ~] `(as-octs:mimes:html 'calendar: no such calendar')])
-            (pure:m ~)
+            (send-text eyre-id 404 'calendar: no such calendar')
           =/  kind=?(%local %google %caldav %ship)  kind.props.u.k
           ?:  ?=(%local kind)
-            ;<  ~  bind:m  (send-simple:srv eyre-id [[400 ~] `(as-octs:mimes:html 'calendar: already local')])
-            (pure:m ~)
-          ::  1. one last pull, so nothing on the remote is missed
-          =/  rows-name=@t
-            ?-  kind
-              %google  'google-sync.json'
-              %caldav  'caldav-remotes.json'
-              %ship    'ship-remotes.json'
-            ==
-          ;<  rows=json  bind:m  (read-json-grub '../' rows-name)
-          =/  row=(unit json)  ?:(?=(%o -.rows) (~(get by p.rows) id) ~)
+            (send-text eyre-id 400 'calendar: already local')
+          ::  1. the sync row goes first, so no pass pulls or pushes it
+          ::  again, not even one woken by the last pull's own write
+          =/  file=@t  (sync-file kind)
+          ;<  rows=json  bind:m  (read-json-grub '../' file)
+          =/  row=(unit json)  (~(get by (omap rows)) id)
+          ;<  ~  bind:m  (write-json-grub '../' file [%o (~(del by (omap rows)) id)])
+          ::  2. one last pull, so nothing on the remote is missed
           ;<  ~  bind:m
             ?~  row  (pure:(fiber:fiber:nexus ,~) ~)
-            ;<  *  bind:(fiber:fiber:nexus ,~)
-              ?-  kind
-                %google  (google-pull '../' id u.row)
-                %caldav  (caldav-pull '../' id u.row)
-                %ship    (ship-pull '../' id u.row)
-              ==
+            ;<  *  bind:(fiber:fiber:nexus ,~)  (sync-pull kind '../' id u.row)
             (pure:(fiber:fiber:nexus ,~) ~)
-          ::  2. the sync row goes: nothing pulls or pushes it again (a
-          ::  fresh read: the pull above may have moved other rows)
-          ;<  rows=json  bind:m  (read-json-grub '../' rows-name)
-          ;<  ~  bind:m
-            (write-json-grub '../' rows-name [%o (~(del by ?:(?=(%o -.rows) p.rows ~)) id)])
           ::  3. the calendar is local now; the remote ids come off
-          ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road '../' 'calendar.calendar') ~)
-          =/  c=calendar:cal  (cal-of cal-view)
+          ;<  c=calendar:cal  bind:m  (read-cal '../')
           =/  k=cal:cal  (fall (~(get by cals.c) id) fresh-cal:cal)
           =.  props.k  props.k(kind %local, remote ~)
-          =.  k
-            %+  roll  ~(tap by entries.k)
-            |=  [[u=uid:cal e=entry:cal] acc=_k]
-            =/  props=(list [@t @t])
-              %+  skip  props.e
-              |=([key=@t *] |(=('X-GOOGLE-ID' key) =('X-GOOGLE-UPDATED' key)))
-            ?:  =(props props.e)  acc
-            (put-entry:cal acc e(props props))
+          =.  k  (roll ~(val by entries.k) |=([e=entry:cal acc=_k] (put-entry:cal acc (unhome e))))
           ;<  ~  bind:m  (dav-write '../' c(cals (~(put by cals.c) id k)))
           %+  send-json  eyre-id
           %-  pairs:enjs:format
@@ -630,6 +685,9 @@
           :~  ['connected' b+!=('' (gs auth 'refresh_token'))]
               ['linked' sync]
           ==
+        ::  /dav-clients.json, /dav-clients, /dav-clients/revoke: the owner
+        ::  mints and revokes CalDAV client passwords. The password is
+        ::  answered once and stored only as a salted hash.
         ?:  ?=([%'dav-clients.json' ~] suffix)
           ;<  clients=json  bind:m  dav-clients
           =/  rows=json
@@ -649,8 +707,7 @@
             (fall (de:json:html ?~(body.request.req '' q.u.body.request.req)) *json)
           =/  name=@t  (gs jon 'name')
           ?:  =('' name)
-            ;<  ~  bind:m  (send-simple:srv eyre-id [[400 ~] `(as-octs:mimes:html 'need a name')])
-            (pure:m ~)
+            (send-text eyre-id 400 'need a name')
           ;<  clients=json  bind:m  dav-clients
           ;<  eny=@uvJ  bind:m  get-entropy:io
           ;<  now=@da  bind:m  get-time:io
@@ -667,8 +724,7 @@
                 ['made_ms' (numb:enjs:format (da-to-ms now))]
             ==
           =/  new=json  [%a (snoc ?:(?=(%a -.clients) p.clients ~) row)]
-          ;<  ~  bind:m
-            (over:io (cord-to-road:tarball '../dav-clients.json') [[/ %json] new])
+          ;<  ~  bind:m  (write-json-grub '../' 'dav-clients.json' new)
           %+  send-json  eyre-id
           %-  pairs:enjs:format
           :~  ['id' s+id]
@@ -685,72 +741,38 @@
             :-  %a
             %+  skip  ?:(?=(%a -.clients) p.clients ~)
             |=(c=json =(id (gs c 'id')))
-          ;<  ~  bind:m
-            (over:io (cord-to-road:tarball '../dav-clients.json') [[/ %json] new])
+          ;<  ~  bind:m  (write-json-grub '../' 'dav-clients.json' new)
           (send-json eyre-id (pairs:enjs:format ~[['ok' b+&]]))
         ?:  ?=([%'window.json' ~] suffix)
           =/  from=(unit @da)  (ms-arg args 'from')
           =/  to=(unit @da)    (ms-arg args 'to')
           ?:  |(?=(~ from) ?=(~ to))
-            ;<  ~  bind:m  (send-simple:srv eyre-id [[400 ~] `(as-octs:mimes:html 'need from/to (unix ms)')])
-            (pure:m ~)
-          ;<  cache-view=view:nexus  bind:m
-            (peek:io (cord-to-road:tarball '../order.calendar-cache') ~)
-          ;<  cal-view=view:nexus  bind:m
-            (peek:io (cord-to-road:tarball '../calendar.calendar') ~)
-          =/  ca=cache:cal
-            ?.  ?=([%file *] cache-view)  *cache:cal
-            (fall (mole |.(!<(cache:cal (need-vase:tarball sang.cache-view)))) *cache:cal)
-          =/  c=calendar:cal  (cal-of cal-view)
-          ::  refresh-ahead: the cache is derived state, so a read
-          ::  past the wall (or with under half the horizon left)
-          ::  reinflates and persists rather than serving a silent
-          ::  truncation
-          ;<  now=@da  bind:m  get-time:io
-          ;<  ca=cache:cal  bind:m
-            ?.  ?|  (gth u.to thru.ca)
-                    (lth thru.ca (add now (div horizon.c 2)))
-                ==
-              (pure:(fiber:fiber:nexus ,cache:cal) ca)
-            =/  m  (fiber:fiber:nexus ,cache:cal)
-            =/  rails=(list rail:tarball)
-              %~  tap  in
-              %-  sy
-              %+  murn  ~(tap by (events-all:cal c))
-              |=  [@ta e=event:cal]
-              ^-  (unit rail:tarball)
-              ?-  -.e
-                %date    ~
-                %todo    ~
-                %timed   `kind.recur.e
-                %allday  `kind.recur.e
-              ==
-            ;<  kinds=(map rail:tarball kind:rules)  bind:m  (resolve-kinds rails)
-            =/  thru=@da  (max (add now horizon.c) u.to)
-            =/  [stops=(map eid:cal @da) o=order:cal]  (inflate:cal (events-all:cal c) kinds thru)
-            =/  new=cache:cal  [thru stops o]
-            ;<  ~  bind:m
-              %+  over:io  (cord-to-road:tarball '../order.calendar-cache')
-              [[/ %calendar-cache] new]
-            (pure:m new)
+            (send-text eyre-id 400 'need from/to (unix ms)')
+          ::  ponytail: a window is at most two years (the widest view is
+          ::  a month); a wider one would walk every event that far
+          ?:  (gth u.to (add u.from (mul 800 ~d1)))
+            (send-text eyre-id 400 'calendar: a window is at most 800 days')
+          ;<  c=calendar:cal  bind:m  (read-cal '../')
+          ;<  ca=cache:cal  bind:m  (fresh-cache '../' c u.to)
           =/  refs=(list ref:cal)
             ~(tap in (window:cal order.ca u.from u.to))
-          =/  owner=(map uid:cal @ta)  (owners c)
+          =/  evs=(map eid:cal event:cal)  (keyed-events c)
           =/  want=(unit @t)  (get-key:kv:html-utils 'tag' args)
           =/  rows=json
             :-  %a
             %+  murn  refs
             |=  r=ref:cal
             ^-  (unit json)
-            =/  ev=(unit event:cal)  (~(get by (events-all:cal c)) eid.r)
+            =/  ev=(unit event:cal)  (~(get by evs) eid.r)
             ?~  ev  ~
-            ?.  ?~(want & ?=(^ (find ~[u.want] (meta-tags:cal (get-meta u.ev)))))  ~
+            ?.  ?~(want & ?=(^ (find ~[u.want] (meta-tags:cal (meta-of:cal u.ev)))))  ~
+            =/  [cid=@ta u=uid:cal]  (unkey eid.r)
             :-  ~
             %-  pairs:enjs:format
-            :~  ['id' s+eid.r]
-                ['cal' s+(fall (~(get by owner) eid.r) %default)]
+            :~  ['id' s+u]
+                ['cal' s+cid]
                 ['idx' (numb:enjs:format idx.r)]
-                ['meta' [%o (get-meta u.ev)]]
+                ['meta' [%o (meta-of:cal u.ev)]]
                 ['cat' s+-.u.ev]
                 ['kind' s+(ev-kind u.ev)]
                 ['all' b+(all-day:cal u.ev)]
@@ -763,12 +785,12 @@
             %+  murn  ~(tap by stops.ca)
             |=  [id=@ta stop=@da]
             ^-  (unit json)
-            =/  ev=(unit event:cal)  (~(get by (events-all:cal c)) id)
+            =/  ev=(unit event:cal)  (~(get by evs) id)
             ?~  ev  ~
             :-  ~
             %-  pairs:enjs:format
-            :~  ['id' s+id]
-                ['meta' [%o (get-meta u.ev)]]
+            :~  ['id' s+uid:(unkey id)]
+                ['meta' [%o (meta-of:cal u.ev)]]
                 ['stop' (numb:enjs:format (da-to-ms stop))]
             ==
           %+  send-json  eyre-id
@@ -779,51 +801,78 @@
         ::  /event.json?id=: full rule breakdown for the edit form
         ?:  ?=([%'event.json' ~] suffix)
           =/  id=@ta  (crip (trip (fall (get-key:kv:html-utils 'id' args) '')))
-          ;<  cal-view=view:nexus  bind:m
-            (peek:io (cord-to-road:tarball '../calendar.calendar') ~)
-          =/  c=calendar:cal  (cal-of cal-view)
-          =/  ev=(unit event:cal)  (~(get by (events-all:cal c)) id)
-          ?~  ev
-            ;<  ~  bind:m  (send-simple:srv eyre-id [[404 ~] `(as-octs:mimes:html 'No such event')])
-            (pure:m ~)
-          =/  ej=json  (event-json:cal id u.ev)
-          =/  cid=@ta  (fall (~(get by (owners c)) id) %default)
-          (send-json eyre-id ?:(?=(%o -.ej) [%o (~(put by p.ej) 'cal' s+cid)] ej))
+          =/  home=@ta  (crip (trip (fall (get-key:kv:html-utils 'cal' args) '')))
+          ;<  c=calendar:cal  bind:m  (read-cal '../')
+          =/  got=(unit [cid=@ta e=entry:cal])  (locate c home id)
+          ?~  got
+            (send-text eyre-id 404 'No such event')
+          =/  ev=event:cal  event.e.u.got
+          =/  ej=json  (event-json:cal id ev)
+          ?.  ?=(%o -.ej)  (send-json eyre-id ej)
+          ::  count is how many occurrences, not index slots (+count-of);
+          ::  before, with ?idx=, how many lie below that index, for a
+          ::  "this and following" split to count the rest
+          =/  rc=(unit [=recur:cal dom=(unit @ud)])
+            ?+(-.ev ~ %timed `[recur.ev dom.bound.ev], %allday `[recur.ev dom.bound.ev])
+          =/  idx=(unit @ud)  (biff (get-key:kv:html-utils 'idx' args) |=(t=@t (rush t dem)))
+          =/  extra=(list [@t json])
+            ?~  rc  ~
+            ;:  weld
+              ?~(dom.u.rc ~ ~[['count' (numb:enjs:format (count-of:ics recur.u.rc u.dom.u.rc))]])
+              ?~(idx ~ ~[['before' (numb:enjs:format (count-of:ics recur.u.rc u.idx))]])
+            ==
+          (send-json eyre-id [%o (~(gas by (~(put by p.ej) 'cal' s+cid.u.got)) extra)])
         ::  /tags.json: every tag in use, with how many events carry it
         ?:  ?=([%'tags.json' ~] suffix)
-          ;<  cal-view=view:nexus  bind:m
-            (peek:io (cord-to-road:tarball '../calendar.calendar') ~)
-          =/  c=calendar:cal  (cal-of cal-view)
+          ;<  c=calendar:cal  bind:m  (read-cal '../')
           =/  counts=(map @t @ud)
-            %+  roll  ~(tap by (events-all:cal c))
+            %+  roll  ~(tap by (keyed-events c))
             |=  [[* e=event:cal] acc=(map @t @ud)]
-            %+  roll  (meta-tags:cal (get-meta e))
+            %+  roll  (meta-tags:cal (meta-of:cal e))
             |=([t=@t a=_acc] (~(put by a) t +((fall (~(get by a) t) 0))))
           %+  send-json  eyre-id
           :-  %a
           %+  turn  (sort ~(tap by counts) |=([a=[@t @ud] b=[@t @ud]] (aor -.a -.b)))
           |=([t=@t n=@ud] (pairs:enjs:format ~[['tag' s+t] ['count' (numb:enjs:format n)]]))
+        ::  /events.json: every entry, or only some: ?tag=, ?cat= (timed,
+        ::  allday, date, todo) and ?from=&to= (unix ms; the entries with an
+        ::  occurrence in that window, found through the index window.json
+        ::  reads, so a client need not pull every event to show a month or
+        ::  every task to show the tasks). An undated task is in no window.
         ?:  ?=([%'events.json' ~] suffix)
-          ;<  cal-view=view:nexus  bind:m
-            (peek:io (cord-to-road:tarball '../calendar.calendar') ~)
-          =/  c=calendar:cal  (cal-of cal-view)
+          =/  from=(unit @da)  (ms-arg args 'from')
+          =/  to=(unit @da)    (ms-arg args 'to')
+          ?:  ?|  !=(?=(~ from) ?=(~ to))
+                  &(?=(^ from) ?=(^ to) (gth u.to (add u.from (mul 800 ~d1))))
+              ==
+            (send-text eyre-id 400 'calendar: from and to (unix ms) go together, at most 800 days apart')
+          ;<  c=calendar:cal  bind:m  (read-cal '../')
+          ;<  inside=(unit (set eid:cal))  bind:m
+            =/  m  (fiber:fiber:nexus ,(unit (set eid:cal)))
+            ?:  |(?=(~ from) ?=(~ to))  (pure:m ~)
+            ;<  ca=cache:cal  bind:m  (fresh-cache '../' c u.to)
+            (pure:m `(~(gas in *(set eid:cal)) (turn ~(tap in (window:cal order.ca u.from u.to)) |=(r=ref:cal eid.r))))
+          =/  want=(unit @t)  (get-key:kv:html-utils 'tag' args)
+          =/  kind=(unit @t)  (get-key:kv:html-utils 'cat' args)
           =/  rows=json
             :-  %a
-            =/  owner=(map uid:cal @ta)  (owners c)
-            =/  want=(unit @t)  (get-key:kv:html-utils 'tag' args)
             %+  turn
-              %+  skim  ~(tap by (entries-all:cal c))
-              |=  [* e=entry:cal]
-              ?~(want & ?=(^ (find ~[u.want] (meta-tags:cal (get-meta event.e)))))
-            |=  [id=@ta e=entry:cal]
+              %+  skim  ~(tap by (keyed c))
+              |=  [key=eid:cal e=entry:cal]
+              ?&  ?~(want & ?=(^ (find ~[u.want] (meta-tags:cal (meta-of:cal event.e)))))
+                  ?~(kind & =(u.kind `@t`-.event.e))
+                  ?~(inside & (~(has in u.inside) key))
+              ==
+            |=  [key=eid:cal e=entry:cal]
             ^-  json
+            =/  [cid=@ta u=uid:cal]  (unkey key)
             %-  pairs:enjs:format
             %+  weld
               ^-  (list [@t json])
-              :~  ['id' s+id]
-                  ['cal' s+(fall (~(get by owner) id) %default)]
+              :~  ['id' s+u]
+                  ['cal' s+cid]
                   ['etag' s+etag.e]
-                  ['meta' [%o (get-meta event.e)]]
+                  ['meta' [%o (meta-of:cal event.e)]]
                   ['cat' s+-.event.e]
               ==
             ^-  (list [@t json])
@@ -834,19 +883,13 @@
           (send-json eyre-id rows)
         ::  /feeds.json: the named external ICS feeds
         ?:  ?=([%'feeds.json' ~] suffix)
-          ;<  fv=view:nexus  bind:m
-            (peek:io (cord-to-road:tarball '../gcal-feeds.json') ~)
-          =/  feeds=json
-            ?.  ?=([%file *] fv)  [%o ~]
-            =/  j=json  (fall (mole |.(!<(json (need-vase:tarball sang.fv)))) *json)
-            ?:(?=(%o -.j) j [%o ~])
-          (send-json eyre-id feeds)
-        ::  /zones.json: every pytz zone name, for dropdowns
-        ::  /calendars.json: every calendar — id, props, seq, entry count
+          ;<  feeds=json  bind:m  (read-json-grub '../' 'gcal-feeds.json')
+          (send-json eyre-id ?:(?=(%o -.feeds) feeds [%o ~]))
+        ::  /calendars.json: every calendar: id, props, seq, entry count,
+        ::  and whether it takes edits here (a calendar shared with us
+        ::  read-only does not; the page offers none)
         ?:  ?=([%'calendars.json' ~] suffix)
-          ;<  cal-view=view:nexus  bind:m
-            (peek:io (cord-to-road:tarball '../calendar.calendar') ~)
-          =/  c=calendar:cal  (cal-of cal-view)
+          ;<  c=calendar:cal  bind:m  (read-cal '../')
           =/  rows=json
             :-  %a
             %+  turn  (sort ~(tap by cals.c) |=([a=[@ta *] b=[@ta *]] (aor -.a -.b)))
@@ -859,13 +902,12 @@
                 ['kind' s+kind.props.k]
                 ['seq' (numb:enjs:format seq.k)]
                 ['count' (numb:enjs:format ~(wyt by entries.k))]
+                ['readonly' b+(ship-read-only c id)]
             ==
           (send-json eyre-id rows)
         ::  export.ics[?cal=id]: every calendar, or one, as iCalendar.
         ?:  ?=([%'export.ics' ~] suffix)
-          ;<  cal-view=view:nexus  bind:m
-            (peek:io (cord-to-road:tarball '../calendar.calendar') ~)
-          =/  c=calendar:cal  (cal-of cal-view)
+          ;<  c=calendar:cal  bind:m  (read-cal '../')
           =/  only=(unit @t)  (get-key:kv:html-utils 'cal' args)
           ;<  now=@da  bind:m  get-time:io
           =/  picked=(list [id=@ta k=cal:cal])
@@ -886,17 +928,14 @@
         ::  same UID. Answers {imported, skipped}.
         ?:  ?=([%import ~] suffix)
           ?.  =('POST' method.request.req)
-            ;<  ~  bind:m  (send-simple:srv eyre-id [[405 ~] `(as-octs:mimes:html 'POST an .ics body')])
-            (pure:m ~)
+            (send-text eyre-id 405 'POST an .ics body')
           =/  body=@t  ?~(body.request.req '' q.u.body.request.req)
           =/  target=@ta  (fall (get-key:kv:html-utils 'cal' args) %default)
-          ;<  cal-view=view:nexus  bind:m
-            (peek:io (cord-to-road:tarball '../calendar.calendar') ~)
-          =/  c=calendar:cal  (cal-of cal-view)
+          ;<  c=calendar:cal  bind:m  (read-cal '../')
           ?:  (ship-read-only c target)
-            ;<  ~  bind:m  (send-simple:srv eyre-id [[403 ~] `(as-octs:mimes:html 'calendar: this calendar is shared with you read-only')])
-            (pure:m ~)
-          =/  k=cal:cal  (fall (~(get by cals.c) target) fresh-cal:cal)
+            (send-text eyre-id 403 'calendar: this calendar is shared with you read-only')
+          ;<  now=@da  bind:m  get-time:io
+          =/  k=cal:cal  (fall (~(get by cals.c) target) (born now))
           =/  ves=(list vevent:ics)  ?:(=('' body) ~ (events:ics body))
           =/  res=[k=cal:cal imported=@ud skipped=@ud]
             ::  one object per UID: a parent and its overrides together
@@ -919,12 +958,12 @@
               ['skipped' (numb:enjs:format skipped.res)]
               ['cal' s+target]
           ==
+        ::  /zones.json: every pytz zone name, for dropdowns
         ?:  ?=([%'zones.json' ~] suffix)
           %+  send-json  eyre-id
           [%a (turn zone-names:pytz |=(n=@t `json`s+n))]
         ::  /config.json: title, display zone, poke target for the client
         ?:  ?=([%'config.json' ~] suffix)
-          ::  our own address, read from grant.json (no peek / walk).
           ::  our own address, for the UI's poke url. grant.json is not a
           ::  stable source (the loader prunes it on a reload); the shell's
           ::  link registry is, and it is read through a granted road.
@@ -933,9 +972,7 @@
             ?~  base  ""
             =/  bt=tape  (spud u.base)
             ?:(?&(?=(^ bt) =('/' i.bt)) t.bt bt)
-          ;<  zone-view=view:nexus  bind:m
-            (peek:io (cord-to-road:tarball '../calendar.calendar') ~)
-          =/  c=calendar:cal  (cal-of zone-view)
+          ;<  c=calendar:cal  bind:m  (read-cal '../')
           =/  =json
             %-  pairs:enjs:format
             :~  ['title' s+title.c]
@@ -944,76 +981,209 @@
                 ['ship' s+(scot %p our)]
             ==
           (send-json eyre-id json)
-        ::  static files; the shell is the default
+        ::  static files, only these: the shell is the default, and the
+        ::  other grubs here (the Google tokens, followed calendars'
+        ::  passwords) are never answered to a browser
         =/  filename=@ta
           ?~  suffix  'calendar.html'
           i.suffix
+        ?.  ?=(?(%'calendar.html' %'calendar.css' %'calendar.js' %'icon.svg') filename)
+          (send-text eyre-id 404 'Not found')
         ;<  file-view=view:nexus  bind:m
           (peek:io (nex-road:io rail [%& / filename]) `[/ %mime])
         ?.  ?=([%file *] file-view)
-          ;<  ~  bind:m  (send-simple:srv eyre-id [[404 ~] `(as-octs:mimes:html 'Not found')])
-          (pure:m ~)
+          (send-text eyre-id 404 'Not found')
         =/  =mime  !<(mime (need-vase:tarball sang.file-view))
-        ;<  ~  bind:m  (send-simple:srv eyre-id (mime-response:http-utils mime))
-        (pure:m ~)
+        (send-simple:srv eyre-id (mime-response:http-utils mime))
       ==
     --
 |%
 ++  srv  ~(. http-res:io [%| 1 %& ~ %'main.sig'])
+::  +rise-later: a fiber that crashed goes on a minute later on its own.
+::  rise-wait waits for a %sig poke nobody sends (the page pokes json),
+::  so one bad write or sync pass wedged the fiber until a hand restart.
+::  Pokes that come meanwhile keep their turn; the minute keeps a crash
+::  on rise from spinning.
+++  rise-later
+  |=  [=prod:fiber:nexus msg=tape]
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  ?~  prod  (pure:m ~)
+  %-  (slog leaf+msg u.prod)
+  ;<  now=@da  bind:m  get-time:io
+  ;<  ~  bind:m  (set-timer:io /rise (add now ~m1))
+  |=  input:fiber:nexus
+  :+  ~  q.state
+  ?+  in  [%skip ~]
+      ~  [%wait ~]
+      [~ %poke * *]
+    ?.  =([/ %timer-wake] p.sage.u.in)  [%skip ~]
+    ?.  ?=([%rise *] !<(path q.sage.u.in))  [%skip ~]
+    [%done ~]
+  ==
 ::
-::  +cal-of: a stored calendar view, any shape, or a fresh one
+::  +cal-of: a stored calendar view, or a fresh one when there is none.
+::  The typed vase is taken as it is (cheap); an older shape is lifted.
+::  One that is there but reads as neither is a crash, not an empty
+::  calendar: the next write would put the empty one over it.
 ++  cal-of
   |=  vw=view:nexus
   ^-  calendar:cal
   ?.  ?=([%file *] vw)  fresh-calendar:cal
-  (fall (mole |.((lift:cal (sang-noun:tarball sang.vw)))) fresh-calendar:cal)
-::  +put-ev, +del-ev: an event by id into the calendar that holds it, or
-::  %default for a new one. The entry's identity (uid, alarms, props)
-::  survives an edit; only the event shape is replaced.
+  %+  fall  (mole |.(!<(calendar:cal (need-vase:tarball sang.vw))))
+  (lift:cal (sang-noun:tarball sang.vw))
+::  +born: a new calendar, its seq starting where no earlier one of the
+::  same id could have reached (milliseconds since 2020), so a sync token
+::  from a calendar deleted and made again under the id is told apart
+++  born
+  |=  now=@da
+  ^-  cal:cal
+  =/  k=cal:cal  fresh-cal:cal
+  k(seq (div (mul (sub now ~2020.1.1) 1.000) ~s1))
+::  +kind-is: a calendar that exists and is of this kind
+++  kind-is
+  |=  [c=calendar:cal id=@ta kind=?(%local %google %caldav %ship)]
+  ^-  ?
+  =/  k=(unit cal:cal)  (~(get by cals.c) id)
+  &(?=(^ k) =(kind kind.props.u.k))
+::  +drop-synced: unlink or unfollow: the calendar and its sync row go.
+::  Only a calendar of that kind; never %default, never a local one.
+++  drop-synced
+  |=  [eyre-id=@ta id=@ta kind=?(%google %caldav) why=@t]
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  ;<  c=calendar:cal  bind:m  (read-cal '../')
+  ?.  (kind-is c id kind)  (send-text eyre-id 404 why)
+  ;<  ~  bind:m  (dav-write '../' c(cals (~(del by cals.c) id)))
+  ;<  rows=json  bind:m  (read-json-grub '../' (sync-file kind))
+  ;<  ~  bind:m  (write-json-grub '../' (sync-file kind) [%o (~(del by (omap rows)) id)])
+  (send-json eyre-id (pairs:enjs:format ~[['ok' b+&]]))
+::  +read-cache: the derived occurrence index, or an empty one
+++  read-cache
+  |=  pre=@t
+  =/  m  (fiber:fiber:nexus ,cache:cal)
+  ^-  form:m
+  ;<  vw=view:nexus  bind:m  (peek:io (grub-road pre 'index.calendar-cache') ~)
+  ?.  ?=([%file *] vw)  (pure:m *cache:cal)
+  (pure:m (fall (mole |.(!<(cache:cal (need-vase:tarball sang.vw)))) *cache:cal))
+::  +inflate-all: every event's occurrences through thru, as the cache.
+::  The walk goes a day further: its wall is a naive moment, and a zone
+::  ahead of UTC places one past thru before it.
+++  inflate-all
+  |=  [c=calendar:cal thru=@da]
+  ^-  cache:cal
+  =/  [stops=(map eid:cal @da) o=order:cal]
+    (inflate:cal (keyed-events c) kind-for (add thru ~d1) zone.c)
+  [thru stops o]
+::  +fresh-cache: the cache, rebuilt and kept first when it is behind: built
+::  from an older calendar (a write its fiber has not caught up with),
+::  short of to, or with under half the horizon left
+++  fresh-cache
+  |=  [pre=@t c=calendar:cal to=@da]
+  =/  m  (fiber:fiber:nexus ,cache:cal)
+  ^-  form:m
+  ;<  ca=cache:cal  bind:m  (read-cache pre)
+  ;<  have=@uv  bind:m  (read-cache-ver pre)
+  ;<  now=@da  bind:m  get-time:io
+  ?.  ?|  !=(have (cache-ver:cal c))
+          (gth to thru.ca)
+          (lth thru.ca (add now (div horizon.c 2)))
+      ==
+    (pure:m ca)
+  =/  new=cache:cal  (inflate-all c (max (add now horizon.c) to))
+  ::  the cache first, then what it is current for: a reload between the
+  ::  two leaves a version that says stale, never one that says current
+  ;<  ~  bind:m  (over:io (grub-road pre 'index.calendar-cache') [[/ %calendar-cache] new])
+  ;<  ~  bind:m  (over:io (grub-road pre 'order.calendar-cache') [[/ %calendar-cache] (by-uid new)])
+  ;<  ~  bind:m  (write-cache-ver pre (cache-ver:cal c))
+  (pure:m new)
+::  +by-uid: the keyed index as other apps read it, each ref under its
+::  bare uid (the same UID in two calendars shows as two refs of it)
+++  by-uid
+  |=  ca=cache:cal
+  ^-  cache:cal
+  :+  thru.ca
+    (~(gas by *(map eid:cal @da)) (turn ~(tap by stops.ca) |=([k=eid:cal d=@da] [uid:(unkey k) d])))
+  %+  gas:on-order:cal  *order:cal
+  %+  turn  (tap:on-order:cal order.ca)
+  |=  [at=@da rs=(set ref:cal)]
+  [at (~(run in rs) |=(r=ref:cal r(eid uid:(unkey eid.r))))]
+::  +read-cache-ver, +write-cache-ver: order-ver.json, the calendar the
+::  cache was built from (0 when unknown, which is never current)
+++  read-cache-ver
+  |=  pre=@t
+  =/  m  (fiber:fiber:nexus ,@uv)
+  ^-  form:m
+  ;<  j=json  bind:m  (read-json-grub pre 'order-ver.json')
+  (pure:m (fall (slaw %uv (gs j 'ver')) 0v0))
+++  write-cache-ver
+  |=  [pre=@t ver=@uv]
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  (write-json-grub pre 'order-ver.json' (pairs:enjs:format ~[['ver' s+(scot %uv ver)]]))
+::  +read-cal: the calendar grub, from any fiber depth
+++  read-cal
+  |=  pre=@t
+  =/  m  (fiber:fiber:nexus ,calendar:cal)
+  ^-  form:m
+  ;<  vw=view:nexus  bind:m  (peek:io (grub-road pre 'calendar.calendar') ~)
+  (pure:m (cal-of vw))
+::  +put-ev, +del-ev: an event by id into the calendar that holds it (the
+::  one named home first, see +locate), or %default for a new one. The
+::  entry's identity (uid, alarms, props) survives an edit; only the event
+::  shape is replaced.
 ++  put-ev
-  |=  [c=calendar:cal id=@ta ev=event:cal]
+  |=  [c=calendar:cal home=@ta id=@ta ev=event:cal]
   ^-  calendar:cal
-  (put-ev-in c ~ id ev)
+  (put-ev-in c ~ home id ev)
 ::  +put-ev-in: like put-ev, into a named calendar (an unknown name falls
 ::  back to where the entry lives, or %default). An existing entry asked
-::  into another calendar moves: deleted from the old, put into the new.
+::  into another calendar moves, override children and all: deleted from
+::  the old, put into the new, less the old calendar's Google ids (they
+::  would aim the new calendar's push at the old one's events).
 ++  put-ev-in
-  |=  [c=calendar:cal want=(unit @ta) id=@ta ev=event:cal]
+  |=  [c=calendar:cal want=(unit @ta) home=@ta id=@ta ev=event:cal]
   ^-  calendar:cal
-  =/  got=(unit [cid=@ta e=entry:cal])  (find-entry:cal c id)
+  =/  got=(unit [cid=@ta e=entry:cal])  (locate c home id)
   =/  cid=@ta
     ?:  &(?=(^ want) (~(has by cals.c) u.want))  u.want
     ?~(got %default cid.u.got)
-  =?  c  &(?=(^ got) !=(cid.u.got cid))  (del-ev c id)
+  =/  move=?  &(?=(^ got) !=(cid.u.got cid))
+  =/  kids=(list entry:cal)
+    ?.  move  ~
+    ?~  got  ~
+    (turn (kids-of:cal (~(got by cals.c) cid.u.got) id) unhome)
+  =?  c  move  (del-ev c ?~(got '' cid.u.got) id)
   =/  k=cal:cal  (fall (~(get by cals.c) cid) fresh-cal:cal)
   =/  e=entry:cal  ?~(got [ev id '' 0 ~ ~] e.u.got(event ev))
-  c(cals (~(put by cals.c) cid (put-entry:cal k e)))
+  =?  e  move  (unhome e)
+  =.  k  (put-entry:cal k e)
+  =.  k  (roll kids |=([ch=entry:cal acc=_k] (put-entry:cal acc ch)))
+  c(cals (~(put by cals.c) cid k))
+::  +unhome: an entry less the remote ids of the calendar it came from
+++  unhome
+  |=  e=entry:cal
+  ^-  entry:cal
+  e(props (skip props.e |=([key=@t *] |(=('X-GOOGLE-ID' key) =('X-GOOGLE-UPDATED' key)))))
 ::  +cal-arg: the poke's optional calendar name
 ++  cal-arg
   |=  jon=json
   ^-  (unit @ta)
   =/  v=@t  (gs jon 'cal')
   ?:(=('' v) ~ `(crip (trip v)))
-::  +owners: which calendar holds each uid
-++  owners
-  |=  c=calendar:cal
-  ^-  (map uid:cal @ta)
-  %-  ~(gas by *(map uid:cal @ta))
-  %-  zing
-  %+  turn  ~(tap by cals.c)
-  |=  [id=@ta k=cal:cal]
-  (turn ~(tap by entries.k) |=([u=uid:cal *] [u id]))
 ++  del-ev
-  |=  [c=calendar:cal id=@ta]
+  |=  [c=calendar:cal home=@ta id=@ta]
   ^-  calendar:cal
-  =/  got=(unit [cid=@ta e=entry:cal])  (find-entry:cal c id)
+  =/  got=(unit [cid=@ta e=entry:cal])  (locate c home id)
   ?~  got  c
   =/  k=cal:cal  (fall (~(get by cals.c) cid.u.got) fresh-cal:cal)
-  ::  an override child goes with its parent
-  =.  k
-    %+  roll  (dav-children k id)
-    |=([ch=entry:cal acc=_k] (del-entry:cal acc uid.ch))
-  c(cals (~(put by cals.c) cid.u.got (del-entry:cal k id)))
+  c(cals (~(put by cals.c) cid.u.got (del-object k id)))
+::  +del-object: an entry and its override children with it
+++  del-object
+  |=  [k=cal:cal u=uid:cal]
+  ^-  cal:cal
+  =.  k  (roll (kids-of:cal k u) |=([ch=entry:cal acc=_k] (del-entry:cal acc uid.ch)))
+  (del-entry:cal k u)
 ::  +self-base: where this instance lives, from the shell's link registry
 ::  (/sys/link/calendar/dest.lanes: every instance claiming the name,
 ::  newest first, ours among them). ~ when the road is refused or the
@@ -1039,50 +1209,121 @@
   ^-  (list @da)
   =/  ev=event:cal  event.e
   ?:  ?=(?(%date %todo) -.ev)  ~
+  (moments-of ev ?-(-.ev %timed except.bound.ev, %allday except.bound.ev))
+::  +moments-of: occurrence indices of an event as naive moments
+++  moments-of
+  |=  [ev=event:cal ex=(set @ud)]
+  ^-  (list @da)
+  ?:  ?=(?(%date %todo) -.ev)  ~
   =/  rc=recur:cal  recur.ev
-  =/  ex=(set @ud)  ?-(-.ev %timed except.bound.ev, %allday except.bound.ev)
   =/  k=(unit kind:rules)  (kind-for kind.rc)
   ?~  k  ~
   %+  murn  (sort ~(tap in ex) lth)
   |=(idx=@ud (fall (mole |.((u.k args.rc start.rc idx))) ~))
-::  +with-exdates: EXDATE moments back to indices of the entry's kind.
-::  Walks the rule forward, bounded, matching on the moment; an EXDATE the
-::  rule never produces is dropped.
-++  with-exdates
-  |=  [e=entry:cal exdates=(list @da)]
+::  +object-exdates: the skips an export writes as EXDATE: not the ones an
+::  override child stands in for, whose RECURRENCE-ID says it already (an
+::  EXDATE too would cancel the instance a client moved)
+++  object-exdates
+  |=  [e=entry:cal kids=(list entry:cal)]
+  ^-  (list @da)
+  =/  moved=(set @da)
+    %-  ~(gas in *(set @da))
+    (murn kids |=(ch=entry:cal (props-rid-moment props.ch event.e)))
+  (skip (exdates-of e) |=(d=@da (~(has in moved) d)))
+::  +anchored: an entry as it goes out. A rule whose start is not an
+::  occurrence (a monthly one counted from the first of its month, say)
+::  starts at its first occurrence instead, so DTSTART is a real instance
+::  and a client adds no stray one. The indices before it had none, so
+::  the bound moves down by as many and still ends where it did.
+++  anchored
+  |=  e=entry:cal
   ^-  entry:cal
-  ?~  exdates  e
   =/  ev=event:cal  event.e
   ?:  ?=(?(%date %todo) -.ev)  e
+  ?.  =(%rrule name.kind.recur.ev)  e
+  =/  k=(unit kind:rules)  (kind-for kind.recur.ev)
+  ?~  k  e
+  =/  first=(unit [idx=@ud at=@da])
+    =/  idx=@ud  0
+    |-  ^-  (unit [@ud @da])
+    ?:  (gth idx max-dead:cal)  ~
+    =/  at=(unit @da)  (fall (mole |.((u.k args.recur.ev start.recur.ev idx))) ~)
+    ?^  at  `[idx u.at]
+    $(idx +(idx))
+  ?~  first  e
+  =/  down  |=(d=@ud (sub d (min d idx.u.first)))
+  ?-  -.ev
+    %timed   e(event ev(start.recur at.u.first, dom.bound (bind dom.bound.ev down)))
+    %allday  e(event ev(start.recur at.u.first, dom.bound (bind dom.bound.ev down)))
+  ==
+::  +match-indices: the indices of an event's rule whose moments, keyed,
+::  are wanted. Walks forward, bounded, and stops once past the last
+::  wanted key; a key the rule never produces is dropped.
+++  match-indices
+  |=  [ev=event:cal want=(set @da) key=$-(@da @da)]
+  ^-  (set @ud)
+  ?:  ?=(?(%date %todo) -.ev)  ~
   =/  rc=recur:cal  recur.ev
   =/  k=(unit kind:rules)  (kind-for kind.rc)
-  ?~  k  e
-  =/  want=(set @da)  (sy exdates)
+  ?~  k  ~
+  =/  hi=@da  (roll ~(tap in want) max)
   =|  got=(set @ud)
   =/  idx=@ud  0
   =/  dead=@ud  0
   |-
-  ?:  |(=(0 ~(wyt in want)) (gth dead 400) (gth idx 10.000))
-    =/  ev2=event:cal
-      ?-  -.ev
-        %timed   ev(except.bound (~(uni in except.bound.ev) got))
-        %allday  ev(except.bound (~(uni in except.bound.ev) got))
-      ==
-    e(event ev2)
+  ?:  |(=(~ want) (gth dead max-dead:cal) (gth idx max-live:cal))  got
   =/  m=(unit @da)  (fall (mole |.((u.k args.rc start.rc idx))) ~)
   ?~  m  $(idx +(idx), dead +(dead))
-  ?:  (~(has in want) u.m)
-    $(idx +(idx), dead 0, got (~(put in got) idx), want (~(del in want) u.m))
-  $(idx +(idx), dead 0)
+  =/  at=@da  (key u.m)
+  ?:  (gth at hi)  got
+  ?.  (~(has in want) at)  $(idx +(idx), dead 0)
+  $(idx +(idx), dead 0, got (~(put in got) idx), want (~(del in want) at))
+::  +skips-of, +set-skips: an event's skipped indices, read and replaced
+++  skips-of
+  |=  ev=event:cal
+  ^-  (set @ud)
+  ?+(-.ev ~ %timed except.bound.ev, %allday except.bound.ev)
+++  set-skips
+  |=  [ev=event:cal ex=(set @ud)]
+  ^-  event:cal
+  ?-  -.ev
+    ?(%date %todo)  ev
+    %timed   ev(except.bound ex)
+    %allday  ev(except.bound ex)
+  ==
+::  +add-skips: more skipped indices on an event with a recurrence
+++  add-skips
+  |=  [ev=event:cal got=(set @ud)]
+  ^-  event:cal
+  ?-  -.ev
+    ?(%date %todo)  ev
+    %timed   ev(except.bound (~(uni in except.bound.ev) got))
+    %allday  ev(except.bound (~(uni in except.bound.ev) got))
+  ==
+::  +with-exdates: EXDATE moments back to indices of the entry's kind
+++  with-exdates
+  |=  [e=entry:cal exdates=(list @da)]
+  ^-  entry:cal
+  ?~  exdates  e
+  e(event (add-skips event.e (match-indices event.e (sy exdates) |=(d=@da d))))
+::  +carry-skips: an edited event keeps its skipped occurrences. The same
+::  clock keeps the same indices; a changed one (a day added, the start
+::  moved, the time changed) finds each skip again by the day it fell
+::  on, so the edit hides the same days, not whatever the old indices
+::  would name now.
+++  carry-skips
+  |=  [old=event:cal new=event:cal]
+  ^-  event:cal
+  ?:  |(?=(?(%date %todo) -.old) ?=(?(%date %todo) -.new))  new
+  =/  ex=(set @ud)  ?-(-.old %timed except.bound.old, %allday except.bound.old)
+  ?:  =(~ ex)  new
+  ?:  =(recur.old recur.new)  (add-skips new ex)
+  =/  day  |=(d=@da ^-(@da (day-floor:rules d)))
+  =/  days=(set @da)  (~(gas in *(set @da)) (turn (moments-of old ex) day))
+  (add-skips new (match-indices new days day))
 ::  ---- CalDAV ----
 ::  +dav-clients: the minted client passwords, hashed
-++  dav-clients
-  =/  m  (fiber:fiber:nexus ,json)
-  ^-  form:m
-  ;<  vw=view:nexus  bind:m
-    (peek:io (cord-to-road:tarball '../dav-clients.json') ~)
-  ?.  ?=([%file *] vw)  (pure:m [%a ~])
-  (pure:m (fall (mole |.(!<(json (need-vase:tarball sang.vw)))) [%a ~]))
+++  dav-clients  (read-json-grub '../' 'dav-clients.json')
 ::  +dav-password: up to 24 base-32 characters from entropy
 ++  dav-password
   |=  eny=@
@@ -1155,14 +1396,11 @@
       (send-simple:srv eyre-id [[405 ['allow' 'OPTIONS, GET, PUT, DELETE, PROPFIND, PROPPATCH, REPORT, MKCALENDAR'] ~] `(as-octs:mimes:html 'calendar: POST needs X-HTTP-Method-Override')])
     (pure:m ~)
   ?.  ?=(?(%'PROPFIND' %'PROPPATCH' %'REPORT' %'MKCALENDAR' %'GET' %'PUT' %'DELETE' %'HEAD') verb)
-    ;<  ~  bind:m  (send-simple:srv eyre-id [[405 ~] `(as-octs:mimes:html 'calendar: unknown DAV verb')])
-    (pure:m ~)
+    (send-text eyre-id 405 'calendar: unknown DAV verb')
   ::  the resource: principal, home, a calendar, or an object
   =/  body=@t  ?~(body.request.req '' q.u.body.request.req)
   =/  res=dav-res  (dav-resolve rest)
-  ;<  cal-view=view:nexus  bind:m
-    (peek:io (cord-to-road:tarball '../calendar.calendar') ~)
-  =/  c=calendar:cal  (cal-of cal-view)
+  ;<  c=calendar:cal  bind:m  (read-cal '../')
   ?:  =('PROPFIND' verb)
     (dav-propfind eyre-id req our c res body)
   ?:  ?=(?(%'GET' %'HEAD') verb)
@@ -1172,13 +1410,12 @@
   ?:  =('PUT' verb)
     (dav-put eyre-id req c res body)
   ?:  =('DELETE' verb)
-    (dav-delete eyre-id c res)
+    (dav-delete eyre-id req c res)
   ?:  =('MKCALENDAR' verb)
     (dav-mkcalendar eyre-id c res body)
   ?:  =('PROPPATCH' verb)
     (dav-proppatch eyre-id c res body)
-  ;<  ~  bind:m  (send-simple:srv eyre-id [[501 ~] `(as-octs:mimes:html 'calendar: not yet')])
-  (pure:m ~)
+  (send-text eyre-id 501 'calendar: not yet')
 ::  +dav-write: the calendar back to its grub
 ++  dav-write
   |=  [pre=@t c=calendar:cal]
@@ -1189,12 +1426,7 @@
 ++  dav-rid
   |=  ve=vevent:ics
   ^-  (unit [key=@t val=@t])
-  =/  hit=(list [key=@t val=@t])
-    %+  skim  extra.ve
-    |=  [key=@t *]
-    =/  t=tape  (trip key)
-    &((gte (lent t) 13) =("RECURRENCE-ID" (scag 13 t)))
-  ?~(hit ~ `i.hit)
+  (bind (get-prop:ics extra.ve 'RECURRENCE-ID') |=(p=prop:ics [k.p v.p]))
 ::  +dav-put: create or replace one object. The VEVENT without a
 ::  RECURRENCE-ID is the parent; each other becomes an override child
 ::  (uid <parent>#<recurrence-id>, once, at its own time) and the parent
@@ -1203,44 +1435,42 @@
   |=  [eyre-id=@ta req=inbound-request:eyre c=calendar:cal res=dav-res body=@t]
   =/  m  (fiber:fiber:nexus ,~)
   ^-  form:m
-  =/  fail
-    |=  [code=@ud why=@t]
-    =/  m  (fiber:fiber:nexus ,~)
-    ^-  form:m
-    ;<  ~  bind:m  (send-simple:srv eyre-id [[code ~] `(as-octs:mimes:html why)])
-    (pure:m ~)
-  ?.  ?=(%object -.res)  (fail 405 'calendar: PUT an object')
+  ?.  ?=(%object -.res)  (send-text eyre-id 405 'calendar: PUT an object')
   =/  k=(unit cal:cal)  (~(get by cals.c) id.res)
-  ?~  k  (fail 404 'calendar: no such calendar')
-  ?:  (ship-read-only c id.res)  (fail 403 'calendar: this calendar is shared with you read-only')
-  =/  ves=(list vevent:ics)  (events:ics body)
-  ?~  ves  (fail 400 'calendar: no VEVENT or VTODO in the body')
-  =/  parent=(unit vevent:ics)
-    =/  ps=(list vevent:ics)  (skip `(list vevent:ics)`ves |=(v=vevent:ics ?=(^ (dav-rid v))))
-    ?~(ps ~ `i.ps)
-  ?~  parent  (fail 400 'calendar: no VEVENT without a RECURRENCE-ID')
-  =/  got=(unit [e=entry:cal exdates=(list @da)])  (to-entry:ics u.parent zone.c)
-  ?~  got  (fail 400 'calendar: could not read the VEVENT')
-  =/  e=entry:cal  e.u.got
-  =?  uid.e  =('' uid.e)  uid.res
-  =/  existing=(unit entry:cal)  (~(get by entries.u.k) uid.e)
+  ?~  k  (send-text eyre-id 404 'calendar: no such calendar')
+  ?:  (ship-read-only c id.res)  (send-text eyre-id 403 'calendar: this calendar is shared with you read-only')
+  ::  a body that cannot be read is a 400, never a crash (a crashed
+  ::  request fiber leaves the client hanging)
+  =/  ves=(list vevent:ics)  (fall (mole |.((events:ics body))) ~)
+  ?~  ves  (send-text eyre-id 400 'calendar: no VEVENT or VTODO in the body')
+  =/  parent=(unit vevent:ics)  (lead-of ves)
+  ?~  parent  (send-text eyre-id 400 'calendar: no VEVENT or VTODO in the body')
+  ::  the object lives at the name the client PUT it to (+alias-object);
+  ::  its own UID must not be another object's here
+  =/  u=uid:cal  uid.res
+  =/  aliased=[ves=(list vevent:ics) extra=(list [@t @t])]  (alias-object ves u)
+  ?:  &(!=('' uid.u.parent) !=(u uid.u.parent) (~(has by entries.u.k) uid.u.parent))
+    (send-text eyre-id 403 'calendar: another object here has this UID (no-uid-conflict)')
+  =/  existing=(unit entry:cal)  (~(get by entries.u.k) u)
   =/  hs  header-list.request.req
   =/  if-none=(unit @t)  (get-header:http 'if-none-match' hs)
   =/  if-match=(unit @t)  (get-header:http 'if-match' hs)
   ?:  &(?=(^ if-none) =('*' u.if-none) ?=(^ existing))
-    (fail 412 'calendar: an object with this UID exists')
+    (send-text eyre-id 412 'calendar: an object with this UID exists')
+  ::  If-Match: * asks only that the object exist
   ?:  ?&  ?=(^ if-match)
           ?|  ?=(~ existing)
-              !=(etag.u.existing (dav-unquote u.if-match))
+              &(!=('*' u.if-match) !=(etag.u.existing (dav-unquote u.if-match)))
           ==
       ==
-    (fail 412 'calendar: the object changed; fetch it again')
-  =/  put=(unit [k=cal:cal =uid:cal])  (put-object u.k ves zone.c uid.res ~)
-  ?~  put  (fail 400 'calendar: could not read the VEVENT')
+    (send-text eyre-id 412 'calendar: the object changed; fetch it again')
+  =/  put=(unit [k=cal:cal =uid:cal])
+    (fall (mole |.((put-object u.k ves.aliased zone.c u extra.aliased))) ~)
+  ?~  put  (send-text eyre-id 400 'calendar: could not read the VEVENT')
   =/  kk=cal:cal  k.u.put
   ;<  ~  bind:m  (dav-write '../' c(cals (~(put by cals.c) id.res kk)))
   =/  new-etag=@t
-    =/  ne=(unit entry:cal)  (~(get by entries.kk) uid.e)
+    =/  ne=(unit entry:cal)  (~(get by entries.kk) u)
     ?~(ne '' etag.u.ne)
   ;<  ~  bind:m
     %+  send-simple:srv  eyre-id
@@ -1249,6 +1479,28 @@
         ['etag' (crip "\"{(trip new-etag)}\"")]
     ==
   (pure:m ~)
+::  +lead-of: the VEVENT an object is kept by: the one without a
+::  RECURRENCE-ID, or, in an object of overrides alone (an invitation to
+::  one instance of someone else's series), the first of them
+++  lead-of
+  |=  ves=(list vevent:ics)
+  ^-  (unit vevent:ics)
+  =/  ps=(list vevent:ics)  (skip ves |=(v=vevent:ics ?=(^ (dav-rid v))))
+  ?^  ps  `i.ps
+  ?~(ves ~ `i.ves)
+::  +alias-object: an object stored under a name that is not its UID (a
+::  client's random filename for a UID that is not URL-safe, a peer's key)
+::  is kept under that name, its own UID aside in X-GRUBBERY-UID, so GET,
+::  DELETE and the listings all answer at the name the client used, and
+::  the object still goes out with its own UID
+++  alias-object
+  |=  [ves=(list vevent:ics) key=@t]
+  ^-  [ves=(list vevent:ics) extra=(list [@t @t])]
+  =/  lead=(unit vevent:ics)  (lead-of ves)
+  ?~  lead  [ves ~]
+  =/  real=@t  uid.u.lead
+  ?:  |(=('' real) =(key real))  [ves ~]
+  [(turn ves |=(v=vevent:ics v(uid key))) ~[['X-GRUBBERY-UID' real]]]
 ::  +put-object: one iCalendar object's VEVENTs into a calendar: the one
 ::  without a RECURRENCE-ID is the parent, the others its overrides, and
 ::  the old override set goes. ~ when there is no parent or it cannot
@@ -1256,13 +1508,18 @@
 ++  put-object
   |=  [k=cal:cal ves=(list vevent:ics) zone=(unit @t) uid-hint=@t extra=(list [@t @t])]
   ^-  (unit [k=cal:cal =uid:cal])
-  =/  parents=(list vevent:ics)  (skip `(list vevent:ics)`ves |=(v=vevent:ics ?=(^ (dav-rid v))))
-  ?~  parents  ~
+  ::  an object of overrides alone is kept by its first (+lead-of): a
+  ::  single event, its RECURRENCE-ID riding in props so it goes back out
+  ::  as it came
+  =/  lead=(unit vevent:ics)  (lead-of ves)
+  ?~  lead  ~
   ::  ponytail: a recurring task's instance overrides are dropped (a
   ::  task is one item here); keep them when tasks get a series view
   =/  overrides=(list vevent:ics)
-    (skim `(list vevent:ics)`ves |=(v=vevent:ics &(?=(^ (dav-rid v)) !=('todo' cat.v))))
-  =/  u=@t  ?:(=('' uid.i.parents) uid-hint uid.i.parents)
+    %+  skim  `(list vevent:ics)`ves
+    |=(v=vevent:ics &(?=(^ (dav-rid v)) !=('todo' cat.v) !=(v u.lead)))
+  =/  u=@t  ?:(=('' uid.u.lead) uid-hint uid.u.lead)
+  =/  before=(map uid:cal etag:cal)  (object-etags k u)
   ::  children the new set no longer carries go; the rest are re-put
   ::  in place (an identical one is left alone)
   =/  keep=(set @t)
@@ -1272,25 +1529,33 @@
     =/  rid=(unit [key=@t val=@t])  (dav-rid v)
     ?~(rid ~ `(crip "{(trip u)}#{(trip val.u.rid)}"))
   =.  k
-    %+  roll  (dav-children k u)
+    %+  roll  (kids-of:cal k u)
     |=([ch=entry:cal acc=_k] ?:((~(has in keep) uid.ch) acc (del-entry:cal acc uid.ch)))
-  =/  put=(unit [k=cal:cal =uid:cal])  (put-parent-keep k i.parents zone u extra |)
+  =/  put=(unit [k=cal:cal =uid:cal])  (put-parent k u.lead zone u extra |)
   ?~  put  ~
-  :-  ~
-  :_  uid.u.put
-  %+  roll  overrides
-  |=([v=vevent:ics acc=_k.u.put] (put-override acc uid.u.put v zone extra))
+  =/  kk=cal:cal
+    %+  roll  overrides
+    |=([v=vevent:ics acc=_k.u.put] (put-override acc uid.u.put v zone extra))
+  ::  the same object again is no change: the parent's skips come off and
+  ::  back on along the way, and those writes are not a change to log
+  ?:  =(before (object-etags kk uid.u.put))  `[k uid.u.put]
+  `[kk uid.u.put]
+::  +object-etags: an object's entries (the parent and its overrides) by
+::  uid, as etags
+++  object-etags
+  |=  [k=cal:cal u=uid:cal]
+  ^-  (map uid:cal etag:cal)
+  =/  e=(unit entry:cal)  (~(get by entries.k) u)
+  ?~  e  ~
+  %-  ~(gas by *(map uid:cal etag:cal))
+  (turn [u.e (kids-of:cal k u)] |=(x=entry:cal [uid.x etag.x]))
 ::  +put-parent: a parent VEVENT into a calendar. An existing entry
 ::  keeps its identity (seq); the file's EXDATEs become skips. Extra
 ::  props (a Google id, say) ride along. ~ when the VEVENT cannot be read.
+::  keep=& carries the stored parent's skips forward (an incremental
+::  update of the parent alone); keep=| rebuilds them from the object
+::  (the overrides that follow re-add their own).
 ++  put-parent
-  |=  [k=cal:cal ve=vevent:ics zone=(unit @t) uid-hint=@t extra=(list [@t @t])]
-  ^-  (unit [k=cal:cal =uid:cal])
-  (put-parent-keep k ve zone uid-hint extra &)
-::  +put-parent-keep: keep=& carries the stored parent's skips forward
-::  (an incremental update of the parent alone); keep=| rebuilds them
-::  from the object (the overrides that follow re-add their own)
-++  put-parent-keep
   |=  [k=cal:cal ve=vevent:ics zone=(unit @t) uid-hint=@t extra=(list [@t @t]) keep=?]
   ^-  (unit [k=cal:cal =uid:cal])
   =/  got=(unit [e=entry:cal exdates=(list @da)])  (to-entry:ics ve zone)
@@ -1298,31 +1563,52 @@
   =/  e=entry:cal  e.u.got
   =?  uid.e  =('' uid.e)  uid-hint
   =/  existing=(unit entry:cal)  (~(get by entries.k) uid.e)
-  =?  e  ?=(^ existing)  e(seq seq.u.existing)
-  =.  props.e  (weld extra (skip props.e |=([key=@t *] (lien extra |=([x=@t *] =(x key))))))
+  =?  e  ?=(^ existing)  e(seq seq.u.existing, event (keep-meta event.u.existing event.e))
+  =.  props.e  (with-extra props.e extra)
   =.  e  (with-exdates e exdates.u.got)
   ::  the parent's existing skips survive a re-put (an override's moment
-  ::  stays skipped when only the parent changed)
-  =?  e  &(keep ?=(^ existing))
-    =/  old=event:cal  event.u.existing
-    =/  ex=(set @ud)  ?-(-.old ?(%date %todo) ~, %timed except.bound.old, %allday except.bound.old)
-    ?-  -.event.e
-      ?(%date %todo)  e
-      %timed   e(event event.e(except.bound (~(uni in except.bound.event.e) ex)))
-      %allday  e(event event.e(except.bound (~(uni in except.bound.event.e) ex)))
-    ==
-  ::  an identical re-put is not a change: no log row, no seq, no etag
-  ?:  &(?=(^ existing) =(etag.u.existing (make-etag:cal e)))  `[k uid.e]
+  ::  stays skipped when only the parent changed), found again by day if
+  ::  its rule changed
+  =?  event.e  &(keep ?=(^ existing))  (carry-skips event.u.existing event.e)
   `[(put-entry:cal k e) uid.e]
-::  +rid-moment: an override VEVENT's RECURRENCE-ID as a naive moment
-++  rid-moment
-  |=  ve=vevent:ics
+::  +with-extra: read props with the caller's own on top (a Google id,
+::  say). Google ids read from a file are dropped: only a Google pull
+::  says what the Google copy is.
+++  with-extra
+  |=  [props=(list [k=@t v=@t]) extra=(list [@t @t])]
+  ^-  (list [k=@t v=@t])
+  %+  weld  extra
+  %+  skip  props
+  |=  [key=@t *]
+  ?|  =("X-GOOGLE-" (scag 9 (trip key)))
+      (lien extra |=([x=@t *] =(x key)))
+  ==
+::  +keep-meta: a re-read event keeps what the file has no word for: meta
+::  keys ICS does not carry, and a color a client that knows no COLOR
+::  left out. Name, note, location and tags are the file's.
+++  keep-meta
+  |=  [old=event:cal new=event:cal]
+  ^-  event:cal
+  =/  own=(set @t)  (sy ~['name' 'note' 'location' 'tags'])
+  =/  kept=meta:cal
+    %-  ~(uni by (malt (skip ~(tap by (meta-of:cal old)) |=([k=@t *] (~(has in own) k)))))
+    (meta-of:cal new)
+  ?-  -.new
+    %timed   new(meta kept)
+    %allday  new(meta kept)
+    %date    new(meta kept)
+    %todo    new(meta kept)
+  ==
+::  +props-rid-moment: a RECURRENCE-ID (an override's props, a read
+::  VEVENT's extra) as the naive moment of its parent's series: one in UTC
+::  or another zone is moved to the series' own (+series-wall:ics)
+++  props-rid-moment
+  |=  [props=(list [k=@t v=@t]) par=event:cal]
   ^-  (unit @da)
-  =/  rid=(unit [key=@t val=@t])  (dav-rid ve)
+  =/  rid=(unit prop:ics)  (get-prop:ics props 'RECURRENCE-ID')
   ?~  rid  ~
-  =/  w=(unit when:ics)  (when-of:ics key.u.rid val.u.rid)
-  ?~  w  ~
-  `?-(-.u.w %utc d.u.w, %local d.u.w, %day d.u.w)
+  %+  bind  (when-of:ics k.u.rid v.u.rid)
+  |=(w=when:ics (series-wall:ics w ?:(?=(%timed -.par) zone.par ~)))
 ::  +put-override: an exception instance as a child of its parent: the
 ::  parent skips that occurrence, the child (a once event at its own
 ::  time, tagged) replaces any older child with the same RECURRENCE-ID.
@@ -1335,22 +1621,32 @@
   ?~  cg  k
   =/  ch=entry:cal  e.u.cg
   =.  uid.ch  (crip "{(trip parent)}#{(trip val.u.rid)}")
-  =.  props.ch  (weld extra [['X-GRUBBERY-PARENT' parent] (skip props.ch |=([key=@t *] (lien extra |=([x=@t *] =(x key)))))])
-  =.  k  (skip-instance k parent (rid-moment ve))
-  =/  old=(unit entry:cal)  (~(get by entries.k) uid.ch)
-  ?:  &(?=(^ old) =(etag.u.old (make-etag:cal ch)))  k
+  =.  props.ch  [['X-GRUBBERY-PARENT' parent] (with-extra props.ch extra)]
+  =.  k  (skip-instance k parent extra.ve)
+  ::  a cancelled instance (STATUS:CANCELLED) is the skip alone
+  ?:  (cancelled ch)  (del-entry:cal k uid.ch)
   (put-entry:cal k ch)
 ::  +skip-instance: the parent skips one occurrence (a cancelled or
-::  overridden instance)
+::  overridden instance), the one the RECURRENCE-ID in props names
 ++  skip-instance
-  |=  [k=cal:cal parent=uid:cal moment=(unit @da)]
+  |=  [k=cal:cal parent=uid:cal props=(list [k=@t v=@t])]
   ^-  cal:cal
-  ?~  moment  k
   =/  pe=(unit entry:cal)  (~(get by entries.k) parent)
   ?~  pe  k
-  =/  ne=entry:cal  (with-exdates u.pe ~[u.moment])
-  ?:  =(event.ne event.u.pe)  k
-  (put-entry:cal k ne)
+  =/  moment=(unit @da)  (props-rid-moment props event.u.pe)
+  ?~  moment  k
+  (put-entry:cal k (with-exdates u.pe ~[u.moment]))
+::  +reskip: every override's parent skips its instance, the moment read
+::  from the child's RECURRENCE-ID. A child that arrived before its
+::  parent (on a later page) left no skip; this places it.
+++  reskip
+  |=  k=cal:cal
+  ^-  cal:cal
+  %+  roll  ~(tap by entries.k)
+  |=  [[* e=entry:cal] acc=_k]
+  =/  par=(unit uid:cal)  (parent-of:cal e)
+  ?~  par  acc
+  (skip-instance acc u.par props.e)
 ++  dav-unquote
   |=  t=@t
   ^-  @t
@@ -1361,36 +1657,30 @@
   (crip s)
 ::  +dav-delete: an object (with its override children), or a calendar
 ++  dav-delete
-  |=  [eyre-id=@ta c=calendar:cal res=dav-res]
+  |=  [eyre-id=@ta req=inbound-request:eyre c=calendar:cal res=dav-res]
   =/  m  (fiber:fiber:nexus ,~)
   ^-  form:m
   ?:  ?=(%calendar -.res)
     ?:  =(%default id.res)
-      ;<  ~  bind:m  (send-simple:srv eyre-id [[403 ~] `(as-octs:mimes:html 'calendar: the default calendar stays')])
-      (pure:m ~)
+      (send-text eyre-id 403 'calendar: the default calendar stays')
     ?.  (~(has by cals.c) id.res)
-      ;<  ~  bind:m  (send-simple:srv eyre-id [[404 ~] `(as-octs:mimes:html 'calendar: no such calendar')])
-      (pure:m ~)
+      (send-text eyre-id 404 'calendar: no such calendar')
     ;<  ~  bind:m  (dav-write '../' c(cals (~(del by cals.c) id.res)))
-    ;<  ~  bind:m  (send-simple:srv eyre-id [[204 ~] ~])
-    (pure:m ~)
+    (send-simple:srv eyre-id [[204 ~] ~])
   ?:  &(?=(%object -.res) (ship-read-only c id.res))
-    ;<  ~  bind:m  (send-simple:srv eyre-id [[403 ~] `(as-octs:mimes:html 'calendar: this calendar is shared with you read-only')])
-    (pure:m ~)
+    (send-text eyre-id 403 'calendar: this calendar is shared with you read-only')
   ?.  ?=(%object -.res)
-    ;<  ~  bind:m  (send-simple:srv eyre-id [[405 ~] `(as-octs:mimes:html 'calendar: DELETE an object or a calendar')])
-    (pure:m ~)
+    (send-text eyre-id 405 'calendar: DELETE an object or a calendar')
   =/  k=(unit cal:cal)  (~(get by cals.c) id.res)
-  ?:  |(?=(~ k) !(~(has by entries.u.k) uid.res))
-    ;<  ~  bind:m  (send-simple:srv eyre-id [[404 ~] `(as-octs:mimes:html 'calendar: no such object')])
-    (pure:m ~)
-  =/  kk=cal:cal
-    %+  roll  (dav-children u.k uid.res)
-    |=([ch=entry:cal acc=_u.k] (del-entry:cal acc uid.ch))
-  =.  kk  (del-entry:cal kk uid.res)
-  ;<  ~  bind:m  (dav-write '../' c(cals (~(put by cals.c) id.res kk)))
-  ;<  ~  bind:m  (send-simple:srv eyre-id [[204 ~] ~])
-  (pure:m ~)
+  =/  e=(unit entry:cal)  ?~(k ~ (~(get by entries.u.k) uid.res))
+  ?:  |(?=(~ k) ?=(~ e))
+    (send-text eyre-id 404 'calendar: no such object')
+  ::  If-Match: only the version the client last saw goes
+  =/  if-match=(unit @t)  (get-header:http 'if-match' header-list.request.req)
+  ?:  &(?=(^ if-match) !=('*' u.if-match) !=(etag.u.e (dav-unquote u.if-match)))
+    (send-text eyre-id 412 'calendar: the object changed; fetch it again')
+  ;<  ~  bind:m  (dav-write '../' c(cals (~(put by cals.c) id.res (del-object u.k uid.res))))
+  (send-simple:srv eyre-id [[204 ~] ~])
 ::  +dav-mkcalendar: a new local calendar from the body's displayname
 ::  and calendar-color
 ++  dav-mkcalendar
@@ -1398,11 +1688,12 @@
   =/  m  (fiber:fiber:nexus ,~)
   ^-  form:m
   ?.  ?=(%calendar -.res)
-    ;<  ~  bind:m  (send-simple:srv eyre-id [[405 ~] `(as-octs:mimes:html 'calendar: MKCALENDAR under cal/')])
-    (pure:m ~)
+    (send-text eyre-id 405 'calendar: MKCALENDAR under cal/')
   ?:  (~(has by cals.c) id.res)
-    ;<  ~  bind:m  (send-simple:srv eyre-id [[405 ~] `(as-octs:mimes:html 'calendar: that calendar exists')])
-    (pure:m ~)
+    (send-text eyre-id 405 'calendar: that calendar exists')
+  ::  an id goes into hrefs and index keys: a knot, no slash
+  ?.  ((sane %ta) id.res)
+    (send-text eyre-id 403 'calendar: a calendar id is lowercase letters, digits, - . ~ _')
   =/  root=(unit manx)  (parse:dav body)
   =/  name=@t
     ?~  root  id.res
@@ -1412,23 +1703,21 @@
     ?~  root  '#1e3a5f'
     =/  el=(unit manx)  (find-el:dav u.root %'calendar-color')
     ?~(el '#1e3a5f' (crip (scag 7 (text:dav u.el))))
-  =/  k=cal:cal  fresh-cal:cal
+  ;<  now=@da  bind:m  get-time:io
+  =/  k=cal:cal  (born now)
   =.  props.k  [?:(=('' name) id.res name) ?:(=('' color) '#1e3a5f' color) %local ~]
   ;<  ~  bind:m  (dav-write '../' c(cals (~(put by cals.c) id.res k)))
-  ;<  ~  bind:m  (send-simple:srv eyre-id [[201 ~] ~])
-  (pure:m ~)
+  (send-simple:srv eyre-id [[201 ~] ~])
 ::  +dav-proppatch: displayname and calendar-color on a calendar
 ++  dav-proppatch
   |=  [eyre-id=@ta c=calendar:cal res=dav-res body=@t]
   =/  m  (fiber:fiber:nexus ,~)
   ^-  form:m
   ?.  ?=(%calendar -.res)
-    ;<  ~  bind:m  (send-simple:srv eyre-id [[405 ~] `(as-octs:mimes:html 'calendar: PROPPATCH a calendar')])
-    (pure:m ~)
+    (send-text eyre-id 405 'calendar: PROPPATCH a calendar')
   =/  k=(unit cal:cal)  (~(get by cals.c) id.res)
   ?~  k
-    ;<  ~  bind:m  (send-simple:srv eyre-id [[404 ~] `(as-octs:mimes:html 'calendar: no such calendar')])
-    (pure:m ~)
+    (send-text eyre-id 404 'calendar: no such calendar')
   =/  root=(unit manx)  (parse:dav body)
   =/  set-el=(unit manx)  ?~(root ~ (find-el:dav u.root %set))
   =/  asked=marl
@@ -1462,27 +1751,21 @@
 ++  export-objects
   |=  [k=cal:cal now=@da]
   ^-  (list tape)
-  =/  ents=(list [uid:cal entry:cal])  ~(tap by entries.k)
-  =|  out=(list tape)
-  |-
-  ?~  ents  (flop out)
-  =/  u=uid:cal  -.i.ents
-  =/  e=entry:cal  +.i.ents
-  ?:  (dav-is-child e)  $(ents t.ents)
-  =/  objs=(list entry:cal)  [e (dav-children k u)]
-  =/  lines=(list tape)  (turn objs |=(x=entry:cal (write-entry:ics x (exdates-of x) now)))
-  $(ents t.ents, out (weld (flop lines) out))
-::  +dav-children: the override entries of a parent, in one calendar
-++  dav-children
-  |=  [k=cal:cal parent=uid:cal]
-  ^-  (list entry:cal)
-  %+  murn  ~(tap by entries.k)
-  |=  [* e=entry:cal]
-  ^-  (unit entry:cal)
-  ?.  (lien props.e |=([key=@t v=@t] &(=('X-GRUBBERY-PARENT' key) =(parent v))))  ~
-  `e
-::  +dav-object-ics: one object as iCalendar text: the parent, then its
-::  override children (each carrying its RECURRENCE-ID in props)
+  %-  zing
+  %+  murn  ~(val by entries.k)
+  |=  e=entry:cal
+  ?:  (dav-is-child e)  ~
+  `(object-tapes k e now)
+::  +object-tapes: one object as VEVENT text: the parent as it goes out
+::  (+anchored, its EXDATEs less the moved instances), then its override
+::  children, each carrying its RECURRENCE-ID in props
+++  object-tapes
+  |=  [k=cal:cal e=entry:cal now=@da]
+  ^-  (list tape)
+  =/  kids=(list entry:cal)  (kids-of:cal k uid.e)
+  :-  (write-entry:ics (anchored e) (object-exdates e kids) now)
+  (turn kids |=(x=entry:cal (write-entry:ics x ~ now)))
+::  +dav-object-ics: one object as iCalendar text
 ++  dav-object-ics
   |=  [c=calendar:cal id=@ta =uid:cal now=@da]
   ^-  (unit @t)
@@ -1490,26 +1773,21 @@
   ?~  k  ~
   =/  e=(unit entry:cal)  (~(get by entries.u.k) uid)
   ?~  e  ~
-  =/  all=(list entry:cal)  [u.e (dav-children u.k uid)]
-  :-  ~
-  %+  write-calendar:ics  title.c
-  (turn all |=(x=entry:cal (write-entry:ics x (exdates-of x) now)))
+  `(write-calendar:ics title.c (object-tapes u.k u.e now))
 ::  +dav-get: an object's .ics with its ETag
 ++  dav-get
   |=  [eyre-id=@ta c=calendar:cal res=dav-res]
   =/  m  (fiber:fiber:nexus ,~)
   ^-  form:m
   ?.  ?=(%object -.res)
-    ;<  ~  bind:m  (send-simple:srv eyre-id [[405 ~] `(as-octs:mimes:html 'calendar: GET an object')])
-    (pure:m ~)
+    (send-text eyre-id 405 'calendar: GET an object')
   ;<  now=@da  bind:m  get-time:io
   =/  body=(unit @t)  (dav-object-ics c id.res uid.res now)
   =/  e=(unit entry:cal)
     =/  k=(unit cal:cal)  (~(get by cals.c) id.res)
     ?~(k ~ (~(get by entries.u.k) uid.res))
   ?:  |(?=(~ body) ?=(~ e))
-    ;<  ~  bind:m  (send-simple:srv eyre-id [[404 ~] `(as-octs:mimes:html 'calendar: no such object')])
-    (pure:m ~)
+    (send-text eyre-id 404 'calendar: no such object')
   ;<  ~  bind:m
     %+  send-simple:srv  eyre-id
     :_  `(as-octs:mimes:html u.body)
@@ -1522,20 +1800,13 @@
 ++  dav-href-res
   |=  h=tape
   ^-  dav-res
+  ::  an absolute href (some clients send one) is its path; each segment
+  ::  is percent-decoded here, as the request path is by +parse-url
   =/  segs=(list @ta)
-    %+  turn  (skip (split-tape h '/') |=(t=tape =(~ t)))
-    |=(t=tape (crip t))
+    %+  turn  (skip (split:rr '/' (crip (norm-href h))) |=(t=@t =('' t)))
+    |=(t=@t (crip (dec-seg:dav (trip t))))
   ?.  ?=([%apps %calendar %dav *] segs)  [%none ~]
   (dav-resolve t.t.t.segs)
-++  split-tape
-  |=  [t=tape c=@t]
-  ^-  (list tape)
-  =|  cur=tape
-  =|  out=(list tape)
-  |-
-  ?~  t  (flop [(flop cur) out])
-  ?:  =(c i.t)  $(t t.t, out [(flop cur) out], cur ~)
-  $(t t.t, cur [i.t cur])
 ::  +dav-obj-response: an object with its etag and calendar-data
 ++  dav-obj-response
   |=  [c=calendar:cal id=@ta =uid:cal now=@da with-data=?]
@@ -1557,16 +1828,13 @@
   =/  m  (fiber:fiber:nexus ,~)
   ^-  form:m
   ?.  ?=(%calendar -.res)
-    ;<  ~  bind:m  (send-simple:srv eyre-id [[403 ~] `(as-octs:mimes:html 'calendar: REPORT on a calendar')])
-    (pure:m ~)
+    (send-text eyre-id 403 'calendar: REPORT on a calendar')
   =/  k=(unit cal:cal)  (~(get by cals.c) id.res)
   ?~  k
-    ;<  ~  bind:m  (send-simple:srv eyre-id [[404 ~] `(as-octs:mimes:html 'calendar: no such calendar')])
-    (pure:m ~)
+    (send-text eyre-id 404 'calendar: no such calendar')
   =/  root=(unit manx)  (parse:dav body)
   ?~  root
-    ;<  ~  bind:m  (send-simple:srv eyre-id [[400 ~] `(as-octs:mimes:html 'calendar: REPORT needs an XML body')])
-    (pure:m ~)
+    (send-text eyre-id 400 'calendar: REPORT needs an XML body')
   ;<  now=@da  bind:m  get-time:io
   =/  kind=@tas  (local:dav n.g.u.root)
   =/  id=@ta  id.res
@@ -1594,11 +1862,7 @@
       `[?~(lo *@da d.u.lo) ?~(hi (add now (mul 10 ~d365)) d.u.hi)]
     ;<  uids=(list uid:cal)  bind:m
       ?~  range  (pure:(fiber:fiber:nexus ,(list uid:cal)) parents)
-      ;<  cache-view=view:nexus  bind:(fiber:fiber:nexus ,(list uid:cal))
-        (peek:io (cord-to-road:tarball '../order.calendar-cache') ~)
-      =/  ca=cache:cal
-        ?.  ?=([%file *] cache-view)  *cache:cal
-        (fall (mole |.(!<(cache:cal (need-vase:tarball sang.cache-view)))) *cache:cal)
+      ;<  ca=cache:cal  bind:(fiber:fiber:nexus ,(list uid:cal))  (fresh-cache '../' c now)
       ::  ponytail: a range past the inflated horizon answers every parent
       ::  (the client filters); a refresh-ahead here would need the
       ::  kinds resolved as window.json does
@@ -1610,11 +1874,12 @@
         %+  murn  refs
         |=  r=ref:cal
         ^-  (unit uid:cal)
-        =/  e=(unit entry:cal)  (~(get by entries.u.k) eid.r)
+        ::  the index is keyed <calendar>/<uid>: only this calendar's
+        =/  [cid=@ta u=uid:cal]  (unkey eid.r)
+        ?.  =(id cid)  ~
+        =/  e=(unit entry:cal)  (~(get by entries.u.k) u)
         ?~  e  ~
-        =/  par=(list [@t @t])  (skim props.u.e |=([key=@t *] =('X-GRUBBERY-PARENT' key)))
-        ?~  par  `eid.r
-        `+.i.par
+        `(fall (parent-of:cal u.e) u)
       =/  undated=(list uid:cal)
         %+  murn  ~(tap by entries.u.k)
         |=([u=uid:cal e=entry:cal] ?:(&(?=(%todo -.event.e) ?=(~ due.event.e)) `u ~))
@@ -1647,19 +1912,17 @@
   ?:  =(%'sync-collection' kind)
     =/  tok=tape  ?~(t=(kid:dav u.root %'sync-token') "" (text:dav u.t))
     =/  since=@ud
-      =/  segs=(list tape)  (skip (split-tape tok '/') |=(t=tape =(~ t)))
-      =/  last=tape  ?~(segs "" (rear segs))
-      (fall (rush (crip last) dem) 0)
-    ::  the latest change per uid after the token; children never listed
-    =/  changes=(list [uid:cal ?(%put %del)])
-      =/  ents=(list [key=@ud val=logent:cal])  (tap:on-log:cal log.u.k)
-      =/  latest=(map uid:cal ?(%put %del))
-        %+  roll  ents
-        |=  [[key=@ud val=logent:cal] acc=(map uid:cal ?(%put %del))]
-        ?.  (gth key since)  acc
-        ?^  (find "#" (trip uid.val))  acc
-        (~(put by acc) uid.val kind.val)
-      ~(tap by latest)
+      =/  segs=(list @t)  (skip (split:rr '/' (crip tok)) |=(t=@t =('' t)))
+      (fall (rush ?~(segs '' (rear segs)) dem) 0)
+    ::  a token past this calendar's seq, or from before it was made (one
+    ::  deleted and made again under this id), is not one of ours: RFC
+    ::  6578 says so with valid-sync-token, and the client starts over
+    =/  first=@ud  =/(f (pry:on-log:cal log.u.k) ?~(f seq.u.k (dec key.u.f)))
+    ?:  &(!=(0 since) |((gth since seq.u.k) (lth since first)))
+      %^  dav-send-xml  eyre-id  403
+      '<?xml version="1.0" encoding="utf-8"?><D:error xmlns:D="DAV:"><D:valid-sync-token/></D:error>'
+    ::  the latest change per object after the token
+    =/  changes=(list [uid:cal ?(%put %del)])  (changes-since u.k since ~)
     =/  responses=marl
       %+  turn  changes
       |=  [u=uid:cal what=?(%put %del)]
@@ -1667,8 +1930,7 @@
       (dav-obj-response c id u now |)
     =/  token=manx  (d-el:dav %'sync-token' ~[(tx:dav "{dav-root}sync/{(a-co:co seq.u.k)}")])
     (dav-send-xml eyre-id 207 (multistatus:dav responses ~[token]))
-  ;<  ~  bind:m  (send-simple:srv eyre-id [[403 ~] `(as-octs:mimes:html 'calendar: unsupported report')])
-  (pure:m ~)
+  (send-text eyre-id 403 'calendar: unsupported report')
 ::  +dav-res: what a dav path names
 +$  dav-res
   $%  [%principal ~]
@@ -1688,14 +1950,15 @@
   =/  id=@ta  i.t.rest
   ?~  t.t.rest  [%calendar id]
   ?^  t.t.t.rest  [%none ~]
-  =/  nm=tape  (dec-seg:dav (trip i.t.t.rest))
+  ::  the request path is percent-decoded already (+parse-url)
+  =/  nm=tape  (trip i.t.t.rest)
   ::  strip a trailing .ics
   =/  n=@ud  (lent nm)
   =/  uid=tape  ?:(&((gte n 4) =(".ics" (slag (sub n 4) nm))) (scag (sub n 4) nm) nm)
   [%object id (crip uid)]
 ::  hrefs
 ++  dav-root  "/apps/calendar/dav/"
-++  dav-cal-href  |=(id=@ta ^-(tape "{dav-root}cal/{(trip id)}/"))
+++  dav-cal-href  |=(id=@ta ^-(tape "{dav-root}cal/{(enc-seg:dav (trip id))}/"))
 ++  dav-obj-href
   |=  [id=@ta =uid:cal]
   ^-  tape
@@ -1766,21 +2029,19 @@
     (skip `(list @tas)`asked |=(n=@tas (lien have |=([m=@tas *] =(m n)))))
   (response:dav h found missing)
 ::  +dav-is-child: an override entry; never listed on its own
-++  dav-is-child
-  |=  e=entry:cal
-  ^-  ?
-  (lien props.e |=([k=@t *] =('X-GRUBBERY-PARENT' k)))
+++  dav-is-child  |=(e=entry:cal ?=(^ (parent-of:cal e)))
 ::  +dav-propfind
 ++  dav-propfind
   |=  [eyre-id=@ta req=inbound-request:eyre our=@p c=calendar:cal res=dav-res body=@t]
   =/  m  (fiber:fiber:nexus ,~)
   ^-  form:m
   ?:  ?=(%none -.res)
-    ;<  ~  bind:m  (send-simple:srv eyre-id [[404 ~] `(as-octs:mimes:html 'calendar: no such resource')])
-    (pure:m ~)
+    (send-text eyre-id 404 'calendar: no such resource')
+  ::  no Depth is infinity (RFC 4918 9.1), answered as 1: the tree is
+  ::  no deeper
   =/  depth=@ud
     =/  d=(unit @t)  (get-header:http 'depth' header-list.request.req)
-    ?:(|(?=(~ d) =('0' u.d)) 0 1)
+    ?:(&(?=(^ d) =('0' u.d)) 0 1)
   =/  asked=(list @tas)  (prop-names:dav (parse:dav body))
   =/  self-href=tape
     ?-  -.res
@@ -1797,8 +2058,7 @@
       %object     ?~(k=(~(get by cals.c) id.res) | (~(has by entries.u.k) uid.res))
     ==
   ?.  known
-    ;<  ~  bind:m  (send-simple:srv eyre-id [[404 ~] `(as-octs:mimes:html 'calendar: no such resource')])
-    (pure:m ~)
+    (send-text eyre-id 404 'calendar: no such resource')
   =/  self=manx  (dav-response our c res self-href asked)
   =/  children=marl
     ?:  =(0 depth)  ~
@@ -1889,6 +2149,8 @@
         ?.(?=([%fetch *] !<(path q.sage.u.in)) [%skip ~] [%done ~])
       ?.  =([/ %http-response] p.sage.u.in)  [%skip ~]
       =/  resp=client-response:iris  !<(client-response:iris q.sage.u.in)
+      ::  a long body comes in parts: %progress, then %finished whole
+      ?:  ?=(%progress -.resp)  [%wait ~]
       ?:(?=(%cancel -.resp) [%done ~] [%done `resp])
     ==
   ;<  ~  bind:m  (cancel-timer:io /fetch)
@@ -1936,11 +2198,13 @@
     ~&  >>>  [%calendar-google-refresh-failed status]
     (pure:m ~)
   =/  ttl=@ud  (fall (gn tok 'expires_in') 3.600)
+  ::  onto a fresh read, and only for the account we refreshed: a
+  ::  disconnect or a reconnect while we waited must not be undone
+  ;<  auth=json  bind:m  (google-auth pre)
+  ?.  =(refresh (gs auth 'refresh_token'))  (pure:m ~)
   ;<  ~  bind:m
     %^  write-json-grub  pre  'google-auth.json'
-    ?.  ?=(%o -.auth)  auth
-    :-  %o
-    %-  ~(gas by p.auth)
+    %+  row-put  auth
     :~  ['access_token' s+access]
         ['expires_ms' (numb:enjs:format (add (da-to-ms now) (mul 1.000 ttl)))]
     ==
@@ -1975,18 +2239,11 @@
     =/  host=@t  (fall (get-header:http 'host' header-list.request.req) 'localhost')
     "{?:(secure.req "https" "http")}://{(trip host)}"
   =/  redirect=tape  "{origin}/apps/calendar/google/callback"
-  =/  send-err
-    |=  [code=@ud why=@t]
-    =/  m  (fiber:fiber:nexus ,~)
-    ^-  form:m
-    ;<  ~  bind:m  (send-simple:srv eyre-id [[code ~] `(as-octs:mimes:html why)])
-    (pure:m ~)
   =/  redirect-to
     |=  where=tape
     =/  m  (fiber:fiber:nexus ,~)
     ^-  form:m
-    ;<  ~  bind:m  (send-simple:srv eyre-id [[302 ['location' (crip where)] ~] ~])
-    (pure:m ~)
+    (send-simple:srv eyre-id [[302 ['location' (crip where)] ~] ~])
   ::  config: the user's client, and the endpoints (the gate swaps them)
   ?:  &(post ?=([%config ~] rest))
     ;<  cfg=json  bind:m  (google-config '../')
@@ -2004,7 +2261,7 @@
   ?:  ?=([%connect ~] rest)
     ;<  cfg=json  bind:m  (google-config '../')
     =/  cid=@t  (gs cfg 'client_id')
-    ?:  =('' cid)  (send-err 400 'calendar: set the OAuth client first')
+    ?:  =('' cid)  (send-text eyre-id 400 'calendar: set the OAuth client first')
     ;<  eny=@uvJ  bind:m  get-entropy:io
     =/  state=@t  (scot %uv (end [3 12] eny))
     ;<  auth=json  bind:m  (google-auth '../')
@@ -2028,9 +2285,9 @@
     ;<  auth0=json  bind:m  (google-auth '../')
     =/  want-state=@t  (gs auth0 'state')
     ?:  |(=('' want-state) !=(want-state (fall (get-key:kv:html-utils 'state' args) '')))
-      (send-err 400 'calendar: the callback did not carry the state this ship issued')
+      (send-text eyre-id 400 'calendar: the callback did not carry the state this ship issued')
     ?:  =('' code)
-      (send-err 400 (crip "calendar: google answered without a code: {(trip (fall (get-key:kv:html-utils 'error' args) ''))}"))
+      (send-text eyre-id 400 (crip "calendar: google answered without a code: {(trip (fall (get-key:kv:html-utils 'error' args) ''))}"))
     ;<  cfg=json  bind:m  (google-config '../')
     ;<  [status=@ud body=@t]  bind:m
       %-  fetch-full
@@ -2048,7 +2305,7 @@
     =/  refresh=@t  (gs tok 'refresh_token')
     =/  access=@t  (gs tok 'access_token')
     ?:  |(!=(200 status) =('' refresh))
-      (send-err 502 (crip "calendar: token exchange failed ({(a-co:co status)}): {(trip (gs tok 'error_description'))}"))
+      (send-text eyre-id 502 (crip "calendar: token exchange failed ({(a-co:co status)}): {(trip (gs tok 'error_description'))}"))
     ;<  now=@da  bind:m  get-time:io
     ;<  ~  bind:m
       %^  write-json-grub  '../'  'google-auth.json'
@@ -2065,7 +2322,7 @@
   ?:  ?=([%'calendars.json' ~] rest)
     ;<  [status=@ud res=json]  bind:m
       (google-api '../' %'GET' "/calendar/v3/users/me/calendarList" ~)
-    ?.  =(200 status)  (send-err status (crip "calendar: google answered {(a-co:co status)}"))
+    ?.  =(200 status)  (send-text eyre-id status (crip "calendar: google answered {(a-co:co status)}"))
     ;<  sync=json  bind:m  (google-sync '../')
     =/  linked=(map @t @t)
       %-  ~(gas by *(map @t @t))
@@ -2090,15 +2347,14 @@
   ::  link: a ship calendar of kind google for one of them
   ?:  &(post ?=([%link ~] rest))
     =/  gid=@t  (gs jon 'google_id')
-    ?:  =('' gid)  (send-err 400 'calendar: need google_id')
-    ;<  cal-view=view:nexus  bind:m
-      (peek:io (cord-to-road:tarball '../calendar.calendar') ~)
-    =/  c=calendar:cal  (cal-of cal-view)
+    ?:  =('' gid)  (send-text eyre-id 400 'calendar: need google_id')
+    ;<  c=calendar:cal  bind:m  (read-cal '../')
     =/  id=@ta  (crip "g-{(trip (scot %uw (mug gid)))}")
-    ?:  (~(has by cals.c) id)  (send-err 409 'calendar: already linked')
+    ?:  (~(has by cals.c) id)  (send-text eyre-id 409 'calendar: already linked')
     =/  nm=@t  (gs jon 'name')
     =/  color=@t  (gs jon 'color')
-    =/  k=cal:cal  fresh-cal:cal
+    ;<  now=@da  bind:m  get-time:io
+    =/  k=cal:cal  (born now)
     =.  props.k  [?:(=('' nm) gid nm) ?:(=('' color) '#1e3a5f' color) %google `gid]
     ;<  ~  bind:m  (dav-write '../' c(cals (~(put by cals.c) id k)))
     ;<  sync=json  bind:m  (google-sync '../')
@@ -2115,16 +2371,7 @@
     ;<  ~  bind:m  (google-prod '../')
     (send-json eyre-id (pairs:enjs:format ~[['id' s+id]]))
   ?:  &(post ?=([%unlink ~] rest))
-    =/  id=@ta  (crip (trip (gs jon 'id')))
-    ;<  cal-view=view:nexus  bind:m
-      (peek:io (cord-to-road:tarball '../calendar.calendar') ~)
-    =/  c=calendar:cal  (cal-of cal-view)
-    ?.  (~(has by cals.c) id)  (send-err 404 'calendar: not linked')
-    ;<  ~  bind:m  (dav-write '../' c(cals (~(del by cals.c) id)))
-    ;<  sync=json  bind:m  (google-sync '../')
-    ;<  ~  bind:m
-      (write-json-grub '../' 'google-sync.json' [%o (~(del by ?:(?=(%o -.sync) p.sync ~)) id)])
-    (send-json eyre-id (pairs:enjs:format ~[['ok' b+&]]))
+    (drop-synced eyre-id (crip (trip (gs jon 'id'))) %google 'calendar: not linked')
   ?:  &(post ?=([%sync ~] rest))
     ;<  ~  bind:m  (google-prod '../')
     (send-json eyre-id (pairs:enjs:format ~[['ok' b+&]]))
@@ -2134,9 +2381,10 @@
   ?:  &(post ?=([%conflicts %clear ~] rest))
     ;<  ~  bind:m  (write-json-grub '../' 'google-conflicts.json' [%a ~])
     (send-json eyre-id (pairs:enjs:format ~[['ok' b+&]]))
-  (send-err 404 'calendar: no such google route')
+  (send-text eyre-id 404 'calendar: no such google route')
 ::  +google-conflict: both versions kept, so nothing is lost silently.
-::  Google's copy has already won; the local one rides along as ICS.
+::  The remote's copy has already won; the local one rides along as ICS.
+::  Every backend logs here (Google was the first).
 ++  google-conflict
   |=  [pre=@t id=@ta =uid:cal local=(unit entry:cal) remote-updated=@t why=@t]
   =/  m  (fiber:fiber:nexus ,~)
@@ -2158,6 +2406,17 @@
   ~&  >>  [%calendar-google-conflict uid why]
   =/  rest=(list json)  (skip ?:(?=(%a -.cs) p.cs ~) |=(c=json =(uid (gs c 'uid'))))
   (write-json-grub pre 'google-conflicts.json' [%a (snoc rest row)])
+::  +log-clashes: a conflict row for each uid a pull let the remote win
+::  over a local change: [uid, the local copy it replaced, the remote's
+::  updated stamp when it has one]
+++  log-clashes
+  |=  [pre=@t id=@ta clashes=(list [uid:cal (unit entry:cal) @t]) why=@t]
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  ?~  clashes  (pure:m ~)
+  =/  [u=uid:cal local=(unit entry:cal) up=@t]  i.clashes
+  ;<  ~  bind:m  (google-conflict pre id u local up why)
+  $(clashes t.clashes)
 ::  +suppressed: the log rows a sync pass itself wrote, as [uid key],
 ::  from the row. The push skips exactly those; nothing else.
 ++  suppressed
@@ -2181,26 +2440,65 @@
   :-  %a
   %+  turn  (skip ~(tap in sup) |=([* key=@ud] (lte key floor)))
   |=([u=@t key=@ud] `json`[%a ~[s+u (numb:enjs:format key)]])
+::  +since-log: the log rows past a watermark, oldest first
+++  since-log
+  |=  [k=cal:cal since=@ud]
+  ^-  (list [key=@ud val=logent:cal])
+  (tap:on-log:cal (lot:on-log:cal log.k `since ~))
 ::  +wrote-between: the log rows in (from, to], as [uid key]
 ++  wrote-between
   |=  [k=cal:cal from=@ud to=@ud]
   ^-  (set [@t @ud])
   %-  ~(gas in *(set [@t @ud]))
-  %+  murn  (tap:on-log:cal log.k)
-  |=  [key=@ud val=logent:cal]
-  ?.(&((gth key from) (lte key to)) ~ `[uid.val key])
+  %+  murn  (since-log k from)
+  |=([key=@ud val=logent:cal] ?.((lte key to) ~ `[uid.val key]))
 ::  +pending-uids: the uids with a local change the push has not sent
-::  yet — log rows above the watermark that no pass wrote itself
+::  yet: log rows above the watermark that no pass wrote itself
 ++  pending-uids
   |=  [k=cal:cal since=@ud sup=(set [@t @ud])]
   ^-  (set uid:cal)
   %-  ~(gas in *(set uid:cal))
-  %+  murn  (tap:on-log:cal log.k)
-  |=  [key=@ud val=logent:cal]
-  ?.  (gth key since)  ~
-  ?:  (~(has in sup) [uid.val key])  ~
-  `uid.val
-::  +take-any: the next news on a wire, or any poke (a timer wake is one)
+  %+  murn  (since-log k since)
+  |=([key=@ud val=logent:cal] ?:((~(has in sup) [uid.val key]) ~ `uid.val))
+::  +rows-of: the rows above the watermark for these uids. A pull that
+::  let the remote win for a uid suppresses the local change it
+::  replaced, so the push does not undo the remote's win.
+++  rows-of
+  |=  [k=cal:cal since=@ud uids=(set uid:cal)]
+  ^-  (set [@t @ud])
+  %-  ~(gas in *(set [@t @ud]))
+  %+  murn  (since-log k since)
+  |=([key=@ud val=logent:cal] ?.((~(has in uids) uid.val) ~ `[uid.val key]))
+::  +child-row: a log row of an override child. A live entry says so in
+::  its props. A deleted one was named <parent>#<recurrence-id>, and its
+::  parent is here or went in the same rows (logged); a real UID with a #
+::  in it names no such parent, and is an object of its own.
+++  child-row
+  |=  [k=cal:cal u=uid:cal logged=(set uid:cal)]
+  ^-  ?
+  =/  e=(unit entry:cal)  (~(get by entries.k) u)
+  ?^  e  ?=(^ (parent-of:cal u.e))
+  =/  t=tape  (flop (trip u))
+  =/  at=(unit @ud)  (find "#" t)
+  ?~  at  |
+  =/  par=@t  (crip (flop (slag +(u.at) t)))
+  |((~(has by entries.k) par) (~(has in logged) par))
+::  +changes-since: what a push sends: the latest change per object past
+::  the watermark, the pass's own rows left out. A child's change is its
+::  parent's too (+restamp:cal re-logs the parent), so child rows go.
+++  changes-since
+  |=  [k=cal:cal since=@ud sup=(set [@t @ud])]
+  ^-  (list [uid:cal ?(%put %del)])
+  =/  rows=(list [key=@ud val=logent:cal])  (since-log k since)
+  =/  logged=(set uid:cal)  (~(gas in *(set uid:cal)) (turn rows |=([* val=logent:cal] uid.val)))
+  %~  tap  by
+  %+  roll  rows
+  |=  [[key=@ud val=logent:cal] acc=(map uid:cal ?(%put %del))]
+  ?:  |((~(has in sup) [uid.val key]) (child-row k uid.val logged))  acc
+  (~(put by acc) uid.val kind.val)
+::  +take-any: the next news on a wire, or any poke (a timer wake is one).
+::  A remote peek's answer that came after its timeout is taken and
+::  dropped here; left, it would sit in the queue for good.
 ++  take-any
   |=  =wire
   =/  m  (fiber:fiber:nexus ,?(%news %poke))
@@ -2213,38 +2511,97 @@
     ?.(=(wire wire.u.in) [%skip ~] [%done %news])
       [~ %poke * *]
     [%done %poke]
+      [~ %peek * *]
+    [%wait ~]
   ==
-::  +google-pass: pull each linked calendar (when asked), then push
-++  google-pass
-  |=  pull=?
+::  +omap: a json object's map, or none
+++  omap  |=(j=json ^-((map @t json) ?:(?=(%o -.j) p.j ~)))
+::  +row-put: fields onto a sync row
+++  row-put
+  |=  [row=json kvs=(list [@t json])]
+  ^-  json
+  ?.  ?=(%o -.row)  row
+  [%o (~(gas by p.row) kvs)]
+::  +save-row: one sync row back to its file, onto a fresh read (a link
+::  or an unlink may have changed the file meanwhile). A row whose
+::  calendar went away in the meantime is not brought back.
+++  save-row
+  |=  [pre=@t file=@t id=@t row=json]
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  ;<  cur=json  bind:m  (read-json-grub pre file)
+  =/  rows=(map @t json)  (omap cur)
+  ?.  (~(has by rows) id)  (pure:m ~)
+  ?:  =(`row (~(get by rows) id))  (pure:m ~)
+  (write-json-grub pre file [%o (~(put by rows) id row)])
+::  +sync-file, +sync-pull, +sync-push: the three backends, by kind
+++  sync-file
+  |=  kind=?(%google %caldav %ship)
+  ^-  @t
+  ?-  kind
+    %google  'google-sync.json'
+    %caldav  'caldav-remotes.json'
+    %ship    'ship-remotes.json'
+  ==
+++  sync-pull
+  |=  [kind=?(%google %caldav %ship) pre=@t id=@ta row=json]
+  =/  m  (fiber:fiber:nexus ,json)
+  ^-  form:m
+  ?-  kind
+    %google  (google-pull pre id row)
+    %caldav  (caldav-pull pre id row)
+    %ship    (ship-pull pre id row)
+  ==
+++  sync-push
+  |=  [kind=?(%google %caldav %ship) pre=@t id=@ta row=json]
+  =/  m  (fiber:fiber:nexus ,json)
+  ^-  form:m
+  ?-  kind
+    %google  (google-push pre id row)
+    %caldav  (caldav-push pre id row)
+    %ship    (ship-push pre id row)
+  ==
+::  +sync-pass: every row of one backend: pull (when asked), then push,
+::  each row saved as it goes. A row whose calendar is gone or is no
+::  longer that kind (deleted, made local) goes first, before anything
+::  reaches the network for it.
+++  sync-pass
+  |=  [kind=?(%google %caldav %ship) pull=?]
   =/  m  (fiber:fiber:nexus ,~)
   ^-  form:m
   =/  pre=@t  './'
-  ;<  sync=json  bind:m  (google-sync pre)
-  =/  rows=(list [id=@t row=json])  ?:(?=(%o -.sync) ~(tap by p.sync) ~)
-  ;<  tok=(unit @t)  bind:m  (google-token pre)
-  ?~  tok  (pure:m ~)
-  =|  done=(map @t json)
+  =/  file=@t  (sync-file kind)
+  ;<  rows-j=json  bind:m  (read-json-grub pre file)
+  =/  all=(list [id=@t row=json])  ~(tap by (omap rows-j))
+  ?:  =(~ all)  (pure:m ~)
+  ;<  c=calendar:cal  bind:m  (read-cal pre)
+  =/  dead=(list @t)  (murn `(list [id=@t row=json])`all |=([id=@t *] ?:((kind-is c id kind) ~ `id)))
+  ;<  ~  bind:m
+    ?~  dead  (pure:(fiber:fiber:nexus ,~) ~)
+    ;<  cur=json  bind:(fiber:fiber:nexus ,~)  (read-json-grub pre file)
+    %^  write-json-grub  pre  file
+    [%o (roll `(list @t)`dead |=([id=@t acc=_(omap cur)] (~(del by acc) id)))]
+  =/  rows=(list [id=@t row=json])  (skim `(list [id=@t row=json])`all |=([id=@t *] (kind-is c id kind)))
+  ?:  =(~ rows)  (pure:m ~)
+  ::  Google: nothing to do without a token
+  ;<  ok=?  bind:m
+    ?.  ?=(%google kind)  (pure:(fiber:fiber:nexus ,?) &)
+    ;<  tok=(unit @t)  bind:(fiber:fiber:nexus ,?)  (google-token pre)
+    (pure:(fiber:fiber:nexus ,?) ?=(^ tok))
+  ?.  ok  (pure:m ~)
   |-
-  ?~  rows
-    ::  merge onto a fresh read: a link or unlink may have changed the
-    ::  file while this pass waited on the network
-    ?:  =(~ done)  (pure:m ~)
-    ;<  fresh=json  bind:m  (google-sync pre)
-    =/  cur=(map @t json)  ?:(?=(%o -.fresh) p.fresh ~)
-    =/  merged=(map @t json)
-      %+  roll  ~(tap by done)
-      |=  [[id=@t row=json] acc=_cur]
-      ?.((~(has by acc) id) acc (~(put by acc) id row))
-    (write-json-grub pre 'google-sync.json' [%o merged])
+  ?~  rows  (pure:m ~)
+  =/  id=@ta  (crip (trip id.i.rows))
   ;<  row=json  bind:m
     ?.  pull  (pure:(fiber:fiber:nexus ,json) row.i.rows)
-    (google-pull pre (crip (trip id.i.rows)) row.i.rows)
-  ;<  row=json  bind:m  (google-push pre (crip (trip id.i.rows)) row)
-  ?:  =(row row.i.rows)  $(rows t.rows)
-  $(rows t.rows, done (~(put by done) id.i.rows row))
-::  +google-pull: one calendar, all pages, applied; the row comes back
-::  with the new token, time, id map and watermark
+    (sync-pull kind pre id row.i.rows)
+  ;<  row=json  bind:m  (sync-push kind pre id row)
+  ;<  ~  bind:m  (save-row pre file id.i.rows row)
+  $(rows t.rows)
+::  +google-pull: one calendar, all pages, applied. The row comes back
+::  with the new token, time, id map and watermark, and is saved with
+::  each page's write: a reload mid-pass never leaves the calendar ahead
+::  of its row (the next push would send the pull's own writes back).
 ++  google-pull
   |=  [pre=@t id=@ta row=json]
   =/  m  (fiber:fiber:nexus ,json)
@@ -2253,7 +2610,8 @@
   =/  tok=@t  (gs row 'sync_token')
   =/  full=?  =('' tok)
   =/  base=tape  "/calendar/v3/calendars/{(enc-seg:dav (trip gid))}/events?maxResults=250"
-  =/  ids=(map @t json)  =/(i (obj:gcal row 'ids') ?:(?=(%o -.i) p.i ~))
+  =/  ids=(map @t json)  (omap (obj:gcal row 'ids'))
+  =/  since=@ud  (fall (gn row 'pushed_seq') 0)
   =/  page=@t  ''
   =/  seen=(set uid:cal)  ~
   =/  retried=?  |
@@ -2271,26 +2629,49 @@
   ?.  =(200 status)
     ~&  >>>  [%calendar-google-pull-failed id status]
     (pure:m row)
-  ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road pre 'calendar.calendar') ~)
-  =/  c=calendar:cal  (cal-of cal-view)
+  ;<  c=calendar:cal  bind:m  (read-cal pre)
   =/  k=cal:cal  (fall (~(get by cals.c) id) fresh-cal:cal)
   ?.  ?=(%google kind.props.k)  (pure:m row)
   =/  k=cal:cal  k
-  =/  items=(list gitem:gcal)  (murn (arr:gcal res 'items') item-of:gcal)
+  ::  a deleted item may carry only its id: its uid is the one the id
+  ::  map knows, and a deleted instance's series is its recurringEventId.
+  ::  The same map places every item.
+  =/  by-gid=(map @t uid:cal)
+    %-  ~(gas by *(map @t uid:cal))
+    (murn ~(tap by ids) |=([u=@t v=json] ?.(?=(%s -.v) ~ `[p.v u])))
+  =/  items=(list gitem:gcal)
+    %+  turn  (murn (arr:gcal res 'items') item-of:gcal)
+    |=  g=gitem:gcal
+    ::  every item under the uid this side keeps it by, when the id map
+    ::  knows it: its own, or a series' for an instance (an object kept
+    ::  under a name that is not its UID stays there)
+    =/  u=(unit uid:cal)  (~(get by by-gid) ?~(rid.g gid.g recur.g))
+    ?~(u g g(uid.ve u.u))
+  ::  our own push coming back: Google's stamp is the one the push kept
+  ::  (X-GOOGLE-UPDATED), so it is nothing new, and a local edit made
+  ::  since is not a clash with it. It is still seen.
+  =/  echo=(list gitem:gcal)
+    %+  skim  items
+    |=  g=gitem:gcal
+    ?^  rid.g  |
+    =/  e=(unit entry:cal)  (~(get by entries.k) uid.ve.g)
+    ?~  e  |
+    =/  up=(unit prop:ics)  (get-prop:ics props.u.e 'X-GOOGLE-UPDATED')
+    &(?=(^ up) !=('' updated.g) =(v.u.up updated.g))
+  =.  seen  (~(gas in seen) (turn echo |=(g=gitem:gcal uid.ve.g)))
+  =.  items  (skip items |=(g=gitem:gcal ?=(^ (find ~[g] echo))))
   ::  an item whose uid also changed here since the last push is a
   ::  conflict: Google wins, the local copy is logged
   =/  sup=(set [@t @ud])  (suppressed row)
-  =/  pending=(set uid:cal)  (pending-uids k (fall (gn row 'pushed_seq') 0) sup)
+  =/  pending=(set uid:cal)  (pending-uids k since sup)
   =/  seq-at-peek=@ud  seq.k
   =/  clashes=(list gitem:gcal)
     (skim items |=(g=gitem:gcal &(?=(~ rid.g) (~(has in pending) uid.ve.g))))
   ;<  ~  bind:m
-    =/  m  (fiber:fiber:nexus ,~)
-    |-  ^-  form:m
-    ?~  clashes  (pure:m ~)
-    ;<  ~  bind:m
-      (google-conflict pre id uid.ve.i.clashes (~(get by entries.k) uid.ve.i.clashes) updated.i.clashes 'changed on both sides; google kept')
-    $(clashes t.clashes)
+    %:  log-clashes  pre  id
+      (turn clashes |=(g=gitem:gcal [uid.ve.g (~(get by entries.k) uid.ve.g) updated.g]))
+      'changed on both sides; google kept'
+    ==
   ::  parents first, so an instance finds its parent
   =/  parents=(list gitem:gcal)  (skip items |=(g=gitem:gcal ?=(^ rid.g)))
   =/  insts=(list gitem:gcal)  (skim items |=(g=gitem:gcal ?=(^ rid.g)))
@@ -2301,16 +2682,14 @@
     =/  extra=(list [@t @t])  ~[['X-GOOGLE-ID' gid.g] ['X-GOOGLE-UPDATED' updated.g]]
     ?^  rid.g
       =.  seen.acc  (~(put in seen.acc) u)
-      ?:  cancelled.g
-        acc(k (skip-instance k.acc u (rid-moment ve.g)))
-      acc(k (put-override k.acc u ve.g zone.c extra))
+      ?.  cancelled.g
+        acc(k (put-override k.acc u ve.g zone.c extra))
+      ::  a cancelled instance goes, and a moved copy of it with it
+      =.  k.acc  (del-entry:cal k.acc (crip "{(trip u)}#{(trip u.rid.g)}"))
+      acc(k (skip-instance k.acc u extra.ve.g))
     ?:  cancelled.g
-      =.  k.acc  (del-entry:cal k.acc u)
-      =.  k.acc
-        %+  roll  (dav-children k.acc u)
-        |=([ch=entry:cal a=_k.acc] (del-entry:cal a uid.ch))
-      acc(ids (~(del by ids.acc) u))
-    =/  put=(unit [k=cal:cal =uid:cal])  (put-parent k.acc ve.g zone.c u extra)
+      acc(k (del-object k.acc u), ids (~(del by ids.acc) u))
+    =/  put=(unit [k=cal:cal =uid:cal])  (put-parent k.acc ve.g zone.c u extra &)
     ?~  put  acc
     acc(k k.u.put, ids (~(put by ids.acc) u s+gid.g), seen (~(put in seen.acc) u))
   =.  k  k.res2
@@ -2318,43 +2697,67 @@
   =.  seen  (~(uni in seen) seen.res2)
   =/  next-page=@t  (gs res 'nextPageToken')
   =/  next-tok=@t  (gs res 'nextSyncToken')
-  ::  a full listing is the whole truth: what it did not name is gone
-  =?  k  &(full =('' next-page))
-    %+  roll  ~(tap by entries.k)
-    |=  [[u=uid:cal e=entry:cal] acc=_k]
-    ?:  (dav-is-child e)  acc
-    ?:  (~(has in seen) u)  acc
-    ?:  (lien props.e |=([key=@t *] =('X-GOOGLE-ID' key)))
-      (del-entry:cal acc u)
-    acc
-  ;<  ~  bind:m  (dav-write pre c(cals (~(put by cals.c) id k)))
+  =/  last=?  =('' next-page)
+  ::  a full listing is the whole truth: what it did not name is gone (a
+  ::  local change to one is kept in the conflict log)
+  =/  gone=(list uid:cal)
+    ?.  &(full last)  ~
+    %+  murn  ~(tap by entries.k)
+    |=  [u=uid:cal e=entry:cal]
+    ?:  |((dav-is-child e) (~(has in seen) u))  ~
+    ?.  (lien props.e |=([key=@t *] =('X-GOOGLE-ID' key)))  ~
+    `u
+  ;<  ~  bind:m
+    %:  log-clashes  pre  id
+      (murn gone |=(u=uid:cal ?.((~(has in pending) u) ~ `[u (~(get by entries.k) u) ''])))
+      'deleted on google; changed here'
+    ==
+  =.  k  (roll gone |=([u=uid:cal acc=_k] (del-object acc u)))
+  ::  a full listing's instance that came before its parent (on an
+  ::  earlier page) skips it now
+  =?  k  &(full last)  (reskip k)
   ;<  now=@da  bind:m  get-time:io
-  ::  what this pull wrote is not for pushing back: the push skips these
-  ::  uids up to this seq, and moves the watermark itself
+  ::  what this pull wrote is not for pushing back, nor is the local
+  ::  change a clash replaced
+  =/  won=(set uid:cal)
+    (~(gas in (~(gas in *(set uid:cal)) (turn clashes |=(g=gitem:gcal uid.ve.g)))) gone)
+  =/  sup2=(set [@t @ud])
+    (~(uni in (~(uni in sup) (wrote-between k seq-at-peek seq.k))) (rows-of k since won))
   =/  row2=json
-    ?.  ?=(%o -.row)  row
-    :-  %o
-    %-  ~(gas by p.row)
+    %+  row-put  row
     :~  ['sync_token' s+?:(=('' next-tok) tok next-tok)]
         ['last_ms' (numb:enjs:format (da-to-ms now))]
         ['ids' [%o ids]]
-        ['suppressed' (suppress-json (~(uni in sup) (wrote-between k seq-at-peek seq.k)) (fall (gn row 'pushed_seq') 0))]
+        ['suppressed' (suppress-json sup2 since)]
     ==
-  ?.  =('' next-page)  $(page next-page, row row2)
+  ;<  ~  bind:m  (dav-write pre c(cals (~(put by cals.c) id k)))
+  ;<  ~  bind:m  (save-row pre 'google-sync.json' id row2)
+  ?.  last  $(page next-page, row row2)
   (pure:m row2)
+::  +google-stop: a status that ends a push and keeps the watermark: no
+::  answer, a server error, auth, a rate limit. Any other refusal (a
+::  read-only calendar's 403, say) is that change's alone, logged.
+++  google-stop
+  |=  [status=@ud res=json]
+  ^-  ?
+  ?:  |(=(0 status) (gte status 500) =(429 status) =(401 status))  &
+  ?.  =(403 status)  |
+  =/  errs=(list json)  (arr:gcal (obj:gcal res 'error') 'errors')
+  =/  why=@t  ?~(errs '' (gs i.errs 'reason'))
+  ?=(^ (find ~[why] `(list @t)`~['rateLimitExceeded' 'userRateLimitExceeded' 'quotaExceeded' 'dailyLimitExceeded']))
 ::  +google-push: the calendar's log past the watermark, out. A parent
-::  with a known Google id is updated, without one inserted; a delete
-::  goes by the id map. Children (overrides) are not pushed. A 5xx, 429
-::  or dropped connection stops the pass and keeps the watermark.
+::  with a known Google id is patched, without one inserted; a delete
+::  goes by the id map. Children (overrides) are not pushed: Google keeps
+::  its own instances. A +google-stop status stops the pass and keeps
+::  the watermark.
 ++  google-push
   |=  [pre=@t id=@ta row=json]
   =/  m  (fiber:fiber:nexus ,json)
   ^-  form:m
   =/  gid=@t  (gs row 'google_id')
   =/  since=@ud  (fall (gn row 'pushed_seq') 0)
-  =/  ids=(map @t json)  =/(i (obj:gcal row 'ids') ?:(?=(%o -.i) p.i ~))
-  ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road pre 'calendar.calendar') ~)
-  =/  c=calendar:cal  (cal-of cal-view)
+  =/  ids=(map @t json)  (omap (obj:gcal row 'ids'))
+  ;<  c=calendar:cal  bind:m  (read-cal pre)
   =/  k=(unit cal:cal)  (~(get by cals.c) id)
   ?~  k  (pure:m row)
   ::  a calendar made local (migrated) is never pushed, whatever row a
@@ -2362,15 +2765,7 @@
   ?.  ?=(%google kind.props.u.k)  (pure:m row)
   ?.  (gth seq.u.k since)  (pure:m row)
   =/  sup=(set [@t @ud])  (suppressed row)
-  =/  changes=(list [uid:cal ?(%put %del)])
-    =/  latest=(map uid:cal ?(%put %del))
-      %+  roll  (tap:on-log:cal log.u.k)
-      |=  [[key=@ud val=logent:cal] acc=(map uid:cal ?(%put %del))]
-      ?.  (gth key since)  acc
-      ?^  (find "#" (trip uid.val))  acc
-      ?:  (~(has in sup) [uid.val key])  acc
-      (~(put by acc) uid.val kind.val)
-    ~(tap by latest)
+  =/  changes=(list [uid:cal ?(%put %del)])  (changes-since u.k since sup)
   =/  base=tape  "/calendar/v3/calendars/{(enc-seg:dav (trip gid))}/events"
   =|  results=(list [=uid:cal gid=@t updated=@t])
   =/  stopped=?  |
@@ -2380,29 +2775,35 @@
     =/  known=@t  =/(v (~(get by ids) u) ?:(?=([~ %s *] v) p.u.v ''))
     ?:  =(%del what)
       ?:  =('' known)  $(changes t.changes)
-      ;<  [status=@ud *]  bind:m
+      ;<  [status=@ud res=json]  bind:m
         (google-api pre %'DELETE' "{base}/{(enc-seg:dav (trip known))}" ~)
-      ?:  |(=(0 status) (gte status 500) =(429 status))
+      ?:  (google-stop status res)
         ~&  >>>  [%calendar-google-push-stopped u status]
         $(changes ~, stopped &)
+      ::  already gone (404, 410) is done; a refusal is logged, not retried
+      ;<  ~  bind:m
+        ?:  |((lth status 300) =(404 status) =(410 status))  (pure:(fiber:fiber:nexus ,~) ~)
+        (google-conflict pre id u ~ '' (crip "google refused the delete ({(a-co:co status)})"))
       $(changes t.changes, ids (~(del by ids) u))
     =/  e=(unit entry:cal)  (~(get by entries.u.k) u)
     ?~  e  $(changes t.changes)
     ::  ponytail: Google Calendar has no tasks (they live in Google
     ::  Tasks, another API); a task stays on this side
     ?:  ?=(%todo -.event.u.e)  $(changes t.changes)
-    =/  body=json  (json-of:gcal u.e (exdates-of u.e))
+    =/  body=json  (json-of:gcal (anchored u.e) (object-exdates u.e (kids-of:cal u.k u)))
     =/  have=@t
       ?.  =('' known)  known
-      =/  hit=(list [@t @t])  (skim props.u.e |=([key=@t *] =('X-GOOGLE-ID' key)))
-      ?~(hit '' +.i.hit)
+      =/  hit=(unit prop:ics)  (get-prop:ics props.u.e 'X-GOOGLE-ID')
+      ?~(hit '' v.u.hit)
+    ::  PATCH, not PUT: what Google holds that this side does not model
+    ::  (guests, visibility, colors, other apps' properties) stays
     ;<  [status=@ud res=json]  bind:m
       ?:  =('' have)  (google-api pre %'POST' base `body)
-      (google-api pre %'PUT' "{base}/{(enc-seg:dav (trip have))}" `body)
+      (google-api pre %'PATCH' "{base}/{(enc-seg:dav (trip have))}" `body)
     ;<  [status=@ud res=json]  bind:m
       ?.  &(=(404 status) !=('' have))  (pure:(fiber:fiber:nexus ,[@ud json]) [status res])
       (google-api pre %'POST' base `body)
-    ?:  |(=(0 status) (gte status 500) =(429 status) =(401 status) =(403 status))
+    ?:  (google-stop status res)
       ~&  >>>  [%calendar-google-push-stopped u status]
       $(changes ~, stopped &)
     ?.  =(200 status)
@@ -2420,8 +2821,7 @@
   ::  The watermark is the seq read BEFORE the network, so such a poke
   ::  stays above it; the prop writes below are suppressed like a pull's.
   =/  seq-before=@ud  seq.u.k
-  ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road pre 'calendar.calendar') ~)
-  =/  c=calendar:cal  (cal-of cal-view)
+  ;<  c=calendar:cal  bind:m  (read-cal pre)
   =/  kk=cal:cal  (fall (~(get by cals.c) id) fresh-cal:cal)
   =?  results  !?=(%google kind.props.kk)  ~
   =/  seq-mid=@ud  seq.kk
@@ -2438,15 +2838,13 @@
   ;<  ~  bind:m
     ?~  results  (pure:(fiber:fiber:nexus ,~) ~)
     (dav-write pre c(cals (~(put by cals.c) id kk)))
-  =/  row2=json
-    ?.  ?=(%o -.row)  row
-    :-  %o
-    %-  ~(gas by p.row)
-    :~  ['ids' [%o ids]]
-        ['pushed_seq' (numb:enjs:format ?:(stopped since seq-before))]
-        ['suppressed' (suppress-json (~(uni in sup) (wrote-between kk seq-mid seq.kk)) ?:(stopped since seq-before))]
-    ==
-  (pure:m row2)
+  =/  mark=@ud  ?:(stopped since seq-before)
+  %-  pure:m
+  %+  row-put  row
+  :~  ['ids' [%o ids]]
+      ['pushed_seq' (numb:enjs:format mark)]
+      ['suppressed' (suppress-json (~(uni in sup) (wrote-between kk seq-mid seq.kk)) mark)]
+  ==
 ::  ---- CalDAV client: following a remote calendar ----
 ++  caldav-remotes  |=(pre=@t (read-json-grub pre 'caldav-remotes.json'))
 ::  +dav-fetch: a request to the remote with Basic auth. iris has the same
@@ -2479,6 +2877,8 @@
 ++  dav-href-path
   |=  h=tape
   ^-  (unit tape)
+  ::  pretty-printed XML may wrap an href in whitespace
+  =.  h  (flop (skip-ws:dav (flop (skip-ws:dav h))))
   ?:  (lien h |=(c=@t |((lth c 32) =(127 c))))  ~
   =/  low=tape  (cass h)
   =/  pre=@ud
@@ -2501,12 +2901,6 @@
   =/  jon=json
     (fall (de:json:html ?~(body.request.req '' q.u.body.request.req)) *json)
   =/  post=?  =('POST' method.request.req)
-  =/  send-err
-    |=  [code=@ud why=@t]
-    =/  m  (fiber:fiber:nexus ,~)
-    ^-  form:m
-    ;<  ~  bind:m  (send-simple:srv eyre-id [[code ~] `(as-octs:mimes:html why)])
-    (pure:m ~)
   ?:  ?=([%'subscriptions.json' ~] rest)
     ;<  rows=json  bind:m  (caldav-remotes '../')
     %+  send-json  eyre-id
@@ -2523,14 +2917,14 @@
     ==
   ?:  &(post ?=([%subscribe ~] rest))
     =/  url=@t  (gs jon 'url')
-    ?:  =('' url)  (send-err 400 'calendar: need url')
-    ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road '../' 'calendar.calendar') ~)
-    =/  c=calendar:cal  (cal-of cal-view)
+    ?:  =('' url)  (send-text eyre-id 400 'calendar: need url')
+    ;<  c=calendar:cal  bind:m  (read-cal '../')
     =/  id=@ta  (crip "c-{(trip (scot %uw (mug url)))}")
-    ?:  (~(has by cals.c) id)  (send-err 409 'calendar: already followed')
+    ?:  (~(has by cals.c) id)  (send-text eyre-id 409 'calendar: already followed')
     =/  nm=@t  (gs jon 'name')
     =/  color=@t  (gs jon 'color')
-    =/  k=cal:cal  fresh-cal:cal
+    ;<  now=@da  bind:m  get-time:io
+    =/  k=cal:cal  (born now)
     =.  props.k  [?:(=('' nm) url nm) ?:(=('' color) '#101541' color) %caldav `url]
     ;<  ~  bind:m  (dav-write '../' c(cals (~(put by cals.c) id k)))
     ;<  rows=json  bind:m  (caldav-remotes '../')
@@ -2549,58 +2943,26 @@
     ;<  ~  bind:m  (google-prod '../')
     (send-json eyre-id (pairs:enjs:format ~[['id' s+id]]))
   ?:  &(post ?=([%unsubscribe ~] rest))
-    =/  id=@ta  (crip (trip (gs jon 'id')))
-    ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road '../' 'calendar.calendar') ~)
-    =/  c=calendar:cal  (cal-of cal-view)
-    ?.  (~(has by cals.c) id)  (send-err 404 'calendar: not followed')
-    ;<  ~  bind:m  (dav-write '../' c(cals (~(del by cals.c) id)))
-    ;<  rows=json  bind:m  (caldav-remotes '../')
-    ;<  ~  bind:m
-      (write-json-grub '../' 'caldav-remotes.json' [%o (~(del by ?:(?=(%o -.rows) p.rows ~)) id)])
-    (send-json eyre-id (pairs:enjs:format ~[['ok' b+&]]))
+    (drop-synced eyre-id (crip (trip (gs jon 'id'))) %caldav 'calendar: not followed')
   ?:  &(post ?=([%sync ~] rest))
     ;<  ~  bind:m  (google-prod '../')
     (send-json eyre-id (pairs:enjs:format ~[['ok' b+&]]))
-  (send-err 404 'calendar: no such caldav route')
-::  +caldav-pass: every followed calendar: pull (when asked), then push
-++  caldav-pass
-  |=  pull=?
-  =/  m  (fiber:fiber:nexus ,~)
-  ^-  form:m
-  =/  pre=@t  './'
-  ;<  rows-j=json  bind:m  (caldav-remotes pre)
-  =/  rows=(list [id=@t row=json])  ?:(?=(%o -.rows-j) ~(tap by p.rows-j) ~)
-  =|  done=(map @t json)
-  |-
-  ?~  rows
-    ?:  =(~ done)  (pure:m ~)
-    ;<  fresh=json  bind:m  (caldav-remotes pre)
-    =/  cur=(map @t json)  ?:(?=(%o -.fresh) p.fresh ~)
-    =/  merged=(map @t json)
-      %+  roll  ~(tap by done)
-      |=  [[id=@t row=json] acc=_cur]
-      ?.((~(has by acc) id) acc (~(put by acc) id row))
-    (write-json-grub pre 'caldav-remotes.json' [%o merged])
-  ;<  row=json  bind:m
-    ?.  pull  (pure:(fiber:fiber:nexus ,json) row.i.rows)
-    (caldav-pull pre (crip (trip id.i.rows)) row.i.rows)
-  ;<  row=json  bind:m  (caldav-push pre (crip (trip id.i.rows)) row)
-  ?:  =(row row.i.rows)  $(rows t.rows)
-  $(rows t.rows, done (~(put by done) id.i.rows row))
+  (send-text eyre-id 404 'calendar: no such caldav route')
 ::  +caldav-changes: what changed on the remote since the token:
 ::  [href etag gone] per object, and the new token. sync-collection
 ::  first; a server that refuses it gets a PROPFIND and an etag diff.
+::  No answer at all is a failure, not a reason to ask again: a late
+::  answer would be taken for the next request's.
 ++  caldav-changes
   |=  row=json
   =/  m  (fiber:fiber:nexus ,(unit [changes=(list [href=tape etag=@t gone=?]) token=@t]))
   ^-  form:m
   =/  url=@t  (gs row 'url')
   =/  tok=@t  (gs row 'sync_token')
-  =/  ids=(map @t json)  =/(i (obj:gcal row 'ids') ?:(?=(%o -.i) p.i ~))
   =/  known=(map tape @t)
     %-  ~(gas by *(map tape @t))
-    %+  turn  ~(tap by ids)
-    |=([u=@t v=json] [(trip (gs v 'href')) (gs v 'etag')])
+    %+  turn  ~(tap by (omap (obj:gcal row 'ids')))
+    |=([u=@t v=json] [(norm-href (trip (gs v 'href'))) (gs v 'etag')])
   =/  body=@t
     %-  crip
     ;:  weld
@@ -2610,6 +2972,7 @@
     ==
   ;<  [status=@ud * res=@t]  bind:m
     (dav-fetch row %'REPORT' url `body ~[['content-type' 'application/xml; charset=utf-8'] ['depth' '1']])
+  ?:  =(0 status)  (pure:m ~)
   ?:  =(207 status)
     =/  root=(unit manx)  (parse:dav res)
     ?~  root  (pure:m ~)
@@ -2620,16 +2983,15 @@
       %+  murn  (kids:dav u.root %response)
       |=  r=manx
       ^-  (unit [tape @t ?])
-      =/  h=(unit manx)  (kid:dav r %href)
-      ?~  h  ~
-      =/  hp=(unit tape)  (dav-href-path (text:dav u.h))
-      ?~  hp  ~
-      =/  href=tape  u.hp
-      ?.  =(".ics" (slag (sub (lent href) (min 4 (lent href))) href))  ~
+      =/  href=(unit tape)  (response-href r)
+      ?~  href  ~
       =/  st=(unit manx)  (kid:dav r %status)
-      ?:  &(?=(^ st) ?=(^ (find "404" (text:dav u.st))))  `[href '' &]
+      ?:  &(?=(^ st) ?=(^ (find "404" (text:dav u.st))))  `[u.href '' &]
       =/  et=(unit manx)  (find-el:dav r %getetag)
-      `[href ?~(et '' (dav-unquote (crip (text:dav u.et)))) |]
+      =/  e=@t  ?~(et '' (dav-unquote (crip (text:dav u.et))))
+      ::  the etag our own push got back is our change, not the remote's
+      ?:  &(!=('' e) =(`e (~(get by known) (norm-href u.href))))  ~
+      `[u.href e |]
     (pure:m `[changes token])
   ::  fallback: list with PROPFIND and diff the etags
   ;<  [status2=@ud * res2=@t]  bind:m
@@ -2647,18 +3009,14 @@
     %+  murn  (kids:dav u.root %response)
     |=  r=manx
     ^-  (unit [tape @t])
-    =/  h=(unit manx)  (kid:dav r %href)
-    ?~  h  ~
-    =/  hp=(unit tape)  (dav-href-path (text:dav u.h))
-    ?~  hp  ~
-    =/  href=tape  u.hp
-    ?.  =(".ics" (slag (sub (lent href) (min 4 (lent href))) href))  ~
+    =/  href=(unit tape)  (response-href r)
+    ?~  href  ~
     =/  et=(unit manx)  (find-el:dav r %getetag)
-    `[href ?~(et '' (dav-unquote (crip (text:dav u.et))))]
+    `[u.href ?~(et '' (dav-unquote (crip (text:dav u.et))))]
   ::  the collection's own <response> must be there before its member
-  ::  list is believed — an empty or truncated answer is a failure, and
+  ::  list is believed: an empty or truncated answer is a failure, and
   ::  an emptied calendar (the collection present, no members) is real
-  =/  coll=tape  (fall (dav-href-path (trip url)) "")
+  =/  coll=tape  (with-slash (fall (dav-href-path (trip url)) ""))
   =/  coll-here=?
     %+  lien  (kids:dav u.root %response)
     |=  r=manx
@@ -2666,7 +3024,7 @@
     ?~  h  |
     =/  hp=(unit tape)  (dav-href-path (text:dav u.h))
     ?~  hp  |
-    =(?:(=('/' (rear coll)) coll (snoc coll '/')) ?:(=('/' (rear u.hp)) u.hp (snoc u.hp '/')))
+    =(coll (with-slash u.hp))
   ?.  coll-here
     ~&  >>>  [%calendar-caldav-listing-incomplete url]
     (pure:m ~)
@@ -2683,26 +3041,45 @@
     |=  [h=tape *]
     ^-  (unit [tape @t ?])
     ?:((~(has in seen) h) ~ `[h '' &])
-  (pure:m `[(weld changed gone) tok])
+  ::  no token from a listing: the next pass asks sync-collection afresh
+  ::  (a server that refused an old token answers a new one)
+  (pure:m `[(weld changed gone) ''])
+::  +response-href: an object's href from a <response>, as a path; ~ for
+::  the collection itself or anything that is not an .ics
+++  response-href
+  |=  r=manx
+  ^-  (unit tape)
+  =/  h=(unit manx)  (kid:dav r %href)
+  ?~  h  ~
+  =/  hp=(unit tape)  (dav-href-path (text:dav u.h))
+  ?~  hp  ~
+  =/  n=@ud  (lent u.hp)
+  ?.  &((gte n 4) =(".ics" (slag (sub n 4) u.hp)))  ~
+  hp
+++  with-slash  |=(t=tape ^-(tape ?:(&(?=(^ t) =('/' (rear t))) t (snoc t '/'))))
+++  norm-href  |=(h=tape ^-(tape (fall (dav-href-path h) h)))
 ::  +caldav-pull: fetch every changed object, then apply them all onto
 ::  one read of the calendar
 ++  caldav-pull
   |=  [pre=@t id=@ta row=json]
   =/  m  (fiber:fiber:nexus ,json)
   ^-  form:m
+  ::  a calendar gone or made local asks nothing of the remote
+  ;<  c0=calendar:cal  bind:m  (read-cal pre)
+  ?.  (kind-is c0 id %caldav)  (pure:m row)
   =/  url=@t  (gs row 'url')
   =/  origin=tape  (dav-origin url)
   ;<  got=(unit [changes=(list [href=tape etag=@t gone=?]) token=@t])  bind:m  (caldav-changes row)
   ?~  got
     ::  the row remembers that the remote could not be listed, for the UI
     %-  pure:m
-    ?.  ?=(%o -.row)  row
-    [%o (~(put by p.row) 'error' s+'could not list the remote calendar (a server that refuses X-HTTP-Method-Override, or an incomplete answer)')]
-  =/  ids=(map @t json)  =/(i (obj:gcal row 'ids') ?:(?=(%o -.i) p.i ~))
+    (row-put row ~[['error' s+'could not list the remote calendar (no answer, a server that refuses X-HTTP-Method-Override, or an incomplete answer)']])
+  =/  ids=(map @t json)  (omap (obj:gcal row 'ids'))
   =/  by-href=(map tape @t)
     %-  ~(gas by *(map tape @t))
-    (turn ~(tap by ids) |=([u=@t v=json] [(fall (dav-href-path (trip (gs v 'href'))) (trip (gs v 'href'))) u]))
-  ::  1. the network: every changed object's text
+    (turn ~(tap by ids) |=([u=@t v=json] [(norm-href (trip (gs v 'href'))) u]))
+  ::  1. the network: every changed object's text. No answer ends the
+  ::  loop: a late answer would be taken for the next GET's.
   =|  fetched=(list [href=tape etag=@t gone=? body=@t])
   =/  failed=?  |
   =/  todo=(list [href=tape etag=@t gone=?])  changes.u.got
@@ -2711,6 +3088,9 @@
     ?:  gone.i.todo  $(todo t.todo, fetched [[href.i.todo '' & ''] fetched])
     ;<  [status=@ud hs=(list [@t @t]) body=@t]  bind:m
       (dav-fetch row %'GET' (crip (weld origin href.i.todo)) ~ ~)
+    ?:  =(0 status)
+      ~&  >>>  [%calendar-caldav-get-timeout href.i.todo]
+      $(todo ~, failed &)
     ?.  =(200 status)
       ::  a miss keeps the old token, so the next pass asks again
       ~&  >>>  [%calendar-caldav-get-failed href.i.todo status]
@@ -2718,58 +3098,57 @@
     =/  et=@t  ?:(=('' etag.i.todo) (dav-unquote (hdr-of hs 'etag')) etag.i.todo)
     $(todo t.todo, fetched [[href.i.todo et | body] fetched])
   ::  2. the calendar, once
-  ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road pre 'calendar.calendar') ~)
-  =/  c=calendar:cal  (cal-of cal-view)
+  ;<  c=calendar:cal  bind:m  (read-cal pre)
   =/  k=cal:cal  (fall (~(get by cals.c) id) fresh-cal:cal)
   ?.  ?=(%caldav kind.props.k)  (pure:m row)
   =/  k=cal:cal  k
   ::  a fetched object (or a remote delete) whose uid also changed here
   ::  since the last push, when the apply really replaces the local
   ::  copy, is a conflict: the remote wins, the local copy is logged
+  =/  since=@ud  (fall (gn row 'pushed_seq') 0)
   =/  sup=(set [@t @ud])  (suppressed row)
-  =/  pending=(set uid:cal)  (pending-uids k (fall (gn row 'pushed_seq') 0) sup)
+  =/  pending=(set uid:cal)  (pending-uids k since sup)
   =/  seq-at-peek=@ud  seq.k
-  =/  res=[k=cal:cal ids=(map @t json) clashes=(list [uid:cal (unit entry:cal)])]
+  =/  res=[k=cal:cal ids=(map @t json) clashes=(list [uid:cal (unit entry:cal) @t])]
     %+  roll  (flop fetched)
-    |=  [[href=tape etag=@t gone=? body=@t] acc=_[k=k ids=ids clashes=*(list [uid:cal (unit entry:cal)])]]
+    |=  [[href=tape etag=@t gone=? body=@t] acc=_[k=k ids=ids clashes=*(list [uid:cal (unit entry:cal) @t])]]
     ?:  gone
       =/  u=(unit @t)  (~(get by by-href) href)
       ?~  u  acc
       =/  old=(unit entry:cal)  (~(get by entries.k.acc) u.u)
-      =?  clashes.acc  &(?=(^ old) (~(has in pending) u.u))  [[u.u old] clashes.acc]
-      =.  k.acc
-        %+  roll  (dav-children k.acc u.u)
-        |=([ch=entry:cal a=_k.acc] (del-entry:cal a uid.ch))
-      acc(k (del-entry:cal k.acc u.u), ids (~(del by ids.acc) u.u))
-    =/  put=(unit [k=cal:cal =uid:cal])  (put-object k.acc (events:ics body) zone.c '' ~)
+      =?  clashes.acc  &(?=(^ old) (~(has in pending) u.u))  [[u.u old ''] clashes.acc]
+      acc(k (del-object k.acc u.u), ids (~(del by ids.acc) u.u))
+    ::  a remote's object is read softly: one it cannot phrase is skipped
+    =/  put=(unit [k=cal:cal =uid:cal])
+      (fall (mole |.((put-object k.acc (events:ics body) zone.c '' ~))) ~)
     ?~  put  acc
     =/  old=(unit entry:cal)  (~(get by entries.k.acc) uid.u.put)
-    =?  clashes.acc  &(?=(^ old) (~(has in pending) uid.u.put) !=(k.acc k.u.put))  [[uid.u.put old] clashes.acc]
+    =?  clashes.acc  &(?=(^ old) (~(has in pending) uid.u.put) !=(k.acc k.u.put))  [[uid.u.put old ''] clashes.acc]
     =.  k.acc  k.u.put
     acc(ids (~(put by ids.acc) uid.u.put (pairs:enjs:format ~[['href' s+(crip href)] ['etag' s+etag]])))
-  ;<  ~  bind:m
-    =/  m  (fiber:fiber:nexus ,~)
-    =/  todo=(list [uid:cal (unit entry:cal)])  clashes.res
-    |-  ^-  form:m
-    ?~  todo  (pure:m ~)
-    ;<  ~  bind:m
-      (google-conflict pre id -.i.todo +.i.todo '' 'changed on both sides; the remote kept')
-    $(todo t.todo)
+  ;<  ~  bind:m  (log-clashes pre id clashes.res 'changed on both sides; the remote kept')
+  ;<  now=@da  bind:m  get-time:io
+  =/  won=(set uid:cal)  (~(gas in *(set uid:cal)) (turn clashes.res |=([u=uid:cal *] u)))
+  =/  sup2=(set [@t @ud])
+    (~(uni in (~(uni in sup) (wrote-between k.res seq-at-peek seq.k.res))) (rows-of k.res since won))
+  =/  row2=json
+    %+  row-put  row
+    :~  ['sync_token' s+?:(failed (gs row 'sync_token') token.u.got)]
+        ['last_ms' (numb:enjs:format (da-to-ms now))]
+        ['error' s+'']
+        ['ids' [%o ids.res]]
+        ['suppressed' (suppress-json sup2 since)]
+    ==
   ;<  ~  bind:m
     ?:  =(k.res k)  (pure:(fiber:fiber:nexus ,~) ~)
     (dav-write pre c(cals (~(put by cals.c) id k.res)))
-  ;<  now=@da  bind:m  get-time:io
-  %-  pure:m
-  ?.  ?=(%o -.row)  row
-  :-  %o
-  %-  ~(gas by p.row)
-  :~  ['sync_token' s+?:(failed (gs row 'sync_token') token.u.got)]
-      ['last_ms' (numb:enjs:format (da-to-ms now))]
-      ['error' s+'']
-      ['ids' [%o ids.res]]
-      ['suppressed' (suppress-json (~(uni in sup) (wrote-between k.res seq-at-peek seq.k.res)) (fall (gn row 'pushed_seq') 0))]
-  ==
-::  +caldav-push: the log past the watermark, out as PUT and DELETE
+  ;<  ~  bind:m  (save-row pre 'caldav-remotes.json' id row2)
+  (pure:m row2)
+::  +caldav-push: the log past the watermark, out as PUT and DELETE. No
+::  answer, a server error or refused credentials stop the pass and keep
+::  the watermark; a remote that refuses one object (a read-only
+::  calendar's 403, a remote without VTODO refusing a task, RFC 4791
+::  5.3.2.1) is that object's refusal, logged.
 ++  caldav-push
   |=  [pre=@t id=@ta row=json]
   =/  m  (fiber:fiber:nexus ,json)
@@ -2777,44 +3156,35 @@
   =/  url=@t  (gs row 'url')
   =/  origin=tape  (dav-origin url)
   =/  since=@ud  (fall (gn row 'pushed_seq') 0)
-  =/  ids=(map @t json)  =/(i (obj:gcal row 'ids') ?:(?=(%o -.i) p.i ~))
-  ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road pre 'calendar.calendar') ~)
-  =/  c=calendar:cal  (cal-of cal-view)
+  =/  ids=(map @t json)  (omap (obj:gcal row 'ids'))
+  ;<  c=calendar:cal  bind:m  (read-cal pre)
   =/  k=(unit cal:cal)  (~(get by cals.c) id)
   ?~  k  (pure:m row)
   ?.  ?=(%caldav kind.props.u.k)  (pure:m row)
   ?.  (gth seq.u.k since)  (pure:m row)
   =/  sup=(set [@t @ud])  (suppressed row)
-  =/  changes=(list [uid:cal ?(%put %del)])
-    =/  latest=(map uid:cal ?(%put %del))
-      %+  roll  (tap:on-log:cal log.u.k)
-      |=  [[key=@ud val=logent:cal] acc=(map uid:cal ?(%put %del))]
-      ?.  (gth key since)  acc
-      ?^  (find "#" (trip uid.val))  acc
-      ?:  (~(has in sup) [uid.val key])  acc
-      (~(put by acc) uid.val kind.val)
-    ~(tap by latest)
+  =/  changes=(list [uid:cal ?(%put %del)])  (changes-since u.k since sup)
   ;<  now=@da  bind:m  get-time:io
   =/  stopped=?  |
+  =/  coll=tape  (with-slash (norm-href (trip url)))
   |-
   ?^  changes
     =/  [u=uid:cal what=?(%put %del)]  i.changes
     =/  known=json  (fall (~(get by ids) u) [%o ~])
     =/  href=tape
       =/  h=@t  (gs known 'href')
-      ?.  =('' h)  (fall (dav-href-path (trip h)) (trip h))
-      =/  base=tape  (trip url)
-      =?  base  !=('/' (rear base))  (snoc base '/')
-      =/  at=(unit @ud)  (find "//" base)
-      =/  path=tape  ?~(at base (slag (add (add 2 u.at) (fall (find "/" (slag (add 2 u.at) base)) 0)) base))
-      :(weld path (enc-seg:dav (trip u)) ".ics")
+      ?.  =('' h)  (norm-href (trip h))
+      (weld coll (weld (enc-seg:dav (trip u)) ".ics"))
     =/  etag=@t  (gs known 'etag')
     ?:  =(%del what)
       ?:  =('' (gs known 'href'))  $(changes t.changes)
       ;<  [status=@ud * *]  bind:m  (dav-fetch row %'DELETE' (crip (weld origin href)) ~ ~)
-      ?:  |(=(0 status) (gte status 500) =(401 status) =(403 status))
+      ?:  |(=(0 status) (gte status 500) =(401 status))
         ~&  >>>  [%calendar-caldav-push-stopped u status]
         $(changes ~, stopped &)
+      ;<  ~  bind:m
+        ?:  |((lth status 300) =(404 status) =(410 status))  (pure:(fiber:fiber:nexus ,~) ~)
+        (google-conflict pre id u ~ '' (crip "remote refused the delete ({(a-co:co status)})"))
       $(changes t.changes, ids (~(del by ids) u))
     =/  body=(unit @t)  (dav-object-ics c id u now)
     ?~  body  $(changes t.changes)
@@ -2824,10 +3194,7 @@
           :-  ['content-type' 'text/calendar; charset=utf-8']
           ?:(=('' etag) ~ ~[['if-match' (crip "\"{(trip etag)}\"")]])
       ==
-    ::  a remote without VTODO in its component set answers a task with
-    ::  403 (RFC 4791 5.3.2.1): that task's refusal, not a stop
-    =/  task=?  =/(e (~(get by entries.u.k) u) &(?=(^ e) ?=(%todo -.event.u.e)))
-    ?:  |(=(0 status) (gte status 500) =(401 status) &(=(403 status) !task))
+    ?:  |(=(0 status) (gte status 500) =(401 status))
       ~&  >>>  [%calendar-caldav-push-stopped u status]
       $(changes ~, stopped &)
     ?:  (gte status 400)
@@ -2839,13 +3206,12 @@
       changes  t.changes
       ids      (~(put by ids) u (pairs:enjs:format ~[['href' s+(crip href)] ['etag' s+new-etag]]))
     ==
+  =/  mark=@ud  ?:(stopped since seq.u.k)
   %-  pure:m
-  ?.  ?=(%o -.row)  row
-  :-  %o
-  %-  ~(gas by p.row)
+  %+  row-put  row
   :~  ['ids' [%o ids]]
-      ['pushed_seq' (numb:enjs:format ?:(stopped since seq.u.k))]
-      ['suppressed' (suppress-json sup ?:(stopped since seq.u.k))]
+      ['pushed_seq' (numb:enjs:format mark)]
+      ['suppressed' (suppress-json sup mark)]
   ==
 ::  ---- sharing a calendar with a ship ----
 ::  the calendar desk's instance lives at the same path on every ship
@@ -2861,7 +3227,7 @@
     %+  turn  (trip id)
     |=(c=@t ?:(|(&((gte c 'a') (lte c 'z')) &((gte c '0') (lte c '9')) =('-' c)) c '-'))
   (crip "cal-{safe}-{(trip mode)}")
-::  +ug-read-weir / +ug-read-ships: a group's how and who
+::  +ug-read-weir: a group's how
 ++  ug-read-weir
   |=  gdir=path
   =/  m  (fiber:fiber:nexus ,weir:nexus)
@@ -2870,14 +3236,6 @@
   ?~  hv  (pure:m *weir:nexus)
   ?.  ?=([%file *] u.hv)  (pure:m *weir:nexus)
   (pure:m (fall (mole |.(;;(weir:nexus (sang-noun:tarball sang.u.hv)))) *weir:nexus))
-++  ug-read-ships
-  |=  gdir=path
-  =/  m  (fiber:fiber:nexus ,(set @p))
-  ^-  form:m
-  ;<  wv=(unit view:nexus)  bind:m  (peek-soft:io [%& %& gdir %'who.ships'] ~)
-  ?~  wv  (pure:m ~)
-  ?.  ?=([%file *] u.wv)  (pure:m ~)
-  (pure:m (fall (mole |.(;;((set @p) (sang-noun:tarball sang.u.wv)))) ~))
 ::  +ug-set: a group's members and its weir, written whole
 ++  ug-set
   |=  [gname=@t ships=(set @p) pk=(set road:tarball) pok=(set road:tarball)]
@@ -2941,34 +3299,99 @@
       ?~  ics  ~
       `[u (pairs:enjs:format ~[['etag' s+etag.e] ['ics' s+u.ics]])]
   ==
-::  +share-pass: the host side — every shared calendar's file is brought
-::  up to its seq
+::  +share-pass: the host side. Every shared calendar's file follows its
+::  calendar, rebuilt when its seq, name or color moved. A shared
+::  calendar that is gone (deleted, unlinked, unfollowed) is unshared:
+::  its record, its groups and its file go, so a calendar that later
+::  gets the same id is not published to the old peers.
 ++  share-pass
   =/  m  (fiber:fiber:nexus ,~)
   ^-  form:m
   ;<  shares=json  bind:m  (read-json-grub './' 'shares.json')
-  =/  ids=(list @t)  ?:(?=(%o -.shares) (turn ~(tap by p.shares) |=([id=@t *] id)) ~)
+  =/  ids=(list @t)  ~(tap in ~(key by (omap shares)))
   ?:  =(~ ids)  (pure:m ~)
-  ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road './' 'calendar.calendar') ~)
-  =/  c=calendar:cal  (cal-of cal-view)
+  ;<  c=calendar:cal  bind:m  (read-cal './')
   ;<  now=@da  bind:m  get-time:io
   |-
   ?~  ids  (pure:m ~)
   =/  id=@ta  (crip (trip i.ids))
-  =/  k=(unit cal:cal)  (~(get by cals.c) id)
-  ?~  k  $(ids t.ids)
   =/  road=road:tarball  (cord-to-road:tarball (crip "./shares/{(trip id)}.json"))
+  =/  k=(unit cal:cal)  (~(get by cals.c) id)
+  ?~  k
+    ;<  base=(unit path)  bind:m  self-base
+    ;<  ~  bind:m
+      ?~  base  (pure:(fiber:fiber:nexus ,~) ~)
+      (set-share-groups u.base id ~)
+    ;<  *  bind:m  (cull-soft:io road)
+    ;<  *  bind:m  (cull-soft:io (cord-to-road:tarball (crip "./shares/{(trip id)}/")))
+    ;<  cur=json  bind:m  (read-json-grub './' 'shares.json')
+    ;<  ~  bind:m  (write-json-grub './' 'shares.json' [%o (~(del by (omap cur)) i.ids)])
+    ~&  >  [%calendar-share-dropped id]
+    $(ids t.ids)
   ;<  cur=(unit view:nexus)  bind:m  (peek-soft:io road ~)
-  =/  have-seq=@ud
-    ?~  cur  0
-    ?.  ?=([%file *] u.cur)  0
-    (fall (gn (fall (mole |.(!<(json (need-vase:tarball sang.u.cur)))) *json) 'seq') 0)
-  ?:  &(?=(^ cur) ?=([%file *] u.cur) =(have-seq seq.u.k))  $(ids t.ids)
-  =/  jon=json  (build-share-json c id now)
+  =/  have=json
+    ?.  ?=([~ %file *] cur)  *json
+    (fall (mole |.(!<(json (need-vase:tarball sang.u.cur)))) *json)
+  ::  a share made before the folder was published gets it, and its
+  ::  groups the road to it, once
+  ;<  idx=(unit view:nexus)  bind:m  (peek-soft:io (cord-to-road:tarball (crip "./shares/{(trip id)}/index.json")) ~)
+  =/  folded=?  ?=([~ %file *] idx)
+  ?:  ?&  folded
+          ?=([~ %file *] cur)
+          =(`seq.u.k (gn have 'seq'))
+          =(name.props.u.k (gs have 'name'))
+          =(color.props.u.k (gs have 'color'))
+      ==
+    $(ids t.ids)
+  ;<  ~  bind:m  (publish-share './' c id now)
   ;<  ~  bind:m
-    ?:  &(?=(^ cur) ?=([%file *] u.cur))  (over:io road [[/ %json] jon])
-    (make:io road |+[[[/ %json] jon] ~])
+    ?:  folded  (pure:(fiber:fiber:nexus ,~) ~)
+    ;<  base=(unit path)  bind:(fiber:fiber:nexus ,~)  self-base
+    ?~  base  (pure:(fiber:fiber:nexus ,~) ~)
+    (set-share-groups u.base id (omap (obj:gcal shares i.ids)))
   $(ids t.ids)
+::  +publish-share: a shared calendar as its peers read it. The whole file,
+::  <id>.json (every object's text: a first pull, a big change, a peer on
+::  older code), and the folder a peer reads a change from: <id>/index.json
+::  (each object's etag and its file) and one file per object, the folder
+::  written whole in one event.
+::  ponytail: every object's text is rendered on each publish; keep the
+::  text of an unchanged etag from the last one if a big calendar makes
+::  that slow
+++  publish-share
+  |=  [pre=@t c=calendar:cal id=@ta now=@da]
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  =/  froad=road:tarball  (cord-to-road:tarball (crip "{(trip pre)}shares/{(trip id)}.json"))
+  =/  fj=json  (build-share-json c id now)
+  ;<  cur=(unit view:nexus)  bind:m  (peek-soft:io froad ~)
+  ;<  ~  bind:m
+    ?:  ?=([~ %file *] cur)  (over:io froad [[/ %json] fj])
+    (make:io froad |+[[[/ %json] fj] ~])
+  =/  objects=(list [u=@t o=json])  ~(tap by (omap (obj:gcal fj 'objects')))
+  =/  index=json
+    %-  pairs:enjs:format
+    :~  ['seq' (fall (bind (gn fj 'seq') numb:enjs:format) ~)]
+        :-  'objects'
+        :-  %o
+        %-  ~(gas by *(map @t json))
+        %+  turn  objects
+        |=  [u=@t o=json]
+        [u (pairs:enjs:format ~[['etag' s+(gs o 'etag')] ['file' s+(share-object-name u)]])]
+    ==
+  =/  bol=bole:tarball
+    %+  roll  objects
+    |=  [[u=@t o=json] acc=bole:tarball]
+    %+  ~(put bo:tarball acc)  [/ (share-object-name u)]
+    [[/ %json] (pairs:enjs:format ~[['uid' s+u] ['etag' s+(gs o 'etag')] ['ics' s+(gs o 'ics')]])]
+  =.  bol  (~(put bo:tarball bol) [/ %'index.json'] [[/ %json] index])
+  (over-fold:io (cord-to-road:tarball (crip "{(trip pre)}shares/{(trip id)}/")) bol)
+::  +share-object-name: an object's file in a share's folder, named by a
+::  hash of its uid (a uid can hold any character a file name cannot)
+++  share-object-name
+  |=  u=@t
+  ^-  @ta
+  (crip (weld ((x-co:co 32) (sham u)) ".json"))
 ::  +share-request: the owner's routes under /apps/calendar/share/
 ++  share-request
   |=  [eyre-id=@ta req=inbound-request:eyre our=@p rest=path]
@@ -2977,12 +3400,6 @@
   =/  jon=json
     (fall (de:json:html ?~(body.request.req '' q.u.body.request.req)) *json)
   =/  post=?  =('POST' method.request.req)
-  =/  send-err
-    |=  [code=@ud why=@t]
-    =/  m  (fiber:fiber:nexus ,~)
-    ^-  form:m
-    ;<  ~  bind:m  (send-simple:srv eyre-id [[code ~] `(as-octs:mimes:html why)])
-    (pure:m ~)
   ?:  ?=([%'shares.json' ~] rest)
     ;<  shares=json  bind:m  (read-json-grub '../' 'shares.json')
     ;<  offers=json  bind:m  (read-json-grub '../' 'share-offers.json')
@@ -2998,6 +3415,8 @@
           ['mode' s+(gs r 'mode')]
           ['last_ms' (numb:enjs:format (fall (gn r 'last_ms') 0))]
           ['error' s+(gs r 'error')]
+          ['via' s+(gs r 'via')]
+          ['fetched' (numb:enjs:format (fall (gn r 'fetched') 0))]
       ==
     (send-json eyre-id (pairs:enjs:format ~[['shares' shares] ['offers' offers] ['accepted' accepted]]))
   ::  share {id, ship, mode}: the ship joins the calendar's group and is
@@ -3007,33 +3426,27 @@
     =/  id=@ta  (crip (trip (gs jon 'id')))
     =/  shp=(unit @p)  (slaw %p (gs jon 'ship'))
     =/  mode=@t  ?:(=('edit' (gs jon 'mode')) 'edit' 'read')
-    ?~  shp  (send-err 400 'calendar: bad ship name')
-    ?:  =(u.shp our)  (send-err 400 'calendar: that is this ship')
+    ?~  shp  (send-text eyre-id 400 'calendar: bad ship name')
+    ?:  =(u.shp our)  (send-text eyre-id 400 'calendar: that is this ship')
     ;<  base=(unit path)  bind:m  self-base
-    ?~  base  (send-err 500 'calendar: cannot find where this app is installed')
-    ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road '../' 'calendar.calendar') ~)
-    =/  c=calendar:cal  (cal-of cal-view)
+    ?~  base  (send-text eyre-id 500 'calendar: cannot find where this app is installed')
+    ;<  c=calendar:cal  bind:m  (read-cal '../')
     =/  k=(unit cal:cal)  (~(get by cals.c) id)
-    ?~  k  (send-err 404 'calendar: no such calendar')
+    ?~  k  (send-text eyre-id 404 'calendar: no such calendar')
     ::  a Google or followed calendar can be shared onward: the peer's
     ::  edits land here and the sync carries them up to the source, as if
     ::  made here. A calendar another ship shared with us is not ours to
     ::  share again.
-    ?:  ?=(%ship kind.props.u.k)  (send-err 400 'calendar: a calendar shared with you cannot be shared onward')
+    ?:  ?=(%ship kind.props.u.k)  (send-text eyre-id 400 'calendar: a calendar shared with you cannot be shared onward')
     ::  1. the record
     ;<  shares=json  bind:m  (read-json-grub '../' 'shares.json')
     =/  all=(map @t json)  ?:(?=(%o -.shares) p.shares ~)
     =/  mine=(map @t json)  =/(j (~(get by all) id) ?:(?=([~ %o *] j) p.u.j ~))
     =.  mine  (~(put by mine) (scot %p u.shp) s+mode)
     ;<  ~  bind:m  (write-json-grub '../' 'shares.json' [%o (~(put by all) id [%o mine])])
-    ::  2. the share file, now
+    ::  2. the share file and folder, now
     ;<  now=@da  bind:m  get-time:io
-    =/  froad=road:tarball  (cord-to-road:tarball (crip "../shares/{(trip id)}.json"))
-    ;<  cur=(unit view:nexus)  bind:m  (peek-soft:io froad ~)
-    =/  fj=json  (build-share-json c id now)
-    ;<  ~  bind:m
-      ?:  &(?=(^ cur) ?=([%file *] u.cur))  (over:io froad [[/ %json] fj])
-      (make:io froad |+[[[/ %json] fj] ~])
+    ;<  ~  bind:m  (publish-share '../' c id now)
     ::  3. the groups: read-only ships and editing ships
     ;<  ~  bind:m  (set-share-groups u.base id mine)
     ::  4. the offer, to the peer's inbox
@@ -3052,9 +3465,9 @@
   ?:  &(post ?=([%revoke ~] rest))
     =/  id=@ta  (crip (trip (gs jon 'id')))
     =/  shp=(unit @p)  (slaw %p (gs jon 'ship'))
-    ?~  shp  (send-err 400 'calendar: bad ship name')
+    ?~  shp  (send-text eyre-id 400 'calendar: bad ship name')
     ;<  base=(unit path)  bind:m  self-base
-    ?~  base  (send-err 500 'calendar: cannot find where this app is installed')
+    ?~  base  (send-text eyre-id 500 'calendar: cannot find where this app is installed')
     ;<  shares=json  bind:m  (read-json-grub '../' 'shares.json')
     =/  all=(map @t json)  ?:(?=(%o -.shares) p.shares ~)
     =/  mine=(map @t json)  =/(j (~(get by all) id) ?:(?=([~ %o *] j) p.u.j ~))
@@ -3073,9 +3486,8 @@
     ;<  offers=json  bind:m  (read-json-grub '../' 'share-offers.json')
     =/  cur=(map @t json)  ?:(?=(%o -.offers) p.offers ~)
     =/  offer=(unit json)  (~(get by cur) key)
-    ?~  offer  (send-err 404 'calendar: no such offer')
-    ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road '../' 'calendar.calendar') ~)
-    =/  c=calendar:cal  (cal-of cal-view)
+    ?~  offer  (send-text eyre-id 404 'calendar: no such offer')
+    ;<  c=calendar:cal  bind:m  (read-cal '../')
     ;<  now=@da  bind:m  get-time:io
     =/  id=@ta
       =/  first=@ta  (crip "s-{(trip (scot %uw (mug key)))}")
@@ -3084,7 +3496,7 @@
       ?.  (~(has by cals.c) first)  first
       (crip "s-{(trip (scot %uw (mug [key now])))}")
     =/  mode=@t  (gs u.offer 'mode')
-    =/  k=cal:cal  fresh-cal:cal
+    =/  k=cal:cal  (born now)
     =/  nm=@t  (gs u.offer 'name')
     =.  props.k  [?:(=('' nm) key nm) ?:(=('' (gs u.offer 'color')) '#101541' (gs u.offer 'color')) %ship `(crip "{(trip key)}#{(trip mode)}")]
     ;<  ~  bind:m  (dav-write '../' c(cals (~(put by cals.c) id k)))
@@ -3113,13 +3525,15 @@
   ?:  &(post ?=([%sync ~] rest))
     ;<  ~  bind:m  (google-prod '../')
     (send-json eyre-id (pairs:enjs:format ~[['ok' b+&]]))
-  (send-err 404 'calendar: no such share route')
+  (send-text eyre-id 404 'calendar: no such share route')
 ::  +set-share-groups: the two groups of one calendar, from its record
 ++  set-share-groups
   |=  [base=path id=@ta mine=(map @t json)]
   =/  m  (fiber:fiber:nexus ,~)
   ^-  form:m
   =/  file=road:tarball  [%& %& (snoc base %shares) (crip "{(trip id)}.json")]
+  ::  and the folder a peer reads a change from (+publish-share)
+  =/  folder=road:tarball  [%& %| (snoc (snoc base %shares) id)]
   =/  cal-road=road:tarball  [%& %& base %'calendar.calendar']
   =/  readers=(set @p)
     %-  ~(gas in *(set @p))
@@ -3129,8 +3543,8 @@
     %-  ~(gas in *(set @p))
     %+  murn  ~(tap by mine)
     |=([s=@t v=json] ?:(&(?=(%s -.v) =('edit' p.v)) (slaw %p s) ~))
-  ;<  ~  bind:m  (ug-set (group-name id 'read') readers (sy ~[file]) ~)
-  (ug-set (group-name id 'edit') editors (sy ~[file]) (sy ~[cal-road]))
+  ;<  ~  bind:m  (ug-set (group-name id 'read') readers (sy ~[file folder]) ~)
+  (ug-set (group-name id 'edit') editors (sy ~[file folder]) (sy ~[cal-road]))
 ::  +remote-poke-wait: a poke to another ship's grubbery, answered or
 ::  timed out (a peer that is down must not park the fiber)
 ++  remote-poke-wait
@@ -3168,11 +3582,11 @@
     ==
   ;<  ~  bind:m  (cancel-timer:io /remote)
   (pure:m ok)
-::  +peek-remote-wait: a peek of another ship's file, ~ on veto, miss or
-::  timeout
+::  +peek-remote-wait: a peek of another ship's file: ~ when no answer came
+::  (timeout), [~ ~] when it was refused, else the view
 ++  peek-remote-wait
   |=  [target=@p road=road:tarball]
-  =/  m  (fiber:fiber:nexus ,(unit view:nexus))
+  =/  m  (fiber:fiber:nexus ,(unit (unit view:nexus)))
   ^-  form:m
   ;<  now=@da  bind:m  get-time:io
   =/  until=@da  (add now ~s30)
@@ -3189,47 +3603,70 @@
     ==
   ;<  ~  bind:m  (send-dart:io %node pw rr %peek ~ ~ %.y)
   ;<  ~  bind:m  (set-timer:io /remote until)
-  ;<  got=(unit view:nexus)  bind:m
+  ;<  got=(unit (unit view:nexus))  bind:m
     |=  input:fiber:nexus
     :+  ~  q.state
     ?+  in  [%skip ~]
         ~  [%wait ~]
         [~ %veto %node * * *]
-      ?.(=(pw wire.dart.u.in) [%skip ~] [%done ~])
+      ?.(=(pw wire.dart.u.in) [%skip ~] [%done `~])
         [~ %peek * *]
-      ?.(=(pw wire.u.in) [%skip ~] [%done `view.u.in])
+      ?.(=(pw wire.u.in) [%skip ~] [%done ``view.u.in])
         [~ %poke * *]
       ?.  =([/ %timer-wake] p.sage.u.in)  [%skip ~]
       ?.(?=([%remote *] !<(path q.sage.u.in)) [%skip ~] [%done ~])
     ==
   ;<  ~  bind:m  (cancel-timer:io /remote)
   (pure:m got)
-::  +ship-pass: the peer side — every accepted calendar: pull (when
-::  asked), then push
-++  ship-pass
-  |=  pull=?
-  =/  m  (fiber:fiber:nexus ,~)
+::  +share-fetch: what a host shares of one calendar, {seq, objects},
+::  with the text of every object that moved. The index first, then only
+::  the objects whose etag differs from ours; the whole file when there
+::  is no index to read (a host on older code, or groups that do not
+::  reach the folder yet) or when many moved (a first pull). An error
+::  text when the host did not answer.
+::  ponytail: 40 objects fetched one by one; batch them if the peeks
+::  are slow over a real network
+++  share-fetch
+  |=  [host=@p base=path hcal=@t etags=(map @t json)]
+  =/  m  (fiber:fiber:nexus ,(each json @t))
   ^-  form:m
-  =/  pre=@t  './'
-  ;<  rows-j=json  bind:m  (read-json-grub pre 'ship-remotes.json')
-  =/  rows=(list [id=@t row=json])  ?:(?=(%o -.rows-j) ~(tap by p.rows-j) ~)
-  =|  done=(map @t json)
+  =/  dir=path  (snoc (snoc base %shares) (crip (trip hcal)))
+  =/  quiet=@t  'the host did not answer (down, or the share was revoked)'
+  ;<  ix=(unit (unit view:nexus))  bind:m  (peek-remote-wait host [%& %& dir %'index.json'])
+  ?~  ix  (pure:m |+quiet)
+  ?.  ?=([~ %file *] u.ix)  (share-whole host base hcal)
+  =/  index=json  (fall (mole |.(!<(json (need-vase:tarball sang.u.u.ix)))) *json)
+  =/  listed=(map @t json)  (omap (obj:gcal index 'objects'))
+  =/  moved=(list [u=@t o=json])
+    (skim ~(tap by listed) |=([u=@t o=json] !=((gs o 'etag') (gs [%o etags] u))))
+  ?:  (gth (lent moved) 40)  (share-whole host base hcal)
+  =|  got=(map @t json)
   |-
-  ?~  rows
-    ?:  =(~ done)  (pure:m ~)
-    ;<  fresh=json  bind:m  (read-json-grub pre 'ship-remotes.json')
-    =/  cur=(map @t json)  ?:(?=(%o -.fresh) p.fresh ~)
-    =/  merged=(map @t json)
-      %+  roll  ~(tap by done)
-      |=  [[id=@t row=json] acc=_cur]
-      ?.((~(has by acc) id) acc (~(put by acc) id row))
-    (write-json-grub pre 'ship-remotes.json' [%o merged])
-  ;<  row=json  bind:m
-    ?.  pull  (pure:(fiber:fiber:nexus ,json) row.i.rows)
-    (ship-pull pre (crip (trip id.i.rows)) row.i.rows)
-  ;<  row=json  bind:m  (ship-push pre (crip (trip id.i.rows)) row)
-  ?:  =(row row.i.rows)  $(rows t.rows)
-  $(rows t.rows, done (~(put by done) id.i.rows row))
+  ?~  moved
+    %-  pure:m
+    :-  %&
+    %-  pairs:enjs:format
+    :~  ['seq' (fall (bind (gn index 'seq') numb:enjs:format) ~)]
+        ['objects' [%o (~(uni by listed) got)]]
+        ['via' s+'index']
+        ['fetched' (numb:enjs:format ~(wyt by got))]
+    ==
+  ;<  ov=(unit (unit view:nexus))  bind:m
+    (peek-remote-wait host [%& %& dir (crip (trip (gs o.i.moved 'file')))])
+  ?.  ?=([~ ~ %file *] ov)  (pure:m |+'the host did not answer for an event; the next pass asks again')
+  =/  oj=json  (fall (mole |.(!<(json (need-vase:tarball sang.u.u.ov)))) *json)
+  $(moved t.moved, got (~(put by got) u.i.moved oj))
+::  +share-whole: a host's whole share file, every object's text
+++  share-whole
+  |=  [host=@p base=path hcal=@t]
+  =/  m  (fiber:fiber:nexus ,(each json @t))
+  ^-  form:m
+  ;<  vw=(unit (unit view:nexus))  bind:m
+    (peek-remote-wait host [%& %& (snoc base %shares) (crip "{(trip hcal)}.json")])
+  ?~  vw  (pure:m |+'the host did not answer (down, or the share was revoked)')
+  ?.  ?=([~ %file *] u.vw)  (pure:m |+'the host has no such shared calendar any more')
+  =/  share=json  (fall (mole |.(!<(json (need-vase:tarball sang.u.u.vw)))) *json)
+  (pure:m &+(row-put share ~[['via' s+'whole']]))
 ::  +ship-pull: the host's share file, diffed by etag against what we
 ::  hold; changed objects are applied, missing ones deleted
 ++  ship-pull
@@ -3238,75 +3675,76 @@
   ^-  form:m
   =/  host=(unit @p)  (slaw %p (gs row 'host'))
   ?~  host  (pure:m row)
+  ::  a calendar gone or made local asks nothing of the host
+  ;<  c0=calendar:cal  bind:m  (read-cal pre)
+  ?.  (kind-is c0 id %ship)  (pure:m row)
   =/  base=path  (fall (mole |.((stab (gs row 'base')))) cal-instance)
   =/  hcal=@t  (gs row 'cal')
-  ;<  vw=(unit view:nexus)  bind:m
-    (peek-remote-wait u.host [%& %& (snoc base %shares) (crip "{(trip hcal)}.json")])
-  ?~  vw
-    %-  pure:m
-    ?.(?=(%o -.row) row [%o (~(put by p.row) 'error' s+'the host did not answer (down, or the share was revoked)')])
-  ?.  ?=([%file *] u.vw)
-    %-  pure:m
-    ?.(?=(%o -.row) row [%o (~(put by p.row) 'error' s+'the host has no such shared calendar any more')])
-  =/  share=json  (fall (mole |.(!<(json (need-vase:tarball sang.u.vw)))) *json)
+  ;<  got=(each json @t)  bind:m  (share-fetch u.host base hcal (omap (obj:gcal row 'etags')))
+  ?:  ?=(%| -.got)  (pure:m (row-put row ~[['error' s+p.got]]))
+  =/  share=json  p.got
+  ::  every pull diffs, even when the host's seq has not moved: an edit
+  ::  the host refused changed nothing there, and our copy of it must
+  ::  still give way to the host's (an unchanged object costs a compare)
   =/  rseq=@ud  (fall (gn share 'seq') 0)
-  ?:  =(rseq (fall (gn row 'seq') 0))
-    (pure:m ?.(?=(%o -.row) row [%o (~(put by p.row) 'error' s+'')]))
-  =/  objects=(map @t json)  =/(o (obj:gcal share 'objects') ?:(?=(%o -.o) p.o ~))
-  =/  etags=(map @t json)  =/(e (obj:gcal row 'etags') ?:(?=(%o -.e) p.e ~))
-  ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road pre 'calendar.calendar') ~)
-  =/  c=calendar:cal  (cal-of cal-view)
+  =/  objects=(map @t json)  (omap (obj:gcal share 'objects'))
+  =/  etags=(map @t json)  (omap (obj:gcal row 'etags'))
+  ;<  c=calendar:cal  bind:m  (read-cal pre)
   =/  k=cal:cal  (fall (~(get by cals.c) id) fresh-cal:cal)
   ?.  ?=(%ship kind.props.k)  (pure:m row)
   =/  k=cal:cal  k
+  =/  since=@ud  (fall (gn row 'pushed_seq') 0)
   =/  sup=(set [@t @ud])  (suppressed row)
-  =/  pending=(set uid:cal)  (pending-uids k (fall (gn row 'pushed_seq') 0) sup)
+  =/  pending=(set uid:cal)  (pending-uids k since sup)
   =/  seq-at-peek=@ud  seq.k
-  =/  res=[k=cal:cal etags=(map @t json) clashes=(list [uid:cal (unit entry:cal)])]
+  =/  res=[k=cal:cal etags=(map @t json) clashes=(list [uid:cal (unit entry:cal) @t])]
     %+  roll  ~(tap by objects)
-    |=  [[u=@t o=json] acc=_[k=k etags=*(map @t json) clashes=*(list [uid:cal (unit entry:cal)])]]
+    |=  [[u=@t o=json] acc=_[k=k etags=*(map @t json) clashes=*(list [uid:cal (unit entry:cal) @t])]]
     =/  et=@t  (gs o 'etag')
     =.  etags.acc  (~(put by etags.acc) u s+et)
     ?:  =(et (gs [%o etags] u))  acc
-    =/  put=(unit [k=cal:cal =uid:cal])  (put-object k.acc (events:ics (gs o 'ics')) zone.c u ~)
+    ::  the host's object is read softly: one it cannot phrase is skipped;
+    ::  it is kept under the host's key, whatever its own UID
+    =/  put=(unit [k=cal:cal =uid:cal])
+      %-  fall  :_  ~
+      %-  mole  |.
+      =/  al  (alias-object (events:ics (gs o 'ics')) u)
+      (put-object k.acc ves.al zone.c u extra.al)
     ?~  put  acc
     =/  old=(unit entry:cal)  (~(get by entries.k.acc) uid.u.put)
-    =?  clashes.acc  &(?=(^ old) (~(has in pending) uid.u.put) !=(k.acc k.u.put))  [[uid.u.put old] clashes.acc]
+    =?  clashes.acc  &(?=(^ old) (~(has in pending) uid.u.put) !=(k.acc k.u.put))  [[uid.u.put old ''] clashes.acc]
     acc(k k.u.put)
   ::  what the host no longer has, goes
-  =/  res2=[k=cal:cal clashes=(list [uid:cal (unit entry:cal)])]
+  =/  res2=[k=cal:cal clashes=(list [uid:cal (unit entry:cal) @t])]
     %+  roll  ~(tap by etags)
     |=  [[u=@t *] acc=_[k=k.res clashes=clashes.res]]
     ?:  (~(has by objects) u)  acc
     =/  old=(unit entry:cal)  (~(get by entries.k.acc) u)
     ?~  old  acc
-    =?  clashes.acc  (~(has in pending) u)  [[u old] clashes.acc]
-    =.  k.acc
-      %+  roll  (dav-children k.acc u)
-      |=([ch=entry:cal a=_k.acc] (del-entry:cal a uid.ch))
-    acc(k (del-entry:cal k.acc u))
-  ;<  ~  bind:m
-    =/  m  (fiber:fiber:nexus ,~)
-    =/  todo=(list [uid:cal (unit entry:cal)])  clashes.res2
-    |-  ^-  form:m
-    ?~  todo  (pure:m ~)
-    ;<  ~  bind:m
-      (google-conflict pre id -.i.todo +.i.todo '' 'changed on both sides; the host kept')
-    $(todo t.todo)
+    =?  clashes.acc  (~(has in pending) u)  [[u old ''] clashes.acc]
+    acc(k (del-object k.acc u))
+  ;<  ~  bind:m  (log-clashes pre id clashes.res2 'changed on both sides; the host kept')
+  ;<  now=@da  bind:m  get-time:io
+  =/  won=(set uid:cal)  (~(gas in *(set uid:cal)) (turn clashes.res2 |=([u=uid:cal *] u)))
+  =/  sup2=(set [@t @ud])
+    (~(uni in (~(uni in sup) (wrote-between k.res2 seq-at-peek seq.k.res2))) (rows-of k.res2 since won))
+  =/  row2=json
+    %+  row-put
+      ::  how the last pull that changed something read the host: its
+      ::  index and the objects that moved, or its whole file
+      ?:  =(k.res2 k)  row
+      (row-put row ~[['via' s+(gs share 'via')] ['fetched' (fall (bind (gn share 'fetched') numb:enjs:format) (numb:enjs:format 0))]])
+    :~  ['seq' (numb:enjs:format rseq)]
+        ['etags' [%o etags.res]]
+        ['last_ms' (numb:enjs:format (da-to-ms now))]
+        ['error' s+'']
+        ['suppressed' (suppress-json sup2 since)]
+    ==
   ;<  ~  bind:m
     ?:  =(k.res2 k)  (pure:(fiber:fiber:nexus ,~) ~)
     (dav-write pre c(cals (~(put by cals.c) id k.res2)))
-  ;<  now=@da  bind:m  get-time:io
-  %-  pure:m
-  ?.  ?=(%o -.row)  row
-  :-  %o
-  %-  ~(gas by p.row)
-  :~  ['seq' (numb:enjs:format rseq)]
-      ['etags' [%o etags.res]]
-      ['last_ms' (numb:enjs:format (da-to-ms now))]
-      ['error' s+'']
-      ['suppressed' (suppress-json (~(uni in sup) (wrote-between k.res2 seq-at-peek seq.k.res2)) (fall (gn row 'pushed_seq') 0))]
-  ==
+  ;<  ~  bind:m  (save-row pre 'ship-remotes.json' id row2)
+  (pure:m row2)
 ::  +ship-push: our changes to an edit-mode shared calendar, as pokes to
 ::  the host
 ++  ship-push
@@ -3318,8 +3756,7 @@
   =/  base=path  (fall (mole |.((stab (gs row 'base')))) cal-instance)
   =/  hcal=@t  (gs row 'cal')
   =/  since=@ud  (fall (gn row 'pushed_seq') 0)
-  ;<  cal-view=view:nexus  bind:m  (peek:io (grub-road pre 'calendar.calendar') ~)
-  =/  c=calendar:cal  (cal-of cal-view)
+  ;<  c=calendar:cal  bind:m  (read-cal pre)
   =/  k=(unit cal:cal)  (~(get by cals.c) id)
   ?~  k  (pure:m row)
   ?.  ?=(%ship kind.props.u.k)  (pure:m row)
@@ -3329,25 +3766,15 @@
   ::  mode is for display): nothing to push, so the watermark just
   ::  follows the local seq and the pull's suppressed rows are pruned
   ?:  (ship-read-only c id)
-    %-  pure:m
-    ?.  ?=(%o -.row)  row
-    [%o (~(gas by p.row) ~[['pushed_seq' (numb:enjs:format seq.u.k)] ['suppressed' (suppress-json sup seq.u.k)]])]
-  =/  changes=(list [uid:cal ?(%put %del)])
-    =/  latest=(map uid:cal ?(%put %del))
-      %+  roll  (tap:on-log:cal log.u.k)
-      |=  [[key=@ud val=logent:cal] acc=(map uid:cal ?(%put %del))]
-      ?.  (gth key since)  acc
-      ?^  (find "#" (trip uid.val))  acc
-      ?:  (~(has in sup) [uid.val key])  acc
-      (~(put by acc) uid.val kind.val)
-    ~(tap by latest)
+    (pure:m (row-put row ~[['pushed_seq' (numb:enjs:format seq.u.k)] ['suppressed' (suppress-json sup seq.u.k)]]))
+  =/  changes=(list [uid:cal ?(%put %del)])  (changes-since u.k since sup)
   ;<  now=@da  bind:m  get-time:io
   =/  cal-lane=lane:tarball  [%& base %'calendar.calendar']
   =/  stopped=?  |
   ::  the row's etags follow what we push: etags are content hashes,
   ::  so a host that later puts the old content back would otherwise
   ::  look unchanged against the etag of our last pull and be skipped
-  =/  etags=(map @t json)  =/(e (obj:gcal row 'etags') ?:(?=(%o -.e) p.e ~))
+  =/  etags=(map @t json)  (omap (obj:gcal row 'etags'))
   |-
   ?^  changes
     =/  [u=uid:cal what=?(%put %del)]  i.changes
@@ -3356,7 +3783,7 @@
         (pairs:enjs:format ~[['action' s+'share-del'] ['cal' s+hcal] ['uid' s+u]])
       =/  ics=(unit @t)  (dav-object-ics c id u now)
       ?~  ics  [%o ~]
-      (pairs:enjs:format ~[['action' s+'share-put'] ['cal' s+hcal] ['ics' s+u.ics]])
+      (pairs:enjs:format ~[['action' s+'share-put'] ['cal' s+hcal] ['uid' s+u] ['ics' s+u.ics]])
     ?:  =([%o ~] body)  $(changes t.changes)
     ;<  ok=?  bind:m  (remote-poke-wait u.host cal-lane body)
     ?.  ok
@@ -3367,51 +3794,71 @@
       =/  e=(unit entry:cal)  (~(get by entries.u.k) u)
       ?~(e etags (~(put by etags) u s+etag.u.e))
     $(changes t.changes)
+  =/  mark=@ud  ?:(stopped since seq.u.k)
   %-  pure:m
-  ?.  ?=(%o -.row)  row
-  :-  %o
-  %-  ~(gas by p.row)
-  :~  ['pushed_seq' (numb:enjs:format ?:(stopped since seq.u.k))]
-      ['suppressed' (suppress-json sup ?:(stopped since seq.u.k))]
+  %+  row-put  row
+  :~  ['pushed_seq' (numb:enjs:format mark)]
+      ['suppressed' (suppress-json sup mark)]
       ['etags' [%o etags]]
   ==
-::  +google-prod: wake the sync fiber now
+::  +google-prod: wake the sync fiber (every backend) now
 ++  google-prod
   |=  pre=@t
   =/  m  (fiber:fiber:nexus ,~)
   ^-  form:m
-  (poke-soft-unit (grub-road pre 'google.sig'))
-++  poke-soft-unit
-  |=  =road:tarball
-  =/  m  (fiber:fiber:nexus ,~)
-  ^-  form:m
-  ;<  *  bind:m  (poke-soft:io road [[/ %json] `json`[%o ~]])
+  ;<  *  bind:m  (poke-soft:io (grub-road pre 'google.sig') [[/ %json] `json`[%o ~]])
   (pure:m ~)
-++  get-meta
-  |=  e=event:cal
-  ^-  meta:cal
-  ?-(-.e %timed meta.e, %allday meta.e, %date meta.e, %todo meta.e)
+::  +locate: an entry by id, in the calendar named home when it holds one
+::  (the same UID can live in two calendars), else in whichever does
+++  locate
+  |=  [c=calendar:cal home=@ta id=@ta]
+  ^-  (unit [cid=@ta e=entry:cal])
+  =/  k=(unit cal:cal)  (~(get by cals.c) home)
+  =/  e=(unit entry:cal)  ?~(k ~ (~(get by entries.u.k) id))
+  ?^  e  `[home u.e]
+  (find-entry:cal c id)
+::  +event-of: one event by id, as +locate finds it
+++  event-of
+  |=  [c=calendar:cal home=@ta id=@ta]
+  ^-  (unit event:cal)
+  (bind (locate c home id) |=([* e=entry:cal] event.e))
+::  +keyed: every live entry keyed <calendar>/<uid>, so the same UID in two
+::  calendars is two events, each shown and each addressed through its
+::  own calendar. A cancelled one (STATUS:CANCELLED) is not shown.
+++  keyed
+  |=  c=calendar:cal
+  ^-  (map eid:cal entry:cal)
+  %-  ~(gas by *(map eid:cal entry:cal))
+  %-  zing
+  %+  turn  ~(tap by cals.c)
+  |=  [id=@ta k=cal:cal]
+  %+  murn  ~(tap by entries.k)
+  |=  [u=uid:cal e=entry:cal]
+  ^-  (unit [eid:cal entry:cal])
+  ?:  (cancelled e)  ~
+  `[(crip "{(trip id)}/{(trip u)}") e]
+++  keyed-events  |=(c=calendar:cal (~(run by (keyed c)) |=(e=entry:cal event.e)))
+::  +unkey: a <calendar>/<uid> key back to its halves (calendar ids have no
+::  slash). A key from a cache made before calendars were in it is a uid.
+++  unkey
+  |=  key=eid:cal
+  ^-  [cid=@ta =uid:cal]
+  =/  t=tape  (trip key)
+  =/  at=(unit @ud)  (find "/" t)
+  ?~  at  ['' key]
+  [(crip (scag u.at t)) (crip (slag +(u.at) t))]
+::  +cancelled: an entry its source marked STATUS:CANCELLED
+++  cancelled
+  |=  e=entry:cal
+  ^-  ?
+  =/  st=(unit prop:ics)  (get-prop:ics props.e 'STATUS')
+  &(?=(^ st) =('CANCELLED' v.u.st))
 ::  +ev-kind: the recurrence kind name, or 'date'
 ::
 ++  ev-kind
   |=  e=event:cal
   ^-  @t
   ?-(-.e %date 'date', %todo 'todo', %timed name.kind.recur.e, %allday name.kind.recur.e)
-::  +carry-except: preserve the old event's skipped indices onto the
-::  freshly-parsed replacement (only where both have a bound)
-::
-++  carry-except
-  |=  [old=event:cal new=event:cal]
-  ^-  event:cal
-  =/  ex=(set @ud)
-    ?-(-.old ?(%date %todo) ~, %timed except.bound.old, %allday except.bound.old)
-  ?~  ex  new
-  ?-  -.new
-    ?(%date %todo)  new
-    %timed   new(except.bound ex)
-    %allday  new(except.bound ex)
-  ==
-::
 ++  gs
   |=  [jon=json k=@t]
   ^-  @t
@@ -3429,7 +3876,7 @@
   (rush p.u.j dem)
 ::
 ++  ms-to-da  |=(ms=@ud `@da`(add ~1970.1.1 (div (mul ms ~s1) 1.000)))
-++  da-to-ms  |=(d=@da `@ud`?:((lth d ~1970.1.1) 0 (div (mul (sub d ~1970.1.1) 1.000) ~s1)))
+++  da-to-ms  da-to-ms:cal
 ::
 ++  ms-arg
   |=  [args=quay:eyre k=@t]
@@ -3438,41 +3885,46 @@
   ?~  v  ~
   (bind (rush u.v dem) ms-to-da)
 ::
+::  +cross-site: a request another site's page made, as the browser
+::  says (Sec-Fetch-Site). One without the header (curl, the gates, an
+::  old browser) is not refused.
+++  cross-site
+  |=  req=inbound-request:eyre
+  ^-  ?
+  =/  site=(unit @t)  (get-header:http 'sec-fetch-site' header-list.request.req)
+  ?=([~ ?(%'cross-site' %'same-site')] site)
+::  +send-text: a plain-text answer, an error mostly
+++  send-text
+  |=  [eyre-id=@ta code=@ud why=@t]
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  (send-simple:srv eyre-id [[code ~] `(as-octs:mimes:html why)])
 ++  send-json
   |=  [eyre-id=@ta =json]
   =/  m  (fiber:fiber:nexus ,~)
   ^-  form:m
   =/  bod=octs  (as-octs:mimes:html (en:json:html json))
-  ;<  ~  bind:m
-    (send-simple:srv eyre-id [[200 ['content-type' 'application/json'] ~] `bod])
-  (pure:m ~)
-::  +send-reminders: one push per due timed occurrence. The tag is
+  (send-simple:srv eyre-id [[200 ['content-type' 'application/json'] ~] `bod])
+::  +lead-pushes: one push per due timed occurrence. The tag is
 ::  eid+idx so a re-send replaces rather than stacks.
-::
-++  send-reminders
+++  lead-pushes
   |=  [due=(list ref:cal) events=(map eid:cal event:cal) now=@da]
-  =/  m  (fiber:fiber:nexus ,~)
-  ^-  form:m
-  ?~  due  (pure:m ~)
-  =/  r=ref:cal  i.due
+  ^-  (list [name=@t body=@t tag=@t])
+  %+  murn  due
+  |=  r=ref:cal
+  ^-  (unit [name=@t body=@t tag=@t])
   =/  ev=(unit event:cal)  (~(get by events) eid.r)
-  ?.  &(?=(^ ev) ?=(%timed -.u.ev))
-    $(due t.due)
-  =/  name=@t  (meta-str:cal (get-meta u.ev) 'name')
-  =/  mins=@ud
-    (div ?:((gth l.span.r now) (sub l.span.r now) 0) ~m1)
-  =/  body=@t
+  ?.  &(?=(^ ev) ?=(%timed -.u.ev))  ~
+  =/  mins=@ud  (div ?:((gth l.span.r now) (sub l.span.r now) 0) ~m1)
+  :-  ~
+  :+  (meta-str:cal (meta-of:cal u.ev) 'name')
     (crip ?:(=(0 mins) "starting now" "in {(scow %ud mins)} min"))
-  =/  tag=@t
-    (crip "cal-{(trip eid.r)}-{(scow %ud idx.r)}")
-  ;<  ~  bind:m
-    (send-push:io [~ ~ ~ [name body ~ `'/apps/calendar' `tag]])
-  $(due t.due)
+  (crip "cal-{(trip eid.r)}-{(scow %ud idx.r)}")
 ::  +alarm-pushes: the alarms due in (from, now], as pushes. tag
 ::  cal-<uid>-<idx>-<n> for a relative alarm n of occurrence idx,
 ::  cal-<uid>-a-<n> for an absolute one (it belongs to the entry).
 ++  alarm-pushes
-  |=  [ahead=(list ref:cal) entries=(map uid:cal entry:cal) from=@da now=@da]
+  |=  [ahead=(list ref:cal) entries=(map eid:cal entry:cal) from=@da now=@da zone=(unit @t)]
   ^-  (list [name=@t body=@t tag=@t])
   =/  in-win  |=(at=@da &((gth at from) (lte at now)))
   =/  rel=(list [name=@t body=@t tag=@t])
@@ -3482,10 +3934,15 @@
     ^-  (list [name=@t body=@t tag=@t])
     =/  en=(unit entry:cal)  (~(get by entries) eid.r)
     ?~  en  ~
-    =/  name=@t  (meta-str:cal (get-meta event.u.en) 'name')
+    =/  name=@t  (meta-str:cal (meta-of:cal event.u.en) 'name')
     ::  a task's relative alarm counts from its due moment (RFC 5545
-    ::  3.8.6.3), not from the day it sits on
-    =/  at=@da  ?:(?=(%todo -.event.u.en) (fall due.event.u.en l.span.r) l.span.r)
+    ::  3.8.6.3), not from the day it sits on; an all-day occurrence's
+    ::  from midnight where the calendar is, not in UTC
+    =/  local  |=(d=@da (fall (fall (mole |.((place:rules zone d))) ~) d))
+    =/  [at=@da end=@da]
+      ?:  ?=(%todo -.event.u.en)  =/(d (fall due.event.u.en l.span.r) [d d])
+      ?.  (all-day:cal event.u.en)  [l.span.r r.span.r]
+      [(local l.span.r) (local r.span.r)]
     =/  mins=@ud  (div ?:((gth at now) (sub at now) 0) ~m1)
     =/  body=@t  (crip ?:(=(0 mins) "starting now" "in {(scow %ud mins)} min"))
     =/  als=(list alarm:cal)  alarms.u.en
@@ -3493,9 +3950,18 @@
     |-  ^-  (list [name=@t body=@t tag=@t])
     ?~  als  ~
     =/  rest  $(als t.als, n +(n))
-    ?.  ?=(%rel -.trigger.i.als)  rest
-    ?.  (gte at before.trigger.i.als)  rest
-    ?.  (in-win (sub at before.trigger.i.als))  rest
+    ::  when it fires: before the start, or %off from the start or the end
+    =/  fire=(unit @da)
+      ?-  -.trigger.i.als
+        %abs  ~
+        %rel  ?.((gte at before.trigger.i.als) ~ `(sub at before.trigger.i.als))
+          %off
+        =/  base=@da  ?:(end.trigger.i.als end at)
+        ?:  late.trigger.i.als  `(add base d.trigger.i.als)
+        ?.((gte base d.trigger.i.als) ~ `(sub base d.trigger.i.als))
+      ==
+    ?~  fire  rest
+    ?.  (in-win u.fire)  rest
     :_  rest
     :+  name
       ?:(=('' desc.i.als) body desc.i.als)
@@ -3503,9 +3969,9 @@
   =/  abs=(list [name=@t body=@t tag=@t])
     %-  zing
     %+  turn  ~(tap by entries)
-    |=  [u=uid:cal en=entry:cal]
+    |=  [u=eid:cal en=entry:cal]
     ^-  (list [name=@t body=@t tag=@t])
-    =/  name=@t  (meta-str:cal (get-meta event.en) 'name')
+    =/  name=@t  (meta-str:cal (meta-of:cal event.en) 'name')
     =/  als=(list alarm:cal)  alarms.en
     =/  n=@ud  0
     |-  ^-  (list [name=@t body=@t tag=@t])
@@ -3531,7 +3997,7 @@
 ::  feed name + uid. Stable ids: same feed+uid = same event id.
 ::
 ++  do-sync
-  |=  [feeds=(list [nm=@t url=@t]) lo=@da hi=@da]
+  |=  [feeds=(list [nm=@t url=@t]) lo=@da hi=@da dz=(unit @t)]
   =/  m  (fiber:fiber:nexus ,[(map eid:cal event:cal) skipped=@ud])
   ^-  form:m
   =/  out=(map eid:cal event:cal)  ~
@@ -3539,13 +4005,18 @@
   |-
   ?~  feeds  (pure:m [out skipped])
   ~&  >  "%calendar sync: fetching {(trip nm.i.feeds)}"
-  ;<  body=@t  bind:m  (fetch:io [%'GET' url.i.feeds ~ ~])
-  =/  evs=(list vevent:ics)  ?:(=('' body) ~ (events:ics body))
+  ::  soft, and with the deadline: this runs in the event fiber, and a
+  ::  refused road or a request that never answers must not take every
+  ::  later edit down with it
+  ;<  [status=@ud body=@t]  bind:m  (fetch-full [%'GET' url.i.feeds ~ ~])
+  =/  evs=(list vevent:ics)
+    ?.  &(=(200 status) !=('' body))  ~
+    (fall (mole |.((events:ics body))) ~)
   =/  res=[got=(map eid:cal event:cal) sk=@ud]
     %+  roll  evs
     |=  [ve=vevent:ics acc=[got=(map eid:cal event:cal) sk=@ud]]
     ?.  =('' rrule.ve)  acc(sk +(sk.acc))
-    =/  ev=(unit event:cal)  (ics-event ve nm.i.feeds lo hi)
+    =/  ev=(unit event:cal)  (ics-event ve nm.i.feeds lo hi dz)
     ?~  ev  acc
     =/  id=@ta  (crip "gc-{(trip (scot %uw (mug [nm.i.feeds uid.ve])))}")
     acc(got (~(put by got.acc) id u.ev))
@@ -3554,86 +4025,26 @@
     out      (~(uni by out) got.res)
     skipped  (add skipped sk.res)
   ==
-::  +ics-event: one parsed vevent to a ship event. Date-only becomes
-::  %allday; datetimes become a %timed %once, TZID as the zone and
-::  DTEND as an absolute %to end.
-::
+::  +ics-event: one parsed single vevent inside [lo hi] as a ship event,
+::  read the way an import reads it, tagged with its feed and uid
 ++  ics-event
-  |=  [ve=vevent:ics feed=@t lo=@da hi=@da]
+  |=  [ve=vevent:ics feed=@t lo=@da hi=@da dz=(unit @t)]
   ^-  (unit event:cal)
   ?~  start.ve  ~
-  =/  s=when:ics  u.start.ve
-  =/  sd=@da  ?-(-.s %utc d.s, %local d.s, %day d.s)
+  =/  sd=@da  (naive:ics u.start.ve)
   ?:  |((lth sd lo) (gth sd hi))  ~
-  =/  =meta:cal
-    %-  ~(gas by *(map @t json))
-    ^-  (list [@t json])
-    ;:  weld
-      ^-  (list [@t json])
-      ~[['name' s+?:(=('' summary.ve) 'Untitled' summary.ve)]]
-      ^-  (list [@t json])
-      ?:(=('' location.ve) ~ ~[['note' s+location.ve]])
-      ^-  (list [@t json])
-      ~[['feed' s+feed] ['uid' s+uid.ve]]
-    ==
-  ?:  ?=(%day -.s)
-    =/  days=@ud
-      ?~  end.ve  1
-      ?.  ?=(%day -.u.end.ve)  1
-      (max 1 (div (sub d.u.end.ve d.s) ~d1))
-    `[%allday [[/lib/rules %once] ~ d.s] days [~ ~] meta]
-  =/  zone=(unit @t)  ?:(?=(%local -.s) `zone.s ~)
-  =/  =fin:cal
-    ?~  end.ve  [%dur ~s0]
-    ?-  -.u.end.ve
-      %day    [%dur ~s0]
-      %utc    [%to d.u.end.ve]
-      %local  [%to d.u.end.ve]
-    ==
-  `[%timed [[/lib/rules %once] ~ sd] zone fin [~ ~] meta]
-::  +weir-json: the roads calendar actually reaches (declared for the shell).
-::
-::  +carry-old-data: the grubs the ball-era calendar kept, copied from the
-::  dormant instance at /apps/calendar.calendar into this one, once. The
-::  road is optional and read-only; a veto is "nothing to carry", not an
-::  error. Each grub's payload is written verbatim, boom or not, the way
-::  lattice's carry does it. Marks itself done so a later rise never reads
-::  the old copy again.
-::
-++  carry-old-data
-  =/  m  (fiber:fiber:nexus ,~)
-  ^-  form:m
-  =/  marker  (cord-to-road:tarball './carried.json')
-  ;<  mv=view:nexus  bind:m  (peek:io marker ~)
-  =/  done=?
-    ?.  ?=([%file *] mv)  |
-    =/  j=(unit json)  (mole |.(!<(json (need-vase:tarball sang.mv))))
-    ?:(?=([~ %b *] j) p.u.j |)
-  ?:  done  (pure:m ~)
-  =/  old=path  /apps/'calendar.calendar'
-  ;<  vw=(unit view:nexus)  bind:m  (peek-soft:io [%& %| old] ~)
-  ?~  vw
-    ~&  >>>  [%calendar-carry-road-refused old]
-    (pure:m ~)
-  ?.  ?=([%ball *] u.vw)
-    ;<  ~  bind:m  (over:io marker [[/ %json] `json`b+&])
-    (pure:m ~)
-  =/  bol=bole:tarball  (ball-to-bole:tarball ball.u.vw)
-  =/  want=(list @ta)  ~['calendar.calendar' 'gcal-feeds.json' 'reminders.json']
-  =/  fis=(list [nam=@ta =bask:tarball gain=?])
-    ?~  fil.bol  ~
-    %+  murn  want
-    |=  nam=@ta
-    ^-  (unit [@ta bask:tarball ?])
-    =/  got  (~(get by contents.u.fil.bol) nam)
-    ?~  got  ~
-    `[nam bask.u.got gain.u.got]
-  ~&  >  [%calendar-carrying-old-data (lent fis)]
-  |-
-  ?~  fis
-    (over:io marker [[/ %json] `json`b+&])
-  ;<  ~  bind:m  (over:io (cord-to-road:tarball (crip "./{(trip nam.i.fis)}")) bask.i.fis)
-  $(fis t.fis)
+  =/  got=(unit (unit [e=entry:cal exdates=(list @da)]))  (mole |.((to-entry:ics ve dz)))
+  ?.  ?=([~ ~ *] got)  ~
+  =/  ev=event:cal  event.e.u.u.got
+  =/  meta=meta:cal  (~(gas by (meta-of:cal ev)) ~[['feed' s+feed] ['uid' s+uid.ve]])
+  :-  ~
+  ?-  -.ev
+    %timed   ev(meta meta)
+    %allday  ev(meta meta)
+    %date    ev(meta meta)
+    %todo    ev(meta meta)
+  ==
+::  +weir-json: the roads calendar actually reaches (declared for the shell)
 ++  weir-json
   ^-  json
   =/  line  |=([r=@t w=@t] `json`(pairs:enjs:format ~[['road' s+r] ['why' s+w]]))
@@ -3652,7 +4063,6 @@
       :-  'peek'
       :-  %a
       :~  (line '/sys/link/' 'look up where this app is installed, so the page can address its own writer. Refuse this and the page cannot save events')
-          (line '/apps/calendar.calendar/' 'copy your existing events, reminders and feeds across from where the calendar used to live. Read-only, once, and the old copy is left untouched. Refuse it and this install starts empty')
           (line '/sys/ames/usergroups/' 'see which ships a calendar is shared with')
           (line '/sys/ames/ships/' 'read a calendar another ship shared with you, and keep it current. Refuse this and calendars shared with you are unavailable')
       ==
@@ -3661,8 +4071,29 @@
       :~  (line '/sys/ames/usergroups/' 'make the group for a calendar the first time it is shared')
       ==
   ==
-::  +resolve-kinds: load kind gates from the code namespace
-::
+::  +migrate-kinds: every event of a retired preset kind as the rrule it
+::  phrases (+as-rrule:ics). Its indices do not move, so skips and caps
+::  stay put; each changed entry is logged, so it goes out once to
+::  wherever its calendar syncs.
+++  migrate-kinds
+  |=  c=calendar:cal
+  ^-  calendar:cal
+  %=    c
+      cals
+    %-  ~(run by cals.c)
+    |=  k=cal:cal
+    %+  roll  ~(val by entries.k)
+    |=  [e=entry:cal acc=_k]
+    =/  ev=event:cal  event.e
+    ?:  ?=(?(%date %todo) -.ev)  acc
+    =/  rc=recur:cal  (as-rrule:ics recur.ev)
+    ?:  =(rc recur.ev)  acc
+    %+  put-entry:cal  acc
+    ?-  -.ev
+      %timed   e(event ev(recur rc))
+      %allday  e(event ev(recur rc))
+    ==
+  ==
 ::  +kind-table: the rule kinds by name. An event names its kind by rail
 ::  ([/lib/rules %weekly]); the name is the lookup key, the path is
 ::  history.
@@ -3670,14 +4101,8 @@
 ++  kind-table
   ^-  (map @ta kind:rules)
   %-  ~(gas by *(map @ta kind:rules))
-  :~  [%cron k-cron]
-      [%daily k-daily]
-      [%every k-every]
-      [%monthly k-monthly]
-      [%monthly-nth k-monthly-nth]
+  :~  [%every k-every]
       [%once k-once]
-      [%weekly k-weekly]
-      [%yearly k-yearly]
       [%rrule k-rrule]
   ==
 ++  kind-for
@@ -3699,47 +4124,22 @@
 ++  occurrence-index
   |=  [ev=event:cal when=@da]
   ^-  (unit @ud)
-  =/  rail=(unit rail:tarball)
-    ?-  -.ev
-      ?(%date %todo)  ~   ::  a date or a task has no recurrence to walk
-      %timed   `kind.recur.ev
-      %allday  `kind.recur.ev
-    ==
-  ?~  rail  ~
-  =/  k=(unit kind:rules)  (kind-for u.rail)
-  ?~  k  ~
-  =/  kinds=(map rail:tarball kind:rules)
-    (~(put by *(map rail:tarball kind:rules)) u.rail u.k)
+  ::  a date or a task has no recurrence to walk
+  ?:  ?=(?(%date %todo) -.ev)  ~
   =/  events=(map eid:cal event:cal)
     (~(put by *(map eid:cal event:cal)) 'it' ev)
   =/  [stops=(map eid:cal @da) o=order:cal]
-    (inflate:cal events kinds (add when ~d1))
+    (inflate:cal events kind-for (add when ~d1) ~)
   ::  both edges of a span are indexed, so only a left edge is a start
   =/  hits=(list ref:cal)  ~(tap in (fall (get:on-order:cal o when) ~))
   |-  ^-  (unit @ud)
   ?~  hits  ~
   ?:  =(when l.span.i.hits)  `idx.i.hits
   $(hits t.hits)
-++  resolve-kinds
-  |=  rails=(list rail:tarball)
-  =/  m  (fiber:fiber:nexus ,(map rail:tarball kind:rules))
-  ^-  form:m
-  %-  pure:m
-  %-  ~(gas by *(map rail:tarball kind:rules))
-  %+  murn  rails
-  |=  r=rail:tarball
-  ^-  (unit [rail:tarball kind:rules])
-  =/  k=(unit kind:rules)  (kind-for r)
-  ?~(k ~ `[r u.k])
-::  +apply-until: compile an until-date into dom by scanning the
-::  rule's instances. Explicit count (dom already set) wins; sugar
-::  only — the stored rule never knows about the date.
-::
+::  +apply-until: compile an until-date into the index cap (dom) by
+::  walking the kind's moments. An explicit count wins; only for shapes
+::  with a recur. Sugar: the stored event keeps only dom.
 ++  apply-until
-  ::  compile an until-date into the index cap (dom) by walking the
-  ::  kind's moments. Explicit count wins; only for shapes with a
-  ::  recur (timed/allday). Sugar — the stored event keeps only dom.
-  ::
   |=  [e=event:cal until=(unit @ud)]
   =/  m  (fiber:fiber:nexus ,event:cal)
   ^-  form:m
@@ -3788,7 +4188,9 @@
     ?.(?=([~ %o *] a) ~ p.u.a)
   =/  kn=(unit @tas)  (slaw %tas kind)
   ?~  kn  ~
-  `[[/lib/rules u.kn] args u.start]
+  ::  a preset kind (daily, weekly, ...) from an older client is the rrule
+  ::  it phrases
+  `(as-rrule:ics [[/lib/rules u.kn] args u.start])
 ::  +parse-event: json -> one of the three event shapes. dz is the
 ::  calendar's default zone for timed events with none named.
 ::
@@ -3813,13 +4215,15 @@
   ::  timed / allday both wrap a recur
   =/  rec=(unit recur:cal)  (parse-recur jon)
   ?~  rec  ~
+  ::  count (or an RRULE's COUNT) is how many occurrences; the bound is
+  ::  the index that holds that many (+dom-of)
   =/  dom=(unit @ud)
-    =/  n=(unit @ud)  (gn jon 'count')
-    ?^  n  ?:(=(0 u.n) ~ n)
-    ::  an RRULE's COUNT is its cap
-    ?.  =(%rrule name.kind.u.rec)  ~
-    =/  r=(unit rule:rr)  (parse:rr (str:~(. ja:rules args.u.rec) 'rrule'))
-    ?~(r ~ count.u.r)
+    =/  n=(unit @ud)
+      =/  c=(unit @ud)  (gn jon 'count')
+      ?^  c  ?:(=(0 u.c) ~ c)
+      ?.  =(%rrule name.kind.u.rec)  ~
+      (biff (of-args:rr args.u.rec) |=(r=rule:rr count.r))
+    ?~(n ~ `(dom-of:ics u.rec u.n))
   =/  =bound:cal  [dom ~]
   ?:  =('allday' cat)
     =/  days=@ud  (max 1 (fall (gn jon 'span_days') 1))

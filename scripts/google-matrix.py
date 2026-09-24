@@ -9,7 +9,9 @@ calendar, then: remote add (timed, all-day, weekly with a moved instance,
 alarmed) appears on the ship; remote delete and rename; local add / edit /
 delete reach the fake exactly once; nothing pulled is pushed back; a forced
 410 resyncs; a forced conflict is logged with Google winning. Cleans up.
-Exits non-zero on the first failure.
+Every check runs; exits non-zero if any failed. It rewires the ship's
+Google client to the fake and unlinks every Google calendar, so it
+refuses a ship that has a real client set up.
 """
 import sys, json, time, subprocess
 
@@ -42,6 +44,12 @@ def gnames(): return sorted(r['meta'].get('name') for r in ship_get('/events.jso
 def writes(): return ctl({'op': 'state'})['writes']
 def prod(): ship_post('/google/sync', {}); time.sleep(8)
 
+
+# a ship with a real Google client is not the gate's to rewire
+g0 = ship_get('/google.json')
+if g0.get('client_id') not in ('', None, 'fake-client'):
+    print('refusing: this ship has a Google client set up (%s); run the gate on a test ship' % g0.get('client_id'))
+    sys.exit(2)
 
 # setup
 ctl({'op': 'reset'})

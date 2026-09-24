@@ -5,21 +5,21 @@
 ::  index walk linear, so the rule is read as periods (the day, week, month
 ::  or year of the start, advanced INTERVAL at a time) each holding a small
 ::  sorted list of candidate days from the BY-parts. idx names a period and
-::  a slot in it. A slot that names a day the period does not have (the
-::  31st of April, a fifth Monday) is ~, which the engine treats as a dead
-::  index, the same way the shipped kinds do.
+::  a slot in it. Every period has the same slots; one that names a day
+::  the period does not have (the 31st of April, a fifth Monday, a 13th
+::  that is not a Friday) is ~, which the engine treats as a dead index.
 ::
 ::  Read: FREQ DAILY|WEEKLY|MONTHLY|YEARLY, INTERVAL, COUNT, UNTIL, BYDAY
 ::  (with ordinals), BYMONTHDAY (negative from the end), BYMONTH, WKST.
-::  Anything else present (BYHOUR, BYMINUTE, BYSECOND, BYSETPOS, BYWEEKNO,
-::  BYYEARDAY, SECONDLY, MINUTELY, HOURLY) makes +parse answer ~: the rule
-::  is kept as text by whoever holds it and produces no occurrences here,
-::  rather than wrong ones.
+::  BYMONTH limits DAILY, WEEKLY and MONTHLY; BYDAY and BYMONTHDAY limit
+::  DAILY; BYDAY limits MONTHLY's BYMONTHDAY. Anything else present
+::  (BYHOUR, BYMINUTE, BYSECOND, BYSETPOS, BYWEEKNO, BYYEARDAY, SECONDLY,
+::  MINUTELY, HOURLY, a YEARLY BYDAY ordinal with no BYMONTH) makes +parse
+::  answer ~: the rule is kept as text by whoever holds it and produces
+::  no occurrences here, rather than wrong ones.
 ::
-::  Known deviation: COUNT is applied by the caller as a bound on idx, so a
-::  rule whose periods hold non-existent days (BYMONTHDAY=31, monthly)
-::  yields fewer real occurrences than COUNT. DAILY ignores BYMONTH and
-::  BYDAY as limiters.
+::  COUNT counts occurrences, not slots: the caller bounds idx with
+::  +count-dom, and +dom-count turns a bound back into a COUNT.
 ::
 /<  rules  /lib/rules.hoon
 |%
@@ -59,8 +59,12 @@
     ?:  =('YEARLY' u.fq)   `%yearly
     ~
   ?~  fr  ~
-  =/  =freq  u.fr
   =/  interval=@ud  (max 1 (fall (bind (get 'INTERVAL') |=(v=@t (fall (rush v dem) 1))) 1))
+  ::  DAILY limited by BYDAY (Thunderbird's "every weekday") is WEEKLY on
+  ::  those days, every slot a live one; with an INTERVAL it stays DAILY,
+  ::  BYDAY a limit (+occurrence)
+  =/  daily-by=?  &(=(%daily u.fr) ?=(^ (get 'BYDAY')) =(1 interval))
+  =/  =freq  ?:(daily-by %weekly u.fr)
   =/  count=(unit @ud)  (bind (get 'COUNT') |=(v=@t (fall (rush v dem) 0)))
   =/  until=(unit @da)  (bind (get 'UNTIL') parse-until)
   =/  byday=(list byday)
@@ -73,6 +77,8 @@
     %+  murn  (fall (bind (get 'BYMONTH') |=(v=@t (split ',' v))) ~)
     |=(v=@t (rush v dem))
   =/  wkst=wkd:rules  (fall (biff (get 'WKST') parse-wkd) %mon)
+  ::  the 20th Monday of the year is not read here
+  ?:  &(=(%yearly freq) ?=(~ bymonth) (lien byday |=(b=^byday ?=(^ ord.b))))  ~
   `[freq interval count until byday bymonthday bymonth wkst]
 ++  find-part
   |=  [parts=(list [k=@t v=@t]) k=@t]
@@ -157,10 +163,59 @@
       %yearly   (yearly r day0 idx)
     ==
   ?~  got  ~
+  ?.  (limits r u.got)  ~
   =/  at=@da  (add u.got tod)
   ?:  &(?=(^ until.r) (gth at u.until.r))  ~
   ?:  (lth at start)  ~
   `at
+::  +limits: a day the BY-parts that limit (not expand) this FREQ allow
+++  limits
+  |=  [r=rule d=@da]
+  ^-  ?
+  =/  =date  (yore d)
+  ?&  |(=(~ bymonth.r) ?=(%yearly freq.r) ?=(^ (find ~[m.date] bymonth.r)))
+      |(!?=(%daily freq.r) =(~ byday.r) (lien byday.r |=(b=byday =((wkd-num:rules day.b) (weekday:rules d)))))
+      ?|  !?=(%daily freq.r)
+          =(~ bymonthday.r)
+          %+  lien  bymonthday.r
+          |=(n=@sd =(`d (on-date:rules y.date m.date (resolve-dom n (days-in-month:rules y.date m.date)))))
+      ==
+  ==
+::  +resolve-dom: a BYMONTHDAY in a month of len days (-1 is the last)
+++  resolve-dom
+  |=  [n=@sd len=@ud]
+  ^-  @ud
+  ?:  (syn:si n)  (abs:si n)
+  ?:  (gth (abs:si n) len)  0
+  (sub +(len) (abs:si n))
+::  +count-dom: the index bound that holds a rule's first n occurrences
+++  count-dom
+  |=  [r=rule start=@da n=@ud]
+  ^-  @ud
+  =|  [idx=@ud got=@ud dead=@ud]
+  |-
+  ?:  |(=(got n) (gth dead 400))  idx
+  ?~  (occurrence r start idx)  $(idx +(idx), dead +(dead))
+  $(idx +(idx), got +(got), dead 0)
+::  +dom-count: how many occurrences lie below an index bound
+++  dom-count
+  |=  [r=rule start=@da dom=@ud]
+  ^-  @ud
+  =|  [idx=@ud got=@ud]
+  |-
+  ?:  (gte idx dom)  got
+  $(idx +(idx), got ?~((occurrence r start idx) got +(got)))
+::  +of-args: the rule an rrule kind's args hold, as the kind reads it:
+::  "until_naive" (unix ms) stands in for a UTC UNTIL read into a zone
+++  of-args
+  |=  args=(map @t json)
+  ^-  (unit rule)
+  =/  a  ~(. ja:rules args)
+  =/  r=(unit rule)  (parse (str:a 'rrule'))
+  ?~  r  ~
+  =/  local=@ud  (num:a 'until_naive')
+  ?:  =(0 local)  r
+  `u.r(until `(add ~1970.1.1 (div (mul local ~s1) 1.000)))
 ::  +weekly: the week of the start, per WKST; BYDAY as offsets from the
 ::  week's first day; days in that week before the start are not
 ::  occurrences, so idx counts from the first candidate on or after it.
@@ -188,11 +243,17 @@
   ^-  (list (unit @da))
   =/  len=@ud  (days-in-month:rules y m)
   ?^  bymonthday.r
-    %+  turn  (sort bymonthday.r |=([a=@sd b=@sd] (lth (abs:si a) (abs:si b))))
-    |=  d=@sd
-    ^-  (unit @da)
-    =/  dom=@ud  ?:((syn:si d) (abs:si d) (sub +(len) (min len (abs:si d))))
-    (on-date:rules y m dom)
+    ::  sorted by the day each names in this month, not by magnitude:
+    ::  15,-1 is the 15th then the last. A day the month lacks (31 in
+    ::  April), or one BYDAY does not name (a 13th that is not a Friday),
+    ::  is ~ and sorts last.
+    %-  sort-days
+    %+  turn  bymonthday.r
+    |=  n=@sd
+    =/  d=(unit @da)  (on-date:rules y m (resolve-dom n len))
+    ?~  d  ~
+    ?:  |(=(~ byday.r) (lien byday.r |=(b=byday (named y m u.d b))))  d
+    ~
   ?^  byday.r
     %-  sort-days
     %-  zing
@@ -204,11 +265,24 @@
     %+  turn  (gulf 1 5)
     |=(k=@ud (nth-of-month y m (new:si & k) day.b))
   ~[(on-date:rules y m default-dom)]
+::  +sort-days: days in order, a slot the month lacks last. It stays, so
+::  every month has as many slots as the rule names (a fifth Monday is a
+::  slot in every month, live in some).
 ++  sort-days
   |=  l=(list (unit @da))
   ^-  (list (unit @da))
-  %+  sort  (skim l |=(u=(unit @da) ?=(^ u)))
-  |=([a=(unit @da) b=(unit @da)] (lth (fall a *@da) (fall b *@da)))
+  %+  sort  l
+  |=  [a=(unit @da) b=(unit @da)]
+  ?~  a  |
+  ?~  b  &
+  (lth u.a u.b)
+::  +named: is day d of [y m] one a BYDAY names (its weekday, and its
+::  ordinal in the month when it has one)
+++  named
+  |=  [y=@ud m=@ud d=@da b=byday]
+  ^-  ?
+  ?^  ord.b  =(`d (nth-of-month y m u.ord.b day.b))
+  =((wkd-num:rules day.b) (weekday:rules d))
 ::  +nth-of-month: the ord-th weekday of a month, negative from the end
 ++  nth-of-month
   |=  [y=@ud m=@ud ord=@sd w=wkd:rules]
@@ -240,13 +314,17 @@
   =/  cand=(list (unit @da))  (month-candidates r y m d.t.date)
   ?:  (gte (mod g n) (lent cand))  ~
   (snag (mod g n) cand)
-::  +yearly: BYMONTH (or the start's month) crossed with the monthly
-::  candidates of each; the start's month and day when nothing is named.
+::  +yearly: BYMONTH crossed with the monthly candidates of each. No
+::  BYMONTH: every month when a BYMONTHDAY or BYDAY names days in it, else
+::  the start's month and day.
 ++  yearly
   |=  [r=rule day0=@da idx=@ud]
   ^-  (unit @da)
   =/  =date  (yore day0)
-  =/  months=(list @ud)  ?~(bymonth.r ~[m.date] (sort bymonth.r lth))
+  =/  months=(list @ud)
+    ?^  bymonth.r  (sort bymonth.r lth)
+    ?:  |(?=(^ bymonthday.r) ?=(^ byday.r))  (gulf 1 12)
+    ~[m.date]
   =/  cands
     |=  y=@ud
     ^-  (list (unit @da))
@@ -262,54 +340,13 @@
   =/  cand=(list (unit @da))  (cands (add y.date (mul interval.r period)))
   ?:  (gte (mod g n) (lent cand))  ~
   (snag (mod g n) cand)
-::  +to-text: a rule back to RRULE text, for the ICS writer
+::  +wkd-text: a weekday as its RRULE two letters
 ++  wkd-text
   |=  w=wkd:rules
   ^-  tape
   ?-(w %mon "MO", %tue "TU", %wed "WE", %thu "TH", %fri "FR", %sat "SA", %sun "SU")
-++  sd-text
-  |=  d=@sd
-  ^-  tape
-  ?:((syn:si d) (a-co:co (abs:si d)) ['-' (a-co:co (abs:si d))])
-++  byday-text
-  |=  b=byday
-  ^-  tape
-  (weld ?~(ord.b "" (sd-text u.ord.b)) (wkd-text day.b))
 ++  sep-join
   |=  [sep=tape ls=(list tape)]
   ^-  tape
-  ?~  ls  ~
-  ?~  t.ls  i.ls
-  (weld i.ls (weld sep $(ls t.ls)))
-++  to-text
-  |=  r=rule
-  ^-  @t
-  =/  fq=tape
-    ?-  freq.r
-      %daily    "DAILY"
-      %weekly   "WEEKLY"
-      %monthly  "MONTHLY"
-      %yearly   "YEARLY"
-    ==
-  =/  parts=(list tape)  ~[(weld "FREQ=" fq)]
-  =?  parts  !=(1 interval.r)  (snoc parts (weld "INTERVAL=" (a-co:co interval.r)))
-  =?  parts  ?=(^ count.r)  (snoc parts (weld "COUNT=" (a-co:co u.count.r)))
-  =?  parts  ?=(^ until.r)  (snoc parts (weld "UNTIL=" (until-text u.until.r)))
-  =/  bd=(list tape)  (turn byday.r byday-text)
-  =?  parts  !=(~ bd)  (snoc parts (weld "BYDAY=" (sep-join "," bd)))
-  =/  bmd=(list tape)  (turn bymonthday.r sd-text)
-  =?  parts  !=(~ bmd)  (snoc parts (weld "BYMONTHDAY=" (sep-join "," bmd)))
-  =/  bm=(list tape)  (turn bymonth.r |=(m=@ud (a-co:co m)))
-  =?  parts  !=(~ bm)  (snoc parts (weld "BYMONTH=" (sep-join "," bm)))
-  =?  parts  !=(%mon wkst.r)  (snoc parts (weld "WKST=" (wkd-text wkst.r)))
-  (crip (sep-join ";" parts))
-++  until-text
-  |=  d=@da
-  ^-  tape
-  =/  =date  (yore d)
-  =/  pad  |=(n=@ud ^-(tape ?:((lth n 10) ['0' (a-co:co n)] (a-co:co n))))
-  ;:  weld
-    (a-co:co y.date)  (pad m.date)  (pad d.t.date)
-    "T"  (pad h.t.date)  (pad m.t.date)  (pad s.t.date)  "Z"
-  ==
+  (zing (join sep ls))
 --

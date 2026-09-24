@@ -8,7 +8,7 @@ method-override proxy (scripts/dav-proxy.py) or the production nginx.
 SHIP_URL + COOKIE_JAR (a curl cookie jar) enable the other direction:
 an event added on the ship shows up through sync-collection.
 
-Exits non-zero on the first failure. Cleans up what it made.
+Every check runs; exits non-zero if any failed. Cleans up what it made.
 """
 import sys, datetime, json, subprocess, time
 import caldav
@@ -75,6 +75,9 @@ upd, dele = coll.sync()
 check('sync-collection reports the deletes', len(dele) == 3, (len(upd), len(dele)))
 check('nothing of ours left', not [s for s in summaries(cal) if s.startswith('matrix')])
 # calendars
+# a run that crashed may have left it
+for x in p.calendars():
+    if str(x.url).rstrip('/').endswith('/matrixcal'): x.delete()
 new = p.make_calendar(name='matrix cal', cal_id='matrixcal')
 check('mkcalendar', 'matrixcal' in [str(x.url).split('/')[-2] for x in p.calendars()])
 new.set_properties([dav.DisplayName('matrix cal renamed')])

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <title>calendar</title>
   <meta charset="utf-8">
@@ -24,11 +24,12 @@
       </div>
       <span id="month-label"></span>
       <div id="loader"><div class="spin"></div></div>
+      <span id="load-err" role="status"></span>
       <select id="zone-sel" title="Display timezone"></select>
       <button id="globe-btn" class="nav-btn icon-btn" title="Set calendar timezone to your browser timezone">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18"/></svg>
       </button>
-      <button id="sync-btn" class="nav-btn icon-btn" title="Sync external calendar feeds (Google Calendar etc.)">
+      <button id="sync-btn" class="nav-btn icon-btn" title="Sync now: Google, followed and shared calendars, and ICS feeds">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>
       </button>
       <select id="tag-filter" title="Only events with this tag"><option value="">All tags</option></select>
@@ -53,9 +54,9 @@
 
     <div id="tasks-view">
       <div id="task-add">
-        <input id="task-name" type="text" placeholder="New task…">
+        <input id="task-name" type="text" placeholder="New task…" aria-label="New task">
         <input id="task-due" type="date" title="Due date (optional)">
-        <select id="task-cal"></select>
+        <select id="task-cal" aria-label="Calendar"></select>
         <button id="task-save" class="nav-btn">Add</button>
       </div>
       <div id="task-open"></div>
@@ -90,20 +91,20 @@
     </div>
 
     <div id="modal-back">
-      <div id="modal">
+      <div id="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
         <div id="modal-header">
           <span id="modal-title">New Event</span>
           <button id="modal-close" class="nav-btn">Close</button>
         </div>
         <div id="edit-scope">
-          <label class="f">Apply to</label>
-          <div id="scope-opts">
+          <label class="f" id="lbl-scope">Apply to</label>
+          <div id="scope-opts" role="radiogroup" aria-labelledby="lbl-scope">
             <label><input type="radio" name="scope" value="all" checked> All events</label>
             <label><input type="radio" name="scope" value="following"> This and following</label>
             <label><input type="radio" name="scope" value="only"> Only this one</label>
           </div>
         </div>
-        <label class="f">Name</label>
+        <label class="f" for="f-name">Name</label>
         <input id="f-name" type="text">
         <div id="cat-seg">
           <button type="button" class="seg-btn on" data-cat="timed">Timed</button>
@@ -115,11 +116,11 @@
         <!-- task (%todo): an optional due date, done or not -->
         <div class="df nth-row">
           <div>
-            <label class="f">Due (optional)</label>
+            <label class="f" for="f-due">Due (optional)</label>
             <input id="f-due" type="date">
           </div>
           <div>
-            <label class="f">Status</label>
+            <label class="f" for="f-done">Status</label>
             <label class="chk"><input id="f-done" type="checkbox"> Done</label>
           </div>
         </div>
@@ -127,17 +128,17 @@
         <!-- birthday (%date): month + day only -->
         <div class="bf nth-row">
           <div>
-            <label class="f">Month</label>
+            <label class="f" for="f-bmonth">Month</label>
             <select id="f-bmonth"></select>
           </div>
           <div>
-            <label class="f">Day</label>
+            <label class="f" for="f-bday">Day</label>
             <input id="f-bday" type="number" min="1" max="31" value="1">
           </div>
         </div>
 
         <!-- timed / allday: a recurrence -->
-        <label class="f rc">Repeats</label>
+        <label class="f rc" for="f-kind">Repeats</label>
         <select id="f-kind" class="rc">
           <option value="once">Never — one time only</option>
           <option value="daily">Daily</option>
@@ -150,25 +151,25 @@
         <div id="kind-hint" class="rc"></div>
         <div class="nth-row rc">
           <div>
-            <label class="f" id="lbl-start">Starting from</label>
+            <label class="f" id="lbl-start" for="f-date">Starting from</label>
             <input id="f-date" type="date">
           </div>
           <div class="tf">
-            <label class="f">At time</label>
+            <label class="f" for="f-time">At time</label>
             <input id="f-time" type="time" value="09:00">
           </div>
           <div class="af">
-            <label class="f">For (days)</label>
+            <label class="f" for="f-days-n">For (days)</label>
             <input id="f-days-n" type="number" min="1" value="1">
           </div>
         </div>
-        <label class="f wf">On these days</label>
-        <div id="f-days" class="wf"></div>
-        <label class="f mf">Day of the month (1–31)</label>
+        <label class="f wf" id="lbl-days">On these days</label>
+        <div id="f-days" class="wf" role="group" aria-labelledby="lbl-days"></div>
+        <label class="f mf" for="f-day">Day of the month (1–31)</label>
         <input id="f-day" type="number" min="1" max="31" value="1" class="mf">
         <div class="nf nth-row">
           <div>
-            <label class="f">On the</label>
+            <label class="f" for="f-ord">On the</label>
             <select id="f-ord">
               <option value="first">First</option>
               <option value="second">Second</option>
@@ -178,43 +179,43 @@
             </select>
           </div>
           <div>
-            <label class="f">Weekday</label>
+            <label class="f" for="f-dow">Weekday</label>
             <select id="f-dow"></select>
           </div>
         </div>
         <div class="yf nth-row">
           <div>
-            <label class="f">Month</label>
+            <label class="f" for="f-month">Month</label>
             <select id="f-month"></select>
           </div>
           <div>
-            <label class="f">Day</label>
+            <label class="f" for="f-yday">Day</label>
             <input id="f-yday" type="number" min="1" max="31" value="1">
           </div>
         </div>
-        <label class="f ef">Repeat every (minutes)</label>
+        <label class="f ef" for="f-period">Repeat every (minutes)</label>
         <input id="f-period" type="number" min="1" value="60" class="ef">
         <div class="rc nth-row">
           <div>
-            <label class="f">Ends after (0 = never)</label>
-            <input id="f-count" type="number" min="0" value="0">
+            <label class="f" for="f-count">Ends after (0 = never)</label>
+            <input id="f-count" type="number" min="0" step="1" value="0">
           </div>
           <div>
-            <label class="f">Or ends by date</label>
+            <label class="f" for="f-until">Or ends by date</label>
             <input id="f-until" type="date">
           </div>
         </div>
-        <label class="f tf">Duration (minutes — 0 for an instant)</label>
+        <label class="f tf" for="f-dur">Duration (minutes — 0 for an instant)</label>
         <input id="f-dur" type="number" min="0" value="60" class="tf">
-        <label class="f tf">Timezone</label>
+        <label class="f tf" for="f-zone">Timezone</label>
         <select id="f-zone" class="tf"></select>
-        <label class="f">Note</label>
-        <input id="f-note" type="text">
-        <label class="f">Calendar</label>
+        <label class="f" for="f-note">Note</label>
+        <textarea id="f-note" rows="3"></textarea>
+        <label class="f" for="f-cal">Calendar</label>
         <select id="f-cal"></select>
-        <label class="f">Tags (comma separated)</label>
+        <label class="f" for="f-tags">Tags (comma separated)</label>
         <input id="f-tags" type="text" placeholder="work, family">
-        <label class="f">Color</label>
+        <label class="f" for="f-color">Color</label>
         <input id="f-color" type="color" value="#4a6a8a">
         <div id="modal-foot">
           <span id="f-status"></span>
@@ -227,7 +228,7 @@
 
   </div>
     <div id="settings-back">
-      <div id="settings-modal">
+      <div id="settings-modal" role="dialog" aria-modal="true" aria-label="Calendar settings">
         <div class="feeds-header">
           <span>Calendar settings</span>
           <button id="settings-close" class="nav-btn">Close</button>
@@ -237,14 +238,25 @@
           <div class="dav-hint">Local calendars live here. Followed and Google calendars are listed too; unlink them in their own sections.</div>
           <div id="cals-list"></div>
           <div class="nth-row">
-            <div><label class="f">New calendar</label><input id="cal-new-name" placeholder="name"></div>
-            <div><label class="f">Color</label><input id="cal-new-color" type="color" value="#101541"></div>
+            <div><label class="f" for="cal-new-name">New calendar</label><input id="cal-new-name" placeholder="name"></div>
+            <div><label class="f" for="cal-new-color">Color</label><input id="cal-new-color" type="color" value="#101541"></div>
           </div>
           <div class="feeds-foot"><span id="cals-status"></span><button id="cal-new-add" class="nav-btn">Add calendar</button></div>
+          <div class="nth-row">
+            <div><label class="f" for="imp-file">Import an .ics file</label><input id="imp-file" type="file" accept=".ics,text/calendar"></div>
+            <div><label class="f" for="imp-cal">Into</label><select id="imp-cal"></select></div>
+          </div>
+          <div class="feeds-foot"><span id="imp-status"></span><button id="imp-go" class="nav-btn">Import</button></div>
+        </details>
+        <details class="sect" id="conflicts-sect">
+          <summary>Conflicts</summary>
+          <div class="dav-hint">When an event changed here and on Google, a followed calendar or a sharing ship between two syncs, or a push was refused, the other side's copy won. Your copy is kept here to download.</div>
+          <div id="conflicts-list"></div>
+          <div class="feeds-foot"><span></span><button id="conflicts-clear" class="nav-btn danger">Clear the log</button></div>
         </details>
         <details class="sect" id="ships-sect">
           <summary>Sharing with ships</summary>
-          <div class="dav-hint">Share a local calendar with another ship by name: read-only, or edit. Their edits come back here; yours reach them within minutes. Calendars other ships shared with you are listed below; accept them to see them.</div>
+          <div class="dav-hint">Share a calendar with another ship by name: read-only, or edit. Their edits come back here; yours reach them within minutes. Calendars other ships shared with you are listed below; accept them to see them.</div>
           <div id="shares-list"></div>
           <label class="f">Shared with you</label>
           <div id="offers-list"></div>
@@ -254,7 +266,7 @@
         <div class="dav-hint">Each client (Thunderbird, DAVx5, iOS) gets its own password. The URL is <code id="dav-url"></code>; the username is your ship name.</div>
         <div id="dav-list"></div>
         <div id="dav-new" class="hidden"></div>
-        <label class="f">New client</label>
+        <label class="f" for="dav-name">New client</label>
         <input id="dav-name" placeholder="Thunderbird on the laptop">
         <div class="feeds-foot">
           <span id="dav-status"></span>
@@ -265,15 +277,15 @@
           <summary>Following a CalDAV calendar</summary>
           <div class="dav-hint">Follow another ship's calendar, or a Nextcloud or Baïkal one. Edits here go back to the source. The other side must accept <code>X-HTTP-Method-Override</code> (ours does; iCloud does not).</div>
           <div id="cdav-list"></div>
-          <label class="f">Calendar URL</label>
+          <label class="f" for="cdav-url">Calendar URL</label>
           <input id="cdav-url" placeholder="https://host/apps/calendar/dav/cal/default/">
           <div class="nth-row">
-            <div><label class="f">Username</label><input id="cdav-user" placeholder="~ship"></div>
-            <div><label class="f">Password</label><input id="cdav-pass" type="password"></div>
+            <div><label class="f" for="cdav-user">Username</label><input id="cdav-user" placeholder="~ship"></div>
+            <div><label class="f" for="cdav-pass">Password</label><input id="cdav-pass" type="password"></div>
           </div>
           <div class="nth-row">
-            <div><label class="f">Name</label><input id="cdav-name" placeholder="their calendar"></div>
-            <div><label class="f">Color</label><input id="cdav-color" type="color" value="#f9a804"></div>
+            <div><label class="f" for="cdav-name">Name</label><input id="cdav-name" placeholder="their calendar"></div>
+            <div><label class="f" for="cdav-color">Color</label><input id="cdav-color" type="color" value="#b45309"></div>
           </div>
           <div class="feeds-foot"><span id="cdav-status"></span><span><button id="cdav-sync" class="nav-btn">Sync now</button> <button id="cdav-add" class="nav-btn">Follow</button></span></div>
         </details>
@@ -283,15 +295,15 @@
         <details id="google-setup">
           <summary>Set up your own OAuth client (once)</summary>
           <ol class="dav-hint">
-            <li>In the Google Cloud console make a project, open <b>APIs &amp; Services → OAuth consent screen</b>, choose External, fill the name and your email, and add yourself as a test user. It can stay in Testing.</li>
+            <li>In the Google Cloud console make a project, open <b>APIs &amp; Services → OAuth consent screen</b>, choose External, fill the name and your email, then press <b>Publish app</b> so it is <i>In production</i>. Left in Testing, Google ends the sign-in after 7 days. At Connect, Google warns the app is unverified; it is yours, so go on (Advanced → go to the app). A project inside a company's Google Workspace can choose Internal instead.</li>
             <li>Enable the <b>Google Calendar API</b> under Library.</li>
             <li>Under <b>Credentials</b> make an OAuth client of type <b>Web application</b>. Authorized redirect URI, exactly: <code id="google-redirect"></code></li>
             <li>Paste the client id and secret here, save, then press Connect.</li>
           </ol>
         </details>
-        <label class="f">Client id</label>
+        <label class="f" for="google-cid">Client id</label>
         <input id="google-cid" placeholder="1234…apps.googleusercontent.com">
-        <label class="f">Client secret</label>
+        <label class="f" for="google-csec">Client secret</label>
         <input id="google-csec" type="password" placeholder="GOCSPX-…">
         <div class="feeds-foot">
           <span id="google-msg"></span>
@@ -304,16 +316,16 @@
         <label class="f">Calendars on Google</label>
         <div id="google-list"></div>
         <div class="feeds-foot">
-          <span id="google-conflicts" class="dav-hint"></span>
+          <a id="google-conflicts" class="dav-hint" href="#conflicts-sect"></a>
           <button id="google-sync-now" class="nav-btn">Sync now</button>
         </div>
         </details>
         <details class="sect">
           <summary>ICS feeds (read-only)</summary>
         <div id="feeds-list"></div>
-        <label class="f">Name</label>
+        <label class="f" for="feed-name">Name</label>
         <input id="feed-name" placeholder="main">
-        <label class="f">Secret ICS address</label>
+        <label class="f" for="feed-url">Secret ICS address</label>
         <input id="feed-url" placeholder="https://calendar.google.com/calendar/ical/…/basic.ics">
         <div class="feeds-foot">
           <span id="feeds-status"></span>
@@ -322,6 +334,8 @@
         </details>
       </div>
     </div>
+
+  <div id="toast" class="hidden" role="status"><span id="toast-text"></span> <button id="toast-undo" class="nav-btn">Undo</button></div>
 
   <script src="/apps/calendar/calendar.js"></script>
 </body>

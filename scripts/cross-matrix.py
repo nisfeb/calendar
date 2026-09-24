@@ -2,7 +2,9 @@
 """cross-matrix.py HOST HJAR PEER PJAR PEERNAME
 Tasks across the sync paths: a task in a calendar shared with a ship
 (both directions, then migrate on the peer), and a task in a followed
-CalDAV calendar (both directions)."""
+CalDAV calendar (both directions). With FAKE_URL as a sixth argument, a
+Google calendar shared onward too; that part rewires the host's Google
+client to the fake, so it refuses a host with a real client set up."""
 import json, subprocess, sys, time
 HOST, HJ, PEER, PJ, PEERNAME = sys.argv[1:6]
 P = '/apps/shell.shell/desks/calendar.desk/desk/data/calendar.calendar_app'
@@ -22,6 +24,15 @@ def wait(label, fn, secs=75):
         except Exception: pass
         time.sleep(3)
     print(f'  FAIL {label}'); fails.append(label); return False
+def hold(label, bad, secs=45):
+    # a thing that must not happen: watched as long as it would take
+    t0 = time.time()
+    while time.time() - t0 < secs:
+        try:
+            if bad(): print(f'  FAIL {label}'); fails.append(label); return False
+        except Exception: pass
+        time.sleep(3)
+    print(f'  ok   {label} ({secs}s)'); return True
 def check(label, cond, detail=''):
     print(('  ok   ' if cond else '  FAIL ') + label + ('' if cond else ' — ' + str(detail)[:200]))
     if not cond: fails.append(label)
@@ -57,8 +68,9 @@ r = json.loads(curl(PEER, PJ, '/apps/calendar/migrate', {'id': sid}))
 check('peer: migrate ok', r.get('ok') is True, r)
 check('peer: migrated calendar is local with both tasks and the event', cals(PEER, PJ)[sid]['kind'] == 'local' and set(rows(PEER, PJ, sid)) == {'host task', 'peer undated', 'host event'} and rows(PEER, PJ, sid)['peer undated']['cat'] == 'todo')
 poke(PEER, PJ, {'action': 'done-event', 'id': rows(PEER, PJ, sid)['host task']['id'], 'done': True})
-time.sleep(8)
-check('peer: an edit after migrate stays local', rows(PEER, PJ, sid)['host task']['done'] is True and rows(HOST, HJ, CAL)['host task']['done'] is False)
+sync(PEER, PJ)
+wait('peer: the edit after migrate took', lambda: rows(PEER, PJ, sid)['host task']['done'] is True, 20)
+hold('host: an edit after migrate stays local', lambda: rows(HOST, HJ, CAL)['host task']['done'] is not False)
 curl(HOST, HJ, '/apps/calendar/share/revoke', {'id': CAL, 'ship': PEERNAME})
 poke(PEER, PJ, {'action': 'del-calendar', 'id': sid}); poke(HOST, HJ, {'action': 'del-calendar', 'id': CAL})
 
@@ -95,6 +107,11 @@ if len(sys.argv) > 6:
     def ctl(body): return json.loads(subprocess.run(['curl', '-s', '-m', '60', '-X', 'POST', '-H', 'content-type: application/json', '-d', json.dumps(body), FAKE + '/__control'], capture_output=True, text=True).stdout or '{}')
     def writes(): return ctl({'op': 'state'})['writes']
     def gsync(): curl(HOST, HJ, '/apps/calendar/google/sync', {})
+    g0 = json.loads(curl(HOST, HJ, '/apps/calendar/google.json') or '{}')
+    if g0.get('client_id') not in ('', None, 'fake-client'):
+        print('refusing the Google part: the host has a Google client set up (%s)' % g0.get('client_id'))
+        print('CROSS MATRIX ' + ('PASSED' if not fails else 'FAILED: ' + ', '.join(fails)) + ' (Google part skipped)')
+        sys.exit(1 if fails else 2)
     ctl({'op': 'reset'})
     curl(HOST, HJ, '/apps/calendar/google/config', {'client_id': 'fake-client', 'client_secret': 'fake-secret', 'auth_url': FAKE + '/o/oauth2/v2/auth', 'token_url': FAKE + '/token', 'api_base': FAKE})
     subprocess.run(['curl', '-s', '-m', '60', '-b', HJ, '-L', '-o', '/dev/null', HOST + '/apps/calendar/google/connect'])

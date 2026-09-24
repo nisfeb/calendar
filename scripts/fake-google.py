@@ -9,7 +9,7 @@ Endpoints (a subset of the real ones, same shapes):
   GET  /calendar/v3/users/me/calendarList
   GET  /calendar/v3/calendars/<cid>/events       (syncToken, pageToken, showDeleted)
   POST /calendar/v3/calendars/<cid>/events
-  GET/PUT/DELETE /calendar/v3/calendars/<cid>/events/<eid>
+  GET/PUT/PATCH/DELETE /calendar/v3/calendars/<cid>/events/<eid>   (PATCH merges)
   POST /__control  {op: put|delete|gone|reset|state, ...}   the test's hand on the remote
 """
 import sys, json, uuid, time, datetime
@@ -125,6 +125,19 @@ class H(BaseHTTPRequestHandler):
             cid, eid = parts[4], parts[6]
             if eid not in EVENTS[cid]: self.send(404, {'error': {'code': 404}}); return
             ev = json.loads(raw); ev['id'] = eid; ev.setdefault('status', 'confirmed'); ev.setdefault('iCalUID', EVENTS[cid][eid].get('iCalUID'))
+            touch(cid, ev); WRITES.append(('update', cid, eid)); self.send(200, ev); return
+        self.send(404, {'error': {'code': 404}})
+
+    def do_PATCH(self):
+        # Google's patch: the fields sent replace, the rest stay
+        p = unquote(urlparse(self.path).path); raw = self.body()
+        if not self.authed(): self.send(401, {'error': {'code': 401}}); return
+        parts = p.split('/')
+        if len(parts) == 7 and parts[5] == 'events':
+            if FAIL['writes']: self.send(503, {'error': {'code': 503, 'message': 'forced'}}); return
+            cid, eid = parts[4], parts[6]
+            if eid not in EVENTS[cid]: self.send(404, {'error': {'code': 404}}); return
+            ev = dict(EVENTS[cid][eid]); ev.update(json.loads(raw)); ev['id'] = eid; ev['status'] = 'confirmed'
             touch(cid, ev); WRITES.append(('update', cid, eid)); self.send(200, ev); return
         self.send(404, {'error': {'code': 404}})
 

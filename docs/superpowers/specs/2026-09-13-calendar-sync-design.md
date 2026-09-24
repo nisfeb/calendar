@@ -87,7 +87,9 @@ These serve both integrations and are done first.
 - **Recurrence.** A new rule kind, `rrule`, interprets RFC 5545 RRULE text
   directly (FREQ, INTERVAL, COUNT, UNTIL, BYDAY with ordinals, BYMONTHDAY,
   BYMONTH, WKST). It becomes the canonical form; the existing kinds remain as
-  the editor's presets and serialize to RRULE. EXDATE maps to `except`,
+  the editor's presets and serialize to RRULE. (Since 2026-09-23 the presets
+  are gone as kinds: they convert to `rrule` on the way in, and the editor
+  reads a rule back into its preset fields.) EXDATE maps to `except`,
   RDATE to a per-event extra-dates list. Anything `rrule` cannot express is kept
   as text and inflated by nothing, which is what happens today.
 - **Alarms.** `VALARM` becomes data on the event (trigger relative to start,
@@ -160,7 +162,8 @@ ships until all three clients pass by hand and the script passes in CI.
 OAuth client (client id and secret from Google Cloud console), pasted once into
 the settings page; the app has no shared client. This is decided, not open:
 the settings page walks the user through creating the client (project, OAuth
-consent screen in testing mode, a web application client with the ship's
+consent screen published but unverified (in testing mode Google ends the
+refresh token after 7 days), a web application client with the ship's
 callback URL as the authorized redirect), because that is the part people get
 wrong. Scope
 `https://www.googleapis.com/auth/calendar`. The refresh token lives in

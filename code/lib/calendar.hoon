@@ -76,7 +76,12 @@
 ::  the event shape does not model; they round-trip untouched.
 +$  uid    @t
 +$  etag   @t
-+$  alarm  [trigger=$%([%rel before=@dr] [%abs at=@da]) desc=@t]
+::  an alarm's trigger: before the start, at a moment, or (%off) any other
+::  offset: after the start, or from the end (TRIGGER;RELATED=END)
++$  alarm
+  $:  trigger=$%([%rel before=@dr] [%abs at=@da] [%off end=? late=? d=@dr])
+      desc=@t
+  ==
 +$  props  (list [k=@t v=@t])
 +$  entry  [=event =uid =etag seq=@ud alarms=(list alarm) =props]
 +$  cal-props  [name=@t color=@t kind=$~(%local ?(%local %google %caldav %ship)) remote=(unit @t)]
@@ -102,9 +107,17 @@
 +$  order  ((mop @da (set ref)) lth)
 ::  thru: the wall we aimed for. stops: per event, where a
 ::  fuel-capped walk actually ended short of thru — absent for
-::  events that were fully walked.
+::  events that were fully walked. Another app reads this noun
+::  with its own copy of the type (orrery's cal-cache): its shape
+::  does not change. What it was built from lives beside it.
 ::
 +$  cache  [thru=@da stops=(map eid @da) =order]
+::  +cache-ver: what a cache is current for: each calendar's seq (a
+::  write moves it) and the horizon
+++  cache-ver
+  |=  c=calendar
+  ^-  @uv
+  (sham [horizon.c (~(run by cals.c) |=(k=cal seq.k))])
 ++  on-order  ((on @da (set ref)) lth)
 ::
 ++  on-log    ((on @ud logent) lth)
@@ -132,12 +145,21 @@
     (put-entry acc [ev id '' 0 ~ ~])
   [%2 title.old zone.old horizon.old (~(put by *(map @ta cal)) %default c)]
 ::  +put-entry: write an entry; seq and etag move, the log records it.
+::  An override child's parent is re-stamped with it (+restamp).
 ++  put-entry
   |=  [c=cal e=entry]
   ^-  cal
+  (restamp (put-one c e) (parent-of e))
+++  put-one
+  |=  [c=cal e=entry]
+  ^-  cal
+  =.  etag.e  (make-etag e)
+  ::  a write that changes nothing is not a change: no seq, no log row,
+  ::  so no push to a remote and no refetch by a client
+  =/  old=(unit entry)  (~(get by entries.c) uid.e)
+  ?:  &(?=(^ old) =(etag.u.old etag.e))  c
   =/  seq=@ud  +(seq.c)
   =.  seq.e  seq
-  =.  etag.e  (make-etag e)
   %_  c
     seq      seq
     entries  (~(put by entries.c) uid.e e)
@@ -146,13 +168,45 @@
 ++  del-entry
   |=  [c=cal =uid]
   ^-  cal
-  ?.  (~(has by entries.c) uid)  c
+  =/  old=(unit entry)  (~(get by entries.c) uid)
+  ?~  old  c
   =/  seq=@ud  +(seq.c)
-  %_  c
-    seq      seq
-    entries  (~(del by entries.c) uid)
-    log      (put:on-log log.c seq [uid %del])
-  ==
+  =.  c
+    %_  c
+      seq      seq
+      entries  (~(del by entries.c) uid)
+      log      (put:on-log log.c seq [uid %del])
+    ==
+  (restamp c (parent-of u.old))
+::  +parent-of: the uid an override child belongs to
+++  parent-of
+  |=  e=entry
+  ^-  (unit uid)
+  |-
+  ?~  props.e  ~
+  ?:  =('X-GRUBBERY-PARENT' k.i.props.e)  `v.i.props.e
+  $(props.e t.props.e)
+::  +kids-of: a parent's override children
+++  kids-of
+  |=  [c=cal par=uid]
+  ^-  (list entry)
+  (skim ~(val by entries.c) |=(e=entry =(`par (parent-of e))))
+::  +restamp: a parent carries a stamp over its children's etags, so a
+::  change to one child changes the parent too: the parent is logged and
+::  its etag moves, and every client, remote and peer that reads the
+::  object whole sees the moved instance
+++  restamp
+  |=  [c=cal par=(unit uid)]
+  ^-  cal
+  ?~  par  c
+  =/  p=(unit entry)  (~(get by entries.c) u.par)
+  ?~  p  c
+  =/  kids=(list entry)  (kids-of c u.par)
+  =/  rest=props  (skip props.u.p |=([k=@t *] =('X-GRUBBERY-KIDS' k)))
+  =/  ps=props
+    ?~  kids  rest
+    [['X-GRUBBERY-KIDS' (scot %uw (sham (sort (turn kids |=(x=entry etag.x)) aor)))] rest]
+  (put-one c u.p(props ps))
 ::  +find-entry: which calendar holds a uid, and the entry
 ++  find-entry
   |=  [c=calendar =uid]
@@ -201,25 +255,25 @@
   =?  o  !=(l.i.spans r.i.spans)
     (put-ref o r.i.spans [id idx i.spans])
   $(spans t.spans)
-::  +dress-timed: a naive wall moment -> its UTC spans, per zone+fin.
-::  A DST gap yields none; a fall-back overlap yields two.
+::  +dress-timed: a naive wall moment -> its UTC span, per zone+fin,
+::  each end placed as RFC 5545 3.3.5 says (+place:rules): a fall-back
+::  overlap is its first instant, a spring-forward gap shifts forward.
 ::
 ++  dress-timed
   |=  [zone=(unit @t) =fin moment=@da]
   ^-  (list span)
+  =/  l=(unit @da)  (place:rules zone moment)
+  ?~  l  ~
   ?-    -.fin
-      ::  end relative: each realized start + the duration
-      %dur
-    %+  turn  (realize:rules zone moment)
-    |=(l=@da `span`[l (add l d.fin)])
+      ::  end relative: the start + the duration
+      %dur  ~[[u.l (add u.l d.fin)]]
   ::
-      ::  end absolute: realize both wall-clock endpoints, pair the
-      ::  earliest of each. single (non-recurring) events only.
+      ::  end absolute: the wall-clock end placed the same way. single
+      ::  (non-recurring) events only.
       %to
-    =/  ls=(list @da)  (realize:rules zone moment)
-    =/  rs=(list @da)  (realize:rules zone end.fin)
-    ?:  |(?=(~ ls) ?=(~ rs))  ~
-    ~[[i.ls i.rs]]
+    =/  r=(unit @da)  (place:rules zone end.fin)
+    ?~  r  ~
+    ~[[u.l (max u.l u.r)]]
   ==
 ::  +dress-allday: a naive moment -> one UTC-date span of N days
 ::
@@ -230,10 +284,11 @@
   [l (add l (mul (max 1 days) ~d1))]
 ::  +inflate: build the order index for all events through thru.
 ::  stops records, per event, where a fuel-capped walk ended short
-::  of thru — the honest per-event walls.
+::  of thru — the honest per-event walls. kind-for names a rule kind;
+::  zone is the calendar's, where a task due at a moment sits.
 ::
 ++  inflate
-  |=  [events=(map eid event) kinds=(map rail:tarball kind:rules) thru=@da]
+  |=  [events=(map eid event) kind-for=$-(rail:tarball (unit kind:rules)) thru=@da zone=(unit @t)]
   ^-  [stops=(map eid @da) =order]
   =/  out=order  ~
   =/  stops=(map eid @da)  ~
@@ -246,14 +301,17 @@
     ?-    -.ev
         %date
       [(inflate-date out id month.ev day.ev thru) ~]
-    ::  a task sits on the day it is due; undated, it is only in the list
+    ::  a task sits on the day it is due: a date (UTC midnight) is that
+    ::  day, a moment the day it falls on where the calendar is.
+    ::  Undated, it is only in the list.
         %todo
       ?~  due.ev  [out ~]
-      =/  l=@da  (day-floor:rules u.due.ev)
+      =/  d=@da  u.due.ev
+      =/  l=@da  (day-floor:rules ?:(=(d (day-floor:rules d)) d (wall:rules zone d)))
       [(add-spans out id 0 ~[[l (add l ~d1)]]) ~]
     ::
         %timed
-      =/  k=(unit kind:rules)  (~(get by kinds) kind.recur.ev)
+      =/  k=(unit kind:rules)  (kind-for kind.recur.ev)
       ?~  k  [out ~]
       %^    walk-recur
           [out id recur.ev bound.ev u.k thru]
@@ -261,7 +319,7 @@
       |=(m=@da (dress-timed zone.ev fin.ev m))
     ::
         %allday
-      =/  k=(unit kind:rules)  (~(get by kinds) kind.recur.ev)
+      =/  k=(unit kind:rules)  (kind-for kind.recur.ev)
       ?~  k  [out ~]
       %^    walk-recur
           [out id recur.ev bound.ev u.k thru]
@@ -351,8 +409,11 @@
 ::  +all-day: does this event render in date-space (no zone)?
 ::
 ++  all-day  |=(e=event ?=(?(%allday %date %todo) -.e))
-::  +meta-str: a string key from a meta map, '' when absent
-::
+::  +meta-of: an event's display payload, whatever its shape
+++  meta-of
+  |=  e=event
+  ^-  meta
+  ?-(-.e %timed meta.e, %allday meta.e, %date meta.e, %todo meta.e)
 ::  +meta-tags: the tags on an event (meta `tags`, a list of strings)
 ++  meta-tags
   |=  m=meta
@@ -360,14 +421,12 @@
   =/  j=(unit json)  (~(get by m) 'tags')
   ?.  ?=([~ %a *] j)  ~
   (murn p.u.j |=(x=json ?:(?=(%s -.x) `p.x ~)))
+::  +meta-str: a string key from a meta map, '' when absent
 ++  meta-str
   |=  [m=meta k=@t]
   ^-  @t
   =/  j=(unit json)  (~(get by m) k)
   ?.(?=([~ %s *] j) '' p.u.j)
-::  +recur-json: kind + anchor + args. args pass through verbatim —
-::  the kind file is the only place that knows what they mean.
-::
 ::  +except-json: the occurrence indices a repeat has dropped. A client
 ::  that asked for a skip reads this back to see that the skip took;
 ::  the poke itself is silent, so this is the only proof there is.
@@ -376,6 +435,9 @@
   |=  except=(set @ud)
   ^-  json
   [%a (turn (sort ~(tap in except) lth) |=(i=@ud `json`(numb:enjs:format i)))]
+::  +recur-json: kind + anchor + args. args pass through verbatim —
+::  the kind file is the only place that knows what they mean.
+::
 ++  recur-json
   |=  =recur
   ^-  (list [@t json])
@@ -389,7 +451,7 @@
 ++  event-json
   |=  [id=@ta e=event]
   ^-  json
-  =/  m=meta  ?-(-.e %timed meta.e, %allday meta.e, %date meta.e, %todo meta.e)
+  =/  m=meta  (meta-of e)
   =/  common=(list [@t json])
     :~  ['id' s+id]
         ['cat' s+-.e]

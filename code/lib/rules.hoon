@@ -12,33 +12,20 @@
 ::  Occurrence n is closed-form in n — no iterating, no materialized
 ::  schedules.
 ::
-::  +instance dresses each tick into concrete UTC spans:
-::    extent decides the right edge — %instant (a point), %dur (a
-::      fixed real-time length), or %until (a wall-clock end time,
-::      rolling overnight if at/before the left edge).
-::    frame decides projection — %date is timezone-independent (the
-::      moment is a calendar day, UTC-anchored, never zone-shifted);
-::      %wall is a wall-clock instant realized through pytz (zone=~
-::      is UTC), which can yield two UTC spans in a DST fall-back
-::      overlap or none in a spring-forward gap.
-::  Which realization to fire, and whether a past occurrence still
-::  fires, is the caller's decision.
+::  lib/calendar dresses each tick into UTC spans: an all-day tick is
+::  a calendar day, never zone-shifted; a timed one is a wall-clock
+::  moment placed through pytz (zone=~ is UTC), +place.
 ::
 ::  Skipping an occurrence adds its index to except=; moving one is a
-::  skip plus a separate %once event. Editing the recurrence reshapes
-::  the index space — clear except= when you do. Zone names are pytz
-::  names ('America/New_York'); an unknown name crashes — validate at
+::  skip plus a separate %once event. Zone names are pytz names
+::  ('America/New_York'); an unknown name crashes, so validate at
 ::  write time.
 ::
 /<  pytz  /lib/pytz.hoon
 |%
 ::  +known-zone: a name pytz has; an unknown one would crash the walker
-++  known-zone
-  |=  z=@t
-  ^-  ?
-  ?=(^ (find ~[z] zone-names:pytz))
+++  known-zone  has-zone:pytz
 +$  wkd   ?(%mon %tue %wed %thu %fri %sat %sun)
-+$  ord   ?(%first %second %third %fourth %last)
 +$  span  [l=@da r=@da]
 ::
 ::  a kind is a clock: idx -> a naive local moment, nothing else.
@@ -83,7 +70,27 @@
   ^-  (list @da)
   ?~  zone  ~[local]
   (~(tz-to-utc-list zn:pytz u.zone) local)
-::  +wkd-num / +num-wkd: monday-zero weekday numbering
+::  +place: the one instant a wall-clock moment stands for (RFC 5545
+::  3.3.5): the first of two in a fall-back overlap, and in a
+::  spring-forward gap the offset from before it, so 02:30 on a skipped
+::  hour is 03:30. ~ when the zone cannot place it at all.
+++  place
+  |=  [zone=(unit @t) local=@da]
+  ^-  (unit @da)
+  =/  ls=(list @da)  (realize zone local)
+  ?^  ls  `i.ls
+  ::  the offset a day before: no zone moves its clock twice in a day
+  =/  before=(list @da)  (realize zone (sub local ~d1))
+  ?~(before ~ `(add i.before ~d1))
+::  +wall: a UTC instant as the wall clock of a zone (~, or one pytz does
+::  not know, is UTC)
+++  wall
+  |=  [zone=(unit @t) utc=@da]
+  ^-  @da
+  ?~  zone  utc
+  ?.  (known-zone u.zone)  utc
+  (fall (bind (~(utc-to-tz zn:pytz u.zone) utc) tail) utc)
+::  +wkd-num: monday-zero weekday numbering
 ::
 ++  wkd-num
   |=  w=wkd
@@ -97,22 +104,17 @@
     %sat  5
     %sun  6
   ==
-::
-++  num-wkd
-  |=  n=@ud
-  ^-  wkd
-  (snag (mod n 7) `(list wkd)`~[%mon %tue %wed %thu %fri %sat %sun])
 ::  +weekday: monday-zero weekday of a date (~2000.1.1 was a saturday)
 ::
 ++  weekday
   |=  d=@da
   ^-  @ud
-  =/  raw=@ud
-    %+  add  5
-    ?:  (gte d ~2000.1.1)
-      (mod (div (sub d ~2000.1.1) ~d1) 7)
-    (sub 7 (mod +((div (sub ~2000.1.1 d) ~d1)) 7))
-  (mod raw 7)
+  ?:  (gte d ~2000.1.1)
+    (mod (add 5 (div (sub d ~2000.1.1) ~d1)) 7)
+  ::  whole days back to the day that holds d: a midnight is on its own
+  ::  day, not the one before
+  =/  back=@ud  (div (add (sub ~2000.1.1 d) (dec ~d1)) ~d1)
+  (mod (sub (add 5 (mul 7 back)) back) 7)
 ::
 ++  day-floor  |=(d=@da (sub d (mod d ~d1)))
 ::
@@ -135,26 +137,4 @@
   ?:  |(=(0 d) =(0 m) (gth m 12))  ~
   ?:  (gth d (days-in-month y m))  ~
   `(year [[%.y y] m d 0 0 0 ~])
-::  +nth-weekday: the ord-th weekday of a month, ~ if absent
-::
-++  nth-weekday
-  |=  [y=@ud m=@ud =ord w=wkd]
-  ^-  (unit @da)
-  =/  first=@da  (year [[%.y y] m 1 0 0 0 ~])
-  =/  shift=@ud  (mod (sub (add (wkd-num w) 7) (weekday first)) 7)
-  =/  dom=@ud  +(shift)
-  =/  len=@ud  (days-in-month y m)
-  =/  day=@ud
-    ?-    ord
-      %first   dom
-      %second  (add dom 7)
-      %third   (add dom 14)
-      %fourth  (add dom 21)
-    ::
-        %last
-      =/  d=@ud  (add dom 28)
-      ?:((lte d len) d (sub d 7))
-    ==
-  ?:  (gth day len)  ~
-  `(year [[%.y y] m day 0 0 0 ~])
 --
