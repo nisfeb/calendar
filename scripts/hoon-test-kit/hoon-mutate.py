@@ -2,7 +2,7 @@
 """Mutation check for the Hoon libs: break one thing, run the suites, and
 report every break that no test noticed. See README.md and PLAYBOOK.md.
 
-    hoon-mutate.py <pier> [--ops OP,...] [--only ARM,...] [--list]
+    hoon-mutate.py <pier> [--ops OP,...] [--only ARM,...] [--since REV] [--list]
 
 Each mutant is written into the test desk's mount, never into the repo, and
 the clean lib is synced back when the run ends, however it ends. A mutant
@@ -146,6 +146,21 @@ flag = swapper(r'%\.[yn]\b', {'%.y': '%.n', '%.n': '%.y'}, 'flag')
 MENU = {op.__name__: op for op in [boundary, conjunct, branch, equal, flag]}
 
 
+def touched_arms(rev):
+    """The arms a git diff against rev touches, per lib: where a big lib's
+    change is, so the expensive ops run there and not over every arm."""
+    arms = set()
+    for path, lib in LIBS:
+        diff = subprocess.run(['git', '-C', ROOT, 'diff', '-U0', rev, '--', path],
+                              capture_output=True, text=True, check=True).stdout
+        lines = open(path).readlines()
+        for m in re.finditer(r'^@@ -\S+ \+(\d+)(?:,(\d+))? @@', diff, re.M):
+            start, count = int(m.group(1)), int(m.group(2) or 1)
+            for n in range(max(start - 1, 0), min(start - 1 + max(count, 1), len(lines))):
+                arms.add((lib, arm_at(lines, n)))
+    return arms
+
+
 def mutants(menu):
     for path, _, lib in LIBS:
         lines = open(path).readlines()
@@ -177,12 +192,16 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('pier')
     ap.add_argument('--only', help='comma-separated arm names')
+    ap.add_argument('--since', metavar='REV',
+                    help='only the arms a git diff against REV touches (a branch, a tag, HEAD)')
     ap.add_argument('--list', action='store_true', help='print the mutants and stop')
     ap.add_argument('--ops', default='boundary,conjunct',
                     help=f'comma-separated, from: {",".join(MENU)} (default: %(default)s)')
     a = ap.parse_args()
     only = set(a.only.split(',')) if a.only else None
-    todo = [m for m in mutants([MENU[o] for o in a.ops.split(',')]) if not only or m[2] in only]
+    touched = touched_arms(a.since) if a.since else None
+    todo = [m for m in mutants([MENU[o] for o in a.ops.split(',')])
+            if (not only or m[2] in only) and (touched is None or (m[0], m[2]) in touched)]
     if a.list:
         for lib, line, arm, what, _ in todo:
             print(f'{lib}:{line}  +{arm}  {what}')
@@ -204,7 +223,8 @@ def main():
             t0 = time.time()
             r = run(a.pier, {'NOSYNC': '1', 'TEST_T': '120'})
             if r.returncode == 4:  # no answer: the ship is down, stop here
-                print(f'[{i}/{len(todo)}] the ship stopped answering; results from here are void', flush=True)
+                print(f'[{i}/{len(todo)}] the ship stopped answering during {lib}:{line} +{arm} {what}; '
+                      'results from here are void', flush=True)
                 break
             verdict = {0: 'SURVIVED', 1: 'killed', 3: 'no-build'}.get(r.returncode, 'timeout')
             if verdict == 'timeout':

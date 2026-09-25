@@ -112,7 +112,7 @@ if [[ "${1:-}" == setup ]]; then
   # file fails the whole suite as a build error.
   marks=""
   for k in $MARKS; do marks+=" /mar/$k/hoon"; done
-  ted <<EOF
+  ted >/dev/null <<EOF
 =/  m  (strand ,vase)
 =/  paz=(list path)  ~[/lib/test/hoon$marks]
 =|  fil=soba:clay
@@ -125,6 +125,40 @@ if [[ "${1:-}" == setup ]]; then
 ;<  ~  bind:m  (send-raw-card [%pass /setup %arvo %c %info %$DESK %& fil])
 (pure:m !>(%ok))
 EOF
+  echo "setup done: /lib/test.hoon and the marks are on %$DESK"
+  # SHIP_FILES: libs the app's code expects from a desk on this ship
+  # (a grubbery nexus's tarball, nexus and fiberio come from %grubbery),
+  # copied from that desk so they match what is installed. Unlike the
+  # harness above, a copy that differs from the ship's is REFRESHED:
+  # these move whenever that desk is upgraded.
+  if [[ -n "${SHIP_FILES:-}" ]]; then
+    sf=""
+    for f in $SHIP_FILES; do
+      p=${f#*:}; p=${p%.hoon}
+      sf+=" [%${f%%:*} /$p/hoon]"
+    done
+    got=$(ted <<EOF
+=/  m  (strand ,vase)
+=/  paz=(list [@tas path])  ~[${sf# }]
+=|  fil=soba:clay
+|-
+?^  paz
+  =*  d  -.i.paz
+  =*  p  +.i.paz
+  ;<  t=@t  bind:m  (scry @t (weld \`path\`/cx/[d] p))
+  ;<  has=?  bind:m  (scry ? (weld /cu/$DESK p))
+  ?.  has  \$(paz t.paz, fil [[p %ins %hoon !>(t)] fil])
+  ;<  o=@t  bind:m  (scry @t (weld /cx/$DESK p))
+  ?:  =(o t)  \$(paz t.paz)
+  \$(paz t.paz, fil [[p %mut %hoon !>(t)] fil])
+?~  fil  (pure:m !>(1))
+;<  ~  bind:m  (send-raw-card [%pass /setup %arvo %c %info %$DESK %& fil])
+(pure:m !>(0))
+EOF
+)
+    if [[ "$got" == 0 ]]; then echo "setup: SHIP_FILES copied or refreshed on %$DESK"
+    else echo "setup: SHIP_FILES already current on %$DESK"; fi
+  fi
   exit
 fi
 
