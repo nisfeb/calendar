@@ -1052,6 +1052,11 @@
   |=  [=prod:fiber:nexus msg=tape]
   =/  m  (fiber:fiber:nexus ,~)
   ^-  form:m
+  ::  the first step takes the start's own kick (~). A real input queued
+  ::  ahead of it (a timer, news, a late answer, across a reload) used to
+  ::  reach a step that only sends, which asserts it was kicked: a crash
+  ::  on every reload, each one lengthening the wait below.
+  ;<  ~  bind:m  take-kick
   ::  a clean start takes down any wait an earlier run left set: its wake
   ::  would come to a fiber no longer waiting for it
   ?~  prod
@@ -1100,6 +1105,14 @@
     (soft-behn /rise/set [[/ %timer-set] `[wire @da]`[/rise until]])
   %-  ?:(|(set !crash) same (slog leaf+"{msg}: no timer (weir?); waiting for a poke" ~))
   (rise-park note)
+::  +take-kick: wait for the null input that starts a fiber; anything
+::  real before it is held for the steps that follow
+++  take-kick
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  |=  input:fiber:nexus
+  :+  ~  q.state
+  ?~(in [%done ~] [%skip ~])
 ::  +rise-park: wait for the /rise wake; a poke meanwhile is refused with
 ::  note (the restart it brings is not a crash, see +rise-later)
 ++  rise-park
