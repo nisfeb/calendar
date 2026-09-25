@@ -236,6 +236,30 @@ Fake ships derive every keypair from the `@p`, so anything key-dependent
 behaves differently there than on a real ship. Verify crypto paths on ricsul,
 not only on wex.
 
+### Before every release: the checklist
+
+Nothing below is optional. Calendar 18 and 19 each locked users' ships,
+and each would have been caught by one of these (lattice
+`/reference/grubbery-crash-loops` has the why).
+
+1. `scripts/hoon-test-kit/hoon-test.sh <pier>`: every unit suite passes
+   (`docs/hoon-testing.md`).
+2. The single-ship gates on the candidate: `roundtrip.sh`, `edge-matrix.py`,
+   `todo-matrix.py`, `dav-matrix.py`, `google-matrix.py`.
+3. The two-ship gates, both ships on the candidate: `ship-share-matrix.py`,
+   `caldav-client-matrix.py`, `cross-matrix.py`. When the release changes
+   what ships send each other, run `ship-share-matrix.py` again with one
+   ship on the previous release, both ways round: subscribers update at
+   different times.
+4. `scripts/upgrade-check.sh`: a test ship on the previous release, with
+   its data, gets the candidate; five quiet minutes, no crash in
+   `rise.json`, a poke acknowledged, the routes compared.
+5. `scripts/weir-check.sh` twice, with `/sys/behn/` and with
+   `/sys/bowl.sig` refused: the calendar parks, it never spins.
+6. A big input, if the release touches a parser or a sync path: an import
+   of thousands of objects, and of one series with thousands of
+   overrides, must answer in seconds, with the ship answering throughout.
+
 Test the upgrade, not just the new code. Put the previous release on the test
 ship, give it the data real ships have (including what the old code accepted
 without checking), then switch to the new release and watch the console for a
