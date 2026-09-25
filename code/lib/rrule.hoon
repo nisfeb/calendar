@@ -188,20 +188,29 @@
   ?:  (syn:si n)  (abs:si n)
   ?:  (gth (abs:si n) len)  0
   (sub +(len) (abs:si n))
+::  +max-idx: how far +count-dom and +dom-count walk. A COUNT comes from
+::  anyone who can hand us an event (a share peer, a followed server, a
+::  Google invite), and each step is one occurrence: COUNT=99999999999
+::  would hold the ship for days, and mole bounds a crash, not a loop.
+::  The index cap +apply-until already has: a series longer than that
+::  ends there (10.000 days is 27 years of a daily event).
+++  max-idx  10.000
 ::  +count-dom: the index bound that holds a rule's first n occurrences
 ++  count-dom
   |=  [r=rule start=@da n=@ud]
   ^-  @ud
   =|  [idx=@ud got=@ud dead=@ud]
   |-
-  ?:  |(=(got n) (gth dead 400))  idx
+  ?:  |(=(got n) (gth dead 400) (gte idx max-idx))  idx
   ?~  (occurrence r start idx)  $(idx +(idx), dead +(dead))
   $(idx +(idx), got +(got), dead 0)
-::  +dom-count: how many occurrences lie below an index bound
+::  +dom-count: how many occurrences lie below an index bound (walked no
+::  further than +max-idx)
 ++  dom-count
   |=  [r=rule start=@da dom=@ud]
   ^-  @ud
   =|  [idx=@ud got=@ud]
+  =.  dom  (min dom max-idx)
   |-
   ?:  (gte idx dom)  got
   $(idx +(idx), got ?~((occurrence r start idx) got +(got)))

@@ -160,6 +160,14 @@ st, got, _ = dav('GET', 'edge-two/edge-31%40test.ics')
 check('and goes out as the same COUNT', 'COUNT=3' in got, got[:400])
 ev31 = curl('/event.json?id=edge-31%40test&cal=edge-two')
 check('event.json counts occurrences', ev31.get('count') == 3, ev31.get('count') if isinstance(ev31, dict) else ev31)
+# a COUNT is walked one occurrence at a time, and anyone who hands us an event
+# picks it: the walk stops at 10000 (+max-idx). A million, not 1e11: on a
+# ship without the cap this costs seconds, not days.
+t0 = time.time()
+curl('/import?cal=edge-two', raw=vcal(vevent('edge-huge@test', 'edge huge', ['DTSTART:20261101T100000Z', 'DURATION:PT1H', 'RRULE:FREQ=DAILY;COUNT=1000000'])))
+check('a huge COUNT imports quickly', time.time() - t0 < 30, '%.1fs' % (time.time() - t0))
+evh = curl('/event.json?id=edge-huge%40test&cal=edge-two&idx=100000000000000')
+check('and is capped, as is an idx', isinstance(evh, dict) and evh.get('count') == 10000 and evh.get('before') == 10000, evh)
 
 # ---- fifth round: zones in the object
 curl('/import?cal=edge-two', raw=vcal(vevent('edge-ex@test', 'edge ex', ['DTSTART;TZID=America/New_York:20261102T090000', 'DURATION:PT30M', 'RRULE:FREQ=DAILY;COUNT=3', 'EXDATE:20261103T140000Z'])))
