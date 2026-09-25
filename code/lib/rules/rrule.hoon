@@ -6,6 +6,6 @@
 ^-  kind:rules
 |=  [args=(map @t json) start=@da idx=@ud]
 ^-  (unit @da)
-=/  r=(unit rule:rr)  (of-args:rr args)
+=/  r=(unit rule:rr)  (of-args-memo:rr args)
 ?~  r  ~
 (occurrence:rr u.r start idx)

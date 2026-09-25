@@ -39,9 +39,14 @@
   ^-  (set @t)
   (sy ~['FREQ' 'INTERVAL' 'COUNT' 'UNTIL' 'BYDAY' 'BYMONTHDAY' 'BYMONTH' 'WKST'])
 ::  +parse: RRULE text to a rule, ~ when malformed or unsupported.
+::  A rule's cost is paid per occurrence, so its size is capped: text
+::  past 1024 bytes, or a BY-list longer than any real rule needs, is
+::  unsupported (~) rather than a walk that sorts thousands of
+::  candidates at every step.
 ++  parse
   |=  t=@t
   ^-  (unit rule)
+  ?:  (gth (met 3 t) 1.024)  ~
   =/  parts=(list [k=@t v=@t])
     %+  murn  (split ';' t)
     |=  p=@t
@@ -76,6 +81,7 @@
   =/  bymonth=(list @ud)
     %+  murn  (fall (bind (get 'BYMONTH') |=(v=@t (split ',' v))) ~)
     |=(v=@t (rush v dem))
+  ?:  |((gth (lent byday) 64) (gth (lent bymonthday) 62) (gth (lent bymonth) 12))  ~
   =/  wkst=wkd:rules  (fall (biff (get 'WKST') parse-wkd) %mon)
   ::  the 20th Monday of the year is not read here
   ?:  &(=(%yearly freq) ?=(~ bymonth) (lien byday |=(b=^byday ?=(^ ord.b))))  ~
@@ -214,6 +220,13 @@
   |-
   ?:  (gte idx dom)  got
   $(idx +(idx), got ?~((occurrence r start idx) got +(got)))
+::  +of-args-memo: +of-args remembered across calls. The walk asks the
+::  kind for every index, and each ask used to parse the text again; the
+::  gate's subject here is only args, so the same args hit the cache.
+++  of-args-memo
+  |=  args=(map @t json)
+  ~+
+  (of-args args)
 ::  +of-args: the rule an rrule kind's args hold, as the kind reads it:
 ::  "until_naive" (unix ms) stands in for a UTC UNTIL read into a zone
 ++  of-args

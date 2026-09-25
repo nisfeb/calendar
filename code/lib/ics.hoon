@@ -66,15 +66,17 @@
     ?:  =(0 len)  l
     ?.  =(13 (cut 3 [(dec len) 1] l))  l
     (cut 3 [0 (dec len)] l)
-  =/  out=(list @t)  ~
+  ::  each line as its pieces, newest first, joined once at the end: a
+  ::  cat per continuation would copy the whole line every time
+  =/  out=(list (list @t))  ~
   |-
-  ?~  trimmed  (flop out)
+  ?~  trimmed  (flop (turn out |=(p=(list @t) (rap 3 (flop p)))))
   ?:  &(?=(^ out) |(=(' ' (cut 3 [0 1] i.trimmed)) =('\09' (cut 3 [0 1] i.trimmed))))
     %=  $
       trimmed  t.trimmed
-      out  [(cat 3 i.out (cut 3 [1 (dec (met 3 i.trimmed))] i.trimmed)) t.out]
+      out  [[(cut 3 [1 (dec (met 3 i.trimmed))] i.trimmed) i.out] t.out]
     ==
-  $(trimmed t.trimmed, out [i.trimmed out])
+  $(trimmed t.trimmed, out [~[i.trimmed] out])
 ::  +vevents: each BEGIN:VEVENT..END:VEVENT as its properties in order,
 ::  with its VALARM blocks collected separately. Keys keep their
 ::  parameters ('DTSTART;TZID=...').
@@ -342,10 +344,12 @@
   ^-  tape
   =/  c=@t  (crip line)
   =/  len=@ud  (met 3 c)
-  =|  out=tape
+  ::  chunks newest first, joined once: a weld per chunk would copy
+  ::  everything written so far every 75 octets
+  =|  out=(list tape)
   =/  at=@ud  0
   |-
-  ?:  (gte at len)  out
+  ?:  (gte at len)  (zing (flop out))
   =/  take=@ud  (min (sub len at) ?:(=(0 at) 75 74))
   ::  a fold never splits a UTF-8 character: back off while the next
   ::  octet continues one
@@ -356,7 +360,7 @@
     $(take (dec take))
   =/  piece=tape  (trip (cut 3 [at take] c))
   =/  chunk=tape  ?:(=(0 at) (weld piece crlf) :(weld " " piece crlf))
-  $(at (add at take), out (weld out chunk))
+  $(at (add at take), out [chunk out])
 ++  pad2  |=(n=@ud ^-(tape ?:((lth n 10) ['0' (a-co:co n)] (a-co:co n))))
 ++  date-text
   |=  d=@da

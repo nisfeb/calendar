@@ -103,6 +103,15 @@ poke({'action': 'edit-event', 'id': 'g-timed@google.com', 'cat': 'timed', 'kind'
 ctl({'op': 'put', 'event': {'id': 'g-timed', 'summary': 'edited on google', 'start': {'dateTime': '2026-10-01T14:00:00Z'}, 'end': {'dateTime': '2026-10-01T15:00:00Z'}}}); ctl({'op': 'fail', 'on': False}); prod()
 cs = ship_get('/google/conflicts.json')
 check('conflict logged, google kept', len(cs) == 1 and 'edited on google' in gnames() and 'SUMMARY:edited here' in cs[0]['local'], (len(cs), gnames()))
+# a Google edit the ship has not pulled yet: the push names the old etag
+# (If-Match), Google refuses it, and Google's edit stands
+ship_post('/google/conflicts/clear', {})
+ctl({'op': 'put', 'event': {'id': 'g-timed', 'summary': 'google side', 'start': {'dateTime': '2026-10-01T14:00:00Z'}, 'end': {'dateTime': '2026-10-01T15:00:00Z'}}})
+poke({'action': 'edit-event', 'id': 'g-timed@google.com', 'cat': 'timed', 'kind': 'once', 'start_ms': 1790863200000, 'fin': 'dur', 'dur_min': 60, 'meta': {'name': 'ship side'}}); time.sleep(10)
+st = ctl({'op': 'state'})['events']['primary@fake']
+cs = ship_get('/google/conflicts.json')
+check('a stale push does not overwrite google', st['g-timed']['summary'] == 'google side' and len(cs) == 1 and 'SUMMARY:ship side' in cs[0]['local'], (st['g-timed']['summary'], len(cs)))
+prod(); check('and the next pull brings google\'s', 'google side' in gnames(), gnames())
 # cleanup
 ship_post('/google/conflicts/clear', {}); ship_post('/google/unlink', {'id': gc}); ship_post('/google/disconnect', {}); ctl({'op': 'reset'})
 check('cleanup', not [c for c in ship_get('/calendars.json') if c['kind'] == 'google'] and ship_get('/google.json').get('connected') is False)

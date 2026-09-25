@@ -113,11 +113,11 @@
 ::
 +$  cache  [thru=@da stops=(map eid @da) =order]
 ::  +cache-ver: what a cache is current for: each calendar's seq (a
-::  write moves it) and the horizon
+::  write moves it), the horizon, and the zone (the day a task sits on)
 ++  cache-ver
   |=  c=calendar
   ^-  @uv
-  (sham [horizon.c (~(run by cals.c) |=(k=cal seq.k))])
+  (sham [horizon.c zone.c (~(run by cals.c) |=(k=cal seq.k))])
 ++  on-order  ((on @da (set ref)) lth)
 ::
 ++  on-log    ((on @ud logent) lth)
@@ -347,6 +347,8 @@
   ?:  =(0 fuel)  [out last]
   ?:  (gth dead max-dead)  [out ~]
   ?:  &(?=(^ dom.bound) (gte idx u.dom.bound))  [out ~]
+  ::  a once event has index 0 and no other: no dead run to wait out
+  ?:  &(=(%once name.kind.recur) (gth idx 0))  [out ~]
   =/  moment=(unit @da)
     (fall (mole |.((k args.recur start.recur idx))) ~)
   ?~  moment  $(idx +(idx), dead +(dead))
@@ -366,7 +368,9 @@
   |=  [out=order id=eid month=@ud day=@ud thru=@da]
   ^-  order
   =/  y0=@ud  1.970
-  =/  y1=@ud  y:(yore thru)
+  ::  a far thru (a stored horizon from before it was capped) walks no
+  ::  further than max-live years
+  =/  y1=@ud  (min y:(yore thru) (add y0 max-live))
   =/  y=@ud  y0
   |-
   ?:  (gth y y1)  out

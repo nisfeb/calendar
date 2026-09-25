@@ -146,6 +146,10 @@
     |=  o=json
     ^-  alarm:cal
     [[%rel (mul (num o 'minutes') ~m1)] (str o 'method')]
+  =/  rdef=@t
+    =/  rj=json  (obj item 'reminders')
+    ?.  ?=([%o *] rj)  ''
+    ?:(=([~ %b %.y] (~(get by p.rj) 'useDefault')) 'default' '')
   =/  rid=(unit [key=@t val=@t])
     ?:  =('' (str item 'recurringEventId'))  ~
     (rid-of (obj item 'originalStartTime'))
@@ -155,6 +159,12 @@
       ^-  (list [@t @t])
       :~  ['X-GOOGLE-ID' gid]
           ['X-GOOGLE-UPDATED' (str item 'updated')]
+          ::  the version a push names in If-Match, so it never writes
+          ::  over a Google edit it has not seen
+          ['X-GOOGLE-ETAG' (str item 'etag')]
+          ::  the calendar's default reminders, which the event does not
+          ::  list: a push keeps them on rather than sending none
+          ['X-GOOGLE-REMINDERS' rdef]
       ==
       ^-  (list [@t @t])
       ?:(=('' tags) ~ ~[['CATEGORIES' tags]])
@@ -227,6 +237,12 @@
         ['iCalUID' s+=/(own (get-prop:ics props.e 'X-GRUBBERY-UID') ?~(own uid.e v.u.own))]
         :-  'reminders'
         %-  pairs:enjs:format
+        ::  Google's default reminders stay on while no alarm was set here
+        =/  dflt=?
+          ?&  =(~ alarms.e)
+              =(`['X-GOOGLE-REMINDERS' 'default'] (get-prop:ics props.e 'X-GOOGLE-REMINDERS'))
+          ==
+        ?:  dflt  ~[['useDefault' b+&]]
         :~  ['useDefault' b+|]
             :-  'overrides'
             :-  %a

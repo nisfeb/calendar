@@ -9,7 +9,8 @@ Endpoints (a subset of the real ones, same shapes):
   GET  /calendar/v3/users/me/calendarList
   GET  /calendar/v3/calendars/<cid>/events       (syncToken, pageToken, showDeleted)
   POST /calendar/v3/calendars/<cid>/events
-  GET/PUT/PATCH/DELETE /calendar/v3/calendars/<cid>/events/<eid>   (PATCH merges)
+  GET/PUT/PATCH/DELETE /calendar/v3/calendars/<cid>/events/<eid>   (PATCH merges; If-Match
+                                                   against a newer etag is a 412)
   POST /__control  {op: put|delete|gone|reset|state, ...}   the test's hand on the remote
 """
 import sys, json, uuid, time, datetime
@@ -137,6 +138,8 @@ class H(BaseHTTPRequestHandler):
             if FAIL['writes']: self.send(503, {'error': {'code': 503, 'message': 'forced'}}); return
             cid, eid = parts[4], parts[6]
             if eid not in EVENTS[cid]: self.send(404, {'error': {'code': 404}}); return
+            im = self.headers.get('If-Match')
+            if im and im != EVENTS[cid][eid].get('etag'): self.send(412, {'error': {'code': 412, 'message': 'Precondition Failed'}}); return
             ev = dict(EVENTS[cid][eid]); ev.update(json.loads(raw)); ev['id'] = eid; ev['status'] = 'confirmed'
             touch(cid, ev); WRITES.append(('update', cid, eid)); self.send(200, ev); return
         self.send(404, {'error': {'code': 404}})

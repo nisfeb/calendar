@@ -93,6 +93,9 @@
           [%fall %& [/ %'shares.json'] [[/ %json] [%o ~]]]
           [%fall %| /shares empty-dir:loader]
           [%fall %& [/ %'shares.sig'] [[/ %sig] ~]]
+          ::  refusals.json: refused share edits the sync fiber still has
+          ::  to tell their peers about (+send-refusals)
+          [%fall %& [/ %'refusals.json'] [[/ %json] [%a ~]]]
           [%fall %& [/ %'share-offers.json'] [[/ %json] [%o ~]]]
           [%fall %& [/ %'ship-remotes.json'] [[/ %json] [%o ~]]]
           [%fall %& [/ %'google.sig'] [[/ %sig] ~]]
@@ -161,16 +164,10 @@
             ^-  form:m
             ~&  >>>  [%calendar-share-poke-refused u.src cid u why]
             ?:  =('' mode)  (pure:m ~)
-            ;<  *  bind:m
-              %^  remote-poke-wait  u.src  [%& cal-instance %'shares.sig']
-              %-  pairs:enjs:format
-              :~  ['action' s+'refused']
-                  ['cal' s+cid]
-                  ['uid' s+u]
-                  ['why' s+why]
-                  ['mode' s+mode]
-              ==
-            (pure:m ~)
+            ::  queued for the sync fiber to send (+send-refusals): waiting
+            ::  on the peer here would hold every poke to the calendar, and
+            ::  a peer could keep it waiting
+            (queue-refusal u.src cid u why mode)
           ?.  =('edit' mode)
             ;<  ~  bind:m  (tell (gs jon 'uid') 'the calendar is shared with you read-only')
             $
@@ -317,36 +314,8 @@
           =/  feeds=(map @t json)  ?.(?=([%o *] fj) ~ p.fj)
           ;<  ~  bind:m  (write-json-grub './' 'gcal-feeds.json' [%o (~(del by feeds) nm)])
           $
-        ?:  =('sync-feeds' act)
-          ::  materialize external ICS feeds as events: drop all
-          ::  prior feed-tagged events, re-add fresh (recurring
-          ::  VEVENTs are skipped for now)
-          ;<  fj=json  bind:m  (read-json-grub './' 'gcal-feeds.json')
-          =/  feeds=(list [nm=@t url=@t])
-            ?.  ?=([%o *] fj)  ~
-            %+  murn  ~(tap by p.fj)
-            |=([k=@t v=json] ?.(?=([%s *] v) ~ `[k p.v]))
-          ?~  feeds
-            ~&  >>>  "%calendar sync: no feeds configured"
-            $
-          ;<  now=@da  bind:m  get-time:io
-          ;<  [synced=(map eid:cal event:cal) skipped=@ud]  bind:m
-            (do-sync feeds (sub now (mul 90 ~d1)) (add now (mul 2 ~d365)) zone.c)
-          ::  the fetches took a while: apply onto the calendar as it is
-          ::  now, not as it was when the poke came in
-          ;<  now-raw=*  bind:m  (get-state-as:io ,*)
-          =.  c  (lift:cal now-raw)
-          ::  a feed event the feeds no longer carry goes; the rest are put
-          ::  (an unchanged one is no change)
-          =/  stale=(list @ta)
-            %+  murn  ~(tap by (events-all:cal c))
-            |=  [id=@ta e=event:cal]
-            ?:(|(=('' (meta-str:cal (meta-of:cal e) 'feed')) (~(has by synced) id)) ~ `id)
-          =.  c  (roll stale |=([id=@ta acc=_c] (del-ev acc '' id)))
-          =.  c  (roll ~(tap by synced) |=([[id=@ta e=event:cal] acc=_c] (put-ev acc '' id e)))
-          ~&  >  "%calendar sync: {(scow %ud ~(wyt by synced))} synced, {(scow %ud skipped)} recurring skipped"
-          ;<  ~  bind:m  (replace:io c)
-          $
+        ::  sync-feeds is an HTTP route now (POST sync-feeds): its fetches
+        ::  held every poke here while they ran
         ?:  =('edit-event' act)
           =/  id=@ta  (crip (trip (gs jon 'id')))
           =/  old=(unit event:cal)  (event-of c home id)
@@ -408,7 +377,7 @@
         ::  rename, a sync stamping remote ids) inflates nothing: the
         ::  cache is only marked current. One window.json already built
         ::  for this calendar is left as it is.
-        =|  last=(unit [(map eid:cal event:cal) @dr])
+        =|  last=(unit [(map eid:cal event:cal) @dr (unit @t)])
         |-
         ;<  =view:nexus  bind:m  (peek:io road ~)
         ?.  ?=([%file *] view)
@@ -417,7 +386,7 @@
         =/  c=calendar:cal  (cal-of view)
         =/  ver=@uv  (cache-ver:cal c)
         ;<  have=@uv  bind:m  (read-cache-ver './')
-        =/  key=(unit [(map eid:cal event:cal) @dr])  `[(keyed-events c) horizon.c]
+        =/  key=(unit [(map eid:cal event:cal) @dr (unit @t)])  `[(keyed-events c) horizon.c zone.c]
         ?:  =(ver have)
           ;<  *  bind:m  (take-news:io /cal)
           $(last key)
@@ -426,7 +395,7 @@
           ;<  *  bind:m  (take-news:io /cal)
           $
         ;<  now=@da  bind:m  get-time:io
-        =/  new=cache:cal  (inflate-all c (add now horizon.c))
+        =/  new=cache:cal  (inflate-all c (add now (min horizon.c max-reach)))
         ;<  ~  bind:m  (replace:io (by-uid new))
         ;<  ~  bind:m  (over:io (grub-road './' 'index.calendar-cache') [[/ %calendar-cache] new])
         ;<  ~  bind:m  (write-cache-ver './' ver)
@@ -457,6 +426,7 @@
         ;<  ~  bind:m  (sync-pass %google pull)
         ;<  ~  bind:m  (sync-pass %caldav pull)
         ;<  ~  bind:m  share-pass
+        ;<  ~  bind:m  send-refusals
         ;<  ~  bind:m  (sync-pass %ship pull)
         ::  a grant approved after the rise: the inbox road lands here
         ;<  ~  bind:m  lay-inbox-road
@@ -933,6 +903,28 @@
             :_  `(as-octs:mimes:html body)
             [200 ['content-type' 'text/calendar; charset=utf-8'] ['content-disposition' 'attachment; filename="calendar.ics"'] ~]
           (pure:m ~)
+        ::  sync-feeds: fetch the named ICS feeds and put their events in.
+        ::  Here, in a request fiber, and not in the calendar's own: the
+        ::  fetches take up to two minutes a feed. A feed that did not
+        ::  answer or could not be read leaves its events as they were.
+        ?:  &(=('POST' method.request.req) ?=([%'sync-feeds' ~] suffix))
+          ;<  fj=json  bind:m  (read-json-grub '../' 'gcal-feeds.json')
+          =/  feeds=(list [nm=@t url=@t])
+            %+  murn  ~(tap by (omap fj))
+            |=([k=@t v=json] ?.(?=([%s *] v) ~ `[k p.v]))
+          ;<  now=@da  bind:m  get-time:io
+          ;<  c0=calendar:cal  bind:m  (read-cal '../')
+          ;<  res=feed-sync  bind:m
+            (do-sync feeds (sub now (mul 90 ~d1)) (add now (mul 2 ~d365)) zone.c0)
+          ;<  ~  bind:m  (edit-cals '../' (apply-feeds res))
+          =/  failed=(list @t)  (murn feeds |=([nm=@t *] ?:((~(has in ok.res) nm) ~ `nm)))
+          ~&  >  "%calendar sync: {(scow %ud ~(wyt by got.res))} synced, {(scow %ud skipped.res)} recurring skipped, {(scow %ud (lent failed))} feeds failed"
+          %+  send-json  eyre-id
+          %-  pairs:enjs:format
+          :~  ['synced' (numb:enjs:format ~(wyt by got.res))]
+              ['skipped' (numb:enjs:format skipped.res)]
+              ['failed' a+(turn failed |=(n=@t s+n))]
+          ==
         ::  import?cal=id: an iCalendar body; each VEVENT becomes an entry
         ::  in that calendar (%default when unnamed), replacing one with the
         ::  same UID. Answers {imported, skipped}.
@@ -943,6 +935,10 @@
           =/  target=@ta  (fall (get-key:kv:html-utils 'cal' args) %default)
           ;<  now=@da  bind:m  get-time:io
           ;<  c=calendar:cal  bind:m  (read-cal '../')
+          ::  a calendar this makes has a knot for its id, as add-calendar's
+          ::  does: a / in it would split its keys and its share file's path
+          ?:  &(!(~(has by cals.c) target) !((sane %ta) target))
+            (send-text eyre-id 400 'calendar: a new calendar id is lowercase letters, digits, - . ~ _')
           ?:  (ship-read-only c target)
             (send-text eyre-id 403 'calendar: this calendar is shared with you read-only')
           =/  k=cal:cal  (fall (~(get by cals.c) target) (born now))
@@ -956,7 +952,8 @@
               (~(put by acc) uid.ve (snoc (fall (~(get by acc) uid.ve) ~) ve))
             %+  roll  ~(tap by groups)
             |=  [[u=@t group=(list vevent:ics)] acc=_[k=k imported=0 skipped=0]]
-            =/  put=(unit [k=cal:cal =uid:cal])  (put-object k.acc group zone.c u ~)
+            ::  an object this side cannot read is skipped, not a crash
+            =/  put=(unit [k=cal:cal =uid:cal])  (fall (mole |.((put-object k.acc group zone.c u ~))) ~)
             ?~  put  acc(skipped +(skipped.acc))
             acc(k k.u.put, imported +(imported.acc))
           ;<  ~  bind:m
@@ -1214,6 +1211,10 @@
   ;<  ca=cache:cal  bind:m  (read-cache pre)
   ;<  have=@uv  bind:m  (read-cache-ver pre)
   ;<  now=@da  bind:m  get-time:io
+  ::  no further than max-reach: a far to (a client's bad from, a stored
+  ::  horizon from before it was capped) would walk every event that far
+  =.  to  (min to (add now max-reach))
+  =.  horizon.c  (min horizon.c max-reach)
   ?.  ?|  !=(have (cache-ver:cal c))
           (gth to thru.ca)
           (lth thru.ca (add now (div horizon.c 2)))
@@ -1226,6 +1227,8 @@
   ;<  ~  bind:m  (over:io (grub-road pre 'order.calendar-cache') [[/ %calendar-cache] (by-uid new)])
   ;<  ~  bind:m  (write-cache-ver pre (cache-ver:cal c))
   (pure:m new)
+::  +max-reach: how far ahead a cache is ever built (the horizon's cap)
+++  max-reach  (mul 3.650 ~d1)
 ::  +by-uid: the keyed index as other apps read it, each ref under its
 ::  bare uid (the same UID in two calendars shows as two refs of it)
 ++  by-uid
@@ -1269,7 +1272,8 @@
 ::  back to where the entry lives, or %default). An existing entry asked
 ::  into another calendar moves, override children and all: deleted from
 ::  the old, put into the new, less the old calendar's Google ids (they
-::  would aim the new calendar's push at the old one's events).
+::  would aim the new calendar's push at the old one's events). A move
+::  onto a UID the other calendar holds changes nothing.
 ++  put-ev-in
   |=  [c=calendar:cal want=(unit @ta) home=@ta id=@ta ev=event:cal]
   ^-  calendar:cal
@@ -1278,6 +1282,9 @@
     ?:  &(?=(^ want) (~(has by cals.c) u.want))  u.want
     ?~(got %default cid.u.got)
   =/  move=?  &(?=(^ got) !=(cid.u.got cid))
+  ::  a move onto a UID the calendar already holds is refused: it would
+  ::  overwrite that entry, and push the overwrite to its remote
+  ?:  &(move (~(has by entries:(fall (~(get by cals.c) cid) fresh-cal:cal)) id))  c
   =/  kids=(list entry:cal)
     ?.  move  ~
     ?~  got  ~
@@ -1293,7 +1300,7 @@
 ++  unhome
   |=  e=entry:cal
   ^-  entry:cal
-  e(props (skip props.e |=([key=@t *] |(=('X-GOOGLE-ID' key) =('X-GOOGLE-UPDATED' key)))))
+  e(props (skip props.e |=([key=@t *] =("X-GOOGLE-" (scag 9 (trip key))))))
 ::  +cal-arg: the poke's optional calendar name
 ++  cal-arg
   |=  jon=json
@@ -2286,31 +2293,49 @@
   ;<  ~  bind:m  (send-request:io request)
   ::  a response that never comes (iris forgot the request across a
   ::  reload; seen on ricsul 2026-09-14, where it wedged the sync fiber
-  ::  and every sync route with it) is status 0 after two minutes.
-  ::  iris answers carry no request id, so a late answer to a timed-out
-  ::  request is a stray poke the sync loop's take-any swallows.
+  ::  and every sync route with it) is status 0 after two minutes. iris
+  ::  answers carry no request id, so a late one is waited out for two
+  ::  minutes more and dropped: left, it would be taken for the answer to
+  ::  the next request (one Google calendar's page applied to another). A
+  ::  request iris forgot costs the four minutes once.
   ;<  now=@da  bind:m  get-time:io
   ;<  ~  bind:m  (set-timer:io /fetch (add now ~m2))
-  ;<  res=(unit client-response:iris)  bind:m
-    |=  input:fiber:nexus
-    :+  ~  q.state
-    ?+  in  [%skip ~]
-        ~  [%wait ~]
-        [~ %veto *]  [%done ~]
-        [~ %poke * *]
-      ?:  =([/ %timer-wake] p.sage.u.in)
-        ?.(?=([%fetch *] !<(path q.sage.u.in)) [%skip ~] [%done ~])
-      ?.  =([/ %http-response] p.sage.u.in)  [%skip ~]
-      =/  resp=client-response:iris  !<(client-response:iris q.sage.u.in)
-      ::  a long body comes in parts: %progress, then %finished whole
-      ?:  ?=(%progress -.resp)  [%wait ~]
-      ?:(?=(%cancel -.resp) [%done ~] [%done `resp])
-    ==
+  ;<  res=$@(?(%none %late) client-response:iris)  bind:m  (take-fetch %fetch)
   ;<  ~  bind:m  (cancel-timer:io /fetch)
+  ;<  ~  bind:m
+    =/  m  (fiber:fiber:nexus ,~)
+    ?.  ?=(%late res)  (pure:m ~)
+    ;<  now=@da  bind:m  get-time:io
+    ;<  ~  bind:m  (set-timer:io /fetch-drain (add now ~m2))
+    ;<  *  bind:m  (take-fetch %fetch-drain)
+    (cancel-timer:io /fetch-drain)
+  =/  res=(unit client-response:iris)  ?@(res ~ `res)
   ?~  res  (pure:m [0 ~ ''])
   ?.  ?=(%finished -.u.res)  (pure:m [0 ~ ''])
   =/  body=@t  ?~(full-file.u.res '' q.data.u.full-file.u.res)
   (pure:m [status-code.response-header.u.res headers.response-header.u.res body])
+::  +take-fetch: iris's answer; %late when the timer on wire /tag fires
+::  first; %none when the request was refused or cancelled (no answer
+::  will follow)
+++  take-fetch
+  |=  tag=@ta
+  =/  m  (fiber:fiber:nexus ,$@(?(%none %late) client-response:iris))
+  ^-  form:m
+  |=  input:fiber:nexus
+  :+  ~  q.state
+  ?+  in  [%skip ~]
+      ~  [%wait ~]
+      [~ %veto *]  [%done %none]
+      [~ %poke * *]
+    ?:  =([/ %timer-wake] p.sage.u.in)
+      ?.(=(/[tag] !<(path q.sage.u.in)) [%skip ~] [%done %late])
+    ?.  =([/ %http-response] p.sage.u.in)  [%skip ~]
+    =/  resp=client-response:iris  !<(client-response:iris q.sage.u.in)
+    ::  a long body comes in parts: %progress, then %finished whole
+    ?:  ?=(%progress -.resp)  [%wait ~]
+    ?:  ?=(%cancel -.resp)  [%done %none]
+    [%done resp]
+  ==
 ++  form-body
   |=  kvs=(list [k=tape v=tape])
   ^-  octs
@@ -2366,6 +2391,10 @@
 ::  401 when not connected.
 ++  google-api
   |=  [pre=@t method=method:http path=tape body=(unit json)]
+  (google-api-hdr pre method path body ~)
+::  +google-api-hdr: the same, with headers of the caller's (If-Match)
+++  google-api-hdr
+  |=  [pre=@t method=method:http path=tape body=(unit json) extra=(list [@t @t])]
   =/  m  (fiber:fiber:nexus ,[status=@ud =json])
   ^-  form:m
   ;<  cfg=json  bind:m  (google-config pre)
@@ -2373,13 +2402,18 @@
   ?~  tok  (pure:m [401 [%o ~]])
   =/  headers=(list [@t @t])
     :-  ['authorization' (cat 3 'Bearer ' u.tok)]
+    %+  weld  extra
     ?~(body ~ ~[['content-type' 'application/json']])
   ;<  [status=@ud res=@t]  bind:m
     %-  fetch-full
     :^  method  (crip (weld (trip (gs cfg 'api_base')) path))
       headers
     ?~(body ~ `(as-octs:mimes:html (en:json:html u.body)))
-  (pure:m [status (fall (de:json:html res) [%o ~])])
+  ::  a body that is not JSON is no answer (status 0), never an empty
+  ::  one: an empty listing would read as every event deleted
+  =/  jon=(unit json)  (de:json:html res)
+  ?~  jon  (pure:m ?:(=('' res) [status [%o ~]] [0 [%o ~]]))
+  (pure:m [status u.jon])
 ::  +google-request: the owner's Google routes under /apps/calendar/google/
 ++  google-request
   |=  [eyre-id=@ta req=inbound-request:eyre our=@p rest=path args=quay:eyre]
@@ -2542,11 +2576,22 @@
   |=  [pre=@t id=@ta =uid:cal local=(unit entry:cal) remote-updated=@t why=@t]
   =/  m  (fiber:fiber:nexus ,~)
   ^-  form:m
-  ;<  cs=json  bind:m  (read-json-grub pre 'google-conflicts.json')
+  ::  the clock before the read: nothing waits between reading the log
+  ::  and writing it back
   ;<  now=@da  bind:m  get-time:io
+  ;<  cs=json  bind:m  (read-json-grub pre 'google-conflicts.json')
+  ::  the local copy is the point of the row, so it is phrased softly: a
+  ::  crash here would leave the remote's overwrite with no row at all
   =/  ics=@t
     ?~  local  ''
-    (write-calendar:ics 'conflict' ~[(write-entry:ics u.local (exdates-of u.local) now)])
+    %+  fall
+      (mole |.((write-calendar:ics 'conflict' ~[(write-entry:ics u.local (exdates-of u.local) now)])))
+    ''
+  =/  all=(list json)  ?:(?=([%a *] cs) p.cs ~)
+  =/  same  |=(c=json &(=(uid (gs c 'uid')) =(id (gs c 'cal'))))
+  ::  a later row with no copy (a refused delete) never drops a saved one
+  ?:  &(=('' ics) (lien all |=(c=json &((same c) !=('' (gs c 'local'))))))
+    (pure:m ~)
   =/  row=json
     %-  pairs:enjs:format
     :~  ['uid' s+uid]
@@ -2557,8 +2602,11 @@
         ['remote_updated' s+remote-updated]
     ==
   ~&  >>  [%calendar-google-conflict uid why]
-  =/  rest=(list json)  (skip ?:(?=([%a *] cs) p.cs ~) |=(c=json =(uid (gs c 'uid'))))
-  (write-json-grub pre 'google-conflicts.json' [%a (snoc rest row)])
+  ::  one row per calendar and uid, the newest 500: a host or remote that
+  ::  makes up refusals cannot grow the log without end
+  =/  rest=(list json)  (skip all same)
+  =/  keep=(list json)  (slag (sub (max 500 +((lent rest))) 500) (snoc rest row))
+  (write-json-grub pre 'google-conflicts.json' [%a keep])
 ::  +log-clashes: a conflict row for each uid a pull let the remote win
 ::  over a local change: [uid, the local copy it replaced, the remote's
 ::  updated stamp when it has one]
@@ -2766,6 +2814,7 @@
   =/  ids=(map @t json)  (omap (obj:gcal row 'ids'))
   =/  since=@ud  (fall (gn row 'pushed_seq') 0)
   =/  page=@t  ''
+  =/  pages=@ud  0
   =/  seen=(set uid:cal)  ~
   =/  retried=?  |
   |-
@@ -2814,7 +2863,9 @@
     ?~  e  |
     =/  up=(unit prop:ics)  (get-prop:ics props.u.e 'X-GOOGLE-UPDATED')
     &(?=(^ up) !=('' updated.g) =(v.u.up updated.g))
-  =.  seen  (~(gas in seen) (turn echo |=(g=gitem:gcal uid.ve.g)))
+  ::  every live item Google named is seen, read or not: one this side
+  ::  cannot read must not count as deleted by a full listing
+  =.  seen  (~(gas in seen) (murn items |=(g=gitem:gcal ?:(cancelled.g ~ `uid.ve.g))))
   =.  items  (skip items |=(g=gitem:gcal ?=(^ (find ~[g] echo))))
   ::  an item whose uid also changed here since the last push is a
   ::  conflict: Google wins, the local copy is logged
@@ -2837,7 +2888,9 @@
       %-  mole  |.
       ^+  acc
     =/  u=uid:cal  uid.ve.g
-    =/  extra=(list [@t @t])  ~[['X-GOOGLE-ID' gid.g] ['X-GOOGLE-UPDATED' updated.g]]
+    ::  what Google says of it (id, stamp, etag, default reminders)
+    =/  extra=(list [@t @t])
+      (skim extra.ve.g |=([key=@t *] =("X-GOOGLE-" (scag 9 (trip key)))))
     ?^  rid.g
       =.  seen.acc  (~(put in seen.acc) u)
       ?.  cancelled.g
@@ -2846,6 +2899,10 @@
       =.  k.acc  (del-entry:cal k.acc (crip "{(trip u)}#{(trip u.rid.g)}"))
       acc(k (skip-instance k.acc u extra.ve.g))
     ?:  cancelled.g
+      ::  a cancelled copy under another Google id (the same iCalUID
+      ::  put again under a new one in this listing) leaves the live one
+      =/  was=(unit json)  (~(get by ids.acc) u)
+      ?:  &(?=(^ was) !=(u.was s+gid.g))  acc
       acc(k (del-object k.acc u), ids (~(del by ids.acc) u))
     =/  put=(unit [k=cal:cal =uid:cal])  (put-parent k.acc ve.g zone.c u extra &)
     ?~  put  acc
@@ -2889,7 +2946,13 @@
   ;<  ~  bind:m  (log-clashes pre id clash-rows 'changed on both sides; google kept')
   ;<  ~  bind:m  (log-clashes pre id gone-rows 'deleted on google; changed here')
   ;<  ~  bind:m  (save-row pre 'google-sync.json' id row2)
-  ?.  last  $(page next-page, row row2)
+  ::  ponytail: 500 pages (125k events) and no more; a listing cut off
+  ::  there is not last, so it deletes nothing
+  ?.  last
+    ?:  (gte pages 500)
+      ~&  >>>  [%calendar-google-pull-too-many-pages id]
+      (pure:m row2)
+    $(page next-page, row row2, pages +(pages))
   (pure:m row2)
 ::  +google-stop: a status that ends a push and keeps the watermark: no
 ::  answer, a server error, auth, a rate limit. Any other refusal (a
@@ -2924,7 +2987,7 @@
   =/  sup=(set [@t @ud])  (suppressed row)
   =/  changes=(list [uid:cal ?(%put %del)])  (changes-since u.k since sup)
   =/  base=tape  "/calendar/v3/calendars/{(enc-seg:dav (trip gid))}/events"
-  =|  results=(list [=uid:cal gid=@t updated=@t])
+  =|  results=(list [=uid:cal gid=@t updated=@t etag=@t])
   =/  stopped=?  |
   |-
   ?^  changes
@@ -2953,10 +3016,15 @@
       =/  hit=(unit prop:ics)  (get-prop:ics props.u.e 'X-GOOGLE-ID')
       ?~(hit '' v.u.hit)
     ::  PATCH, not PUT: what Google holds that this side does not model
-    ::  (guests, visibility, colors, other apps' properties) stays
+    ::  (guests, visibility, colors, other apps' properties) stays. If-Match
+    ::  names the version last pulled: an edit made on Google since is a
+    ::  412, logged below, and the next pull brings it
+    =/  gtag=@t  =/(p (get-prop:ics props.u.e 'X-GOOGLE-ETAG') ?~(p '' v.u.p))
     ;<  [status=@ud res=json]  bind:m
       ?:  =('' have)  (google-api pre %'POST' base `body)
-      (google-api pre %'PATCH' "{base}/{(enc-seg:dav (trip have))}" `body)
+      %:  google-api-hdr  pre  %'PATCH'  "{base}/{(enc-seg:dav (trip have))}"  `body
+        ?:(=('' gtag) ~ ~[['if-match' gtag]])
+      ==
     ;<  [status=@ud res=json]  bind:m
       ?.  &(=(404 status) !=('' have))  (pure:(fiber:fiber:nexus ,[@ud json]) [status res])
       (google-api pre %'POST' base `body)
@@ -2965,13 +3033,16 @@
       $(changes ~, stopped &)
     ?.  =(200 status)
       ;<  ~  bind:m
-        (google-conflict pre id u e (gs res 'updated') (crip "google refused the push ({(a-co:co status)})"))
+        %:  google-conflict  pre  id  u  e  (gs res 'updated')
+          ?:  =(412 status)  'changed on both sides; google kept'
+          (crip "google refused the push ({(a-co:co status)})")
+        ==
       $(changes t.changes)
     =/  new-gid=@t  (gs res 'id')
     %=  $
       changes  t.changes
       ids      (~(put by ids) u s+new-gid)
-      results  [[u new-gid (gs res 'updated')] results]
+      results  [[u new-gid (gs res 'updated') (gs res 'etag')] results]
     ==
   ::  the ids and stamps Google handed back, onto a fresh read of the
   ::  calendar (a poke may have landed while we waited on the network).
@@ -2984,13 +3055,14 @@
   =/  seq-mid=@ud  seq.kk
   =.  kk
     %+  roll  results
-    |=  [[u=uid:cal g=@t up=@t] acc=_kk]
+    |=  [[u=uid:cal g=@t up=@t et=@t] acc=_kk]
     =/  e=(unit entry:cal)  (~(get by entries.acc) u)
     ?~  e  acc
     =/  props=(list [@t @t])
       :-  ['X-GOOGLE-ID' g]
       :-  ['X-GOOGLE-UPDATED' up]
-      (skip props.u.e |=([key=@t *] |(=('X-GOOGLE-ID' key) =('X-GOOGLE-UPDATED' key))))
+      :-  ['X-GOOGLE-ETAG' et]
+      (skip props.u.e |=([key=@t *] ?=(^ (find ~[key] `(list @t)`~['X-GOOGLE-ID' 'X-GOOGLE-UPDATED' 'X-GOOGLE-ETAG']))))
     (put-entry:cal acc u.e(props props))
   ;<  ~  bind:m
     ?~  results  (pure:(fiber:fiber:nexus ,~) ~)
@@ -3274,6 +3346,10 @@
     ?:  gone
       =/  u=(unit @t)  (~(get by by-href) href)
       ?~  u  acc
+      ::  the uid moved to another href in this same listing (put before
+      ::  this): the old name is gone, the event is not
+      =/  now-at=tape  (norm-href (trip (gs (fall (~(get by ids.acc) u.u) ~) 'href')))
+      ?.  =(now-at href)  acc
       =/  old=(unit entry:cal)  (~(get by entries.k.acc) u.u)
       =?  clashes.acc  &(?=(^ old) (~(has in pending) u.u))  [[u.u old ''] clashes.acc]
       acc(k (del-object k.acc u.u), ids (~(del by ids.acc) u.u))
@@ -3703,6 +3779,49 @@
     |=([s=@t v=json] ?:(&(?=([%s *] v) =('edit' p.v)) (slaw %p s) ~))
   ;<  ~  bind:m  (ug-set (group-name id 'read') readers (sy ~[file folder]) ~)
   (ug-set (group-name id 'edit') editors (sy ~[file folder]) (sy ~[cal-road]))
+::  +queue-refusal: a refused share edit, to be said back to the peer.
+::  One row per peer, calendar and uid (a peer resending the same edit
+::  adds nothing), at most 100: a flood of refusals stays small.
+++  queue-refusal
+  |=  [to=@p cid=@ta u=@t why=@t mode=@t]
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  ;<  q=json  bind:m  (read-json-grub './' 'refusals.json')
+  =/  rows=(list json)  ?:(?=([%a *] q) p.q ~)
+  =/  row=json
+    %-  pairs:enjs:format
+    :~  ['to' s+(scot %p to)]  ['cal' s+cid]  ['uid' s+u]
+        ['why' s+why]  ['mode' s+mode]
+    ==
+  ?:  %+  lien  rows
+      |=(r=json &(=((gs r 'to') (scot %p to)) =((gs r 'cal') cid) =((gs r 'uid') u)))
+    (pure:m ~)
+  (write-json-grub './' 'refusals.json' [%a (scag 100 `(list json)`[row rows])])
+::  +send-refusals: tell each queued peer its edit was refused, then take
+::  the row off the queue (read again, so a row queued meanwhile stays).
+::  Best effort, as a poke is: a peer that is down misses it.
+++  send-refusals
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  ;<  q=json  bind:m  (read-json-grub './' 'refusals.json')
+  =/  rows=(list json)  ?:(?=([%a *] q) p.q ~)
+  |-
+  ?~  rows  (pure:m ~)
+  =/  to=(unit @p)  (slaw %p (gs i.rows 'to'))
+  ;<  *  bind:m
+    ?~  to  (pure:(fiber:fiber:nexus ,?) |)
+    %^  remote-poke-wait  u.to  [%& cal-instance %'shares.sig']
+    %-  pairs:enjs:format
+    :~  ['action' s+'refused']
+        ['cal' s+(gs i.rows 'cal')]
+        ['uid' s+(gs i.rows 'uid')]
+        ['why' s+(gs i.rows 'why')]
+        ['mode' s+(gs i.rows 'mode')]
+    ==
+  ;<  cur=json  bind:m  (read-json-grub './' 'refusals.json')
+  =/  left=(list json)  (skip ?:(?=([%a *] cur) p.cur ~) |=(r=json =(r i.rows)))
+  ;<  ~  bind:m  (write-json-grub './' 'refusals.json' [%a left])
+  $(rows t.rows)
 ::  +remote-poke-wait: a poke to another ship's grubbery, answered or
 ::  timed out (a peer that is down must not park the fiber)
 ++  remote-poke-wait
@@ -3793,7 +3912,10 @@
   ;<  ix=(unit (unit view:nexus))  bind:m  (peek-remote-wait host [%& %& dir %'index.json'])
   ?~  ix  (pure:m |+quiet)
   ?.  ?=([~ %file *] u.ix)  (share-whole host base hcal)
-  =/  index=json  (fall (mole |.(!<(json (need-vase:tarball sang.u.u.ix)))) *json)
+  ::  an index that cannot be read is an error, never an empty listing:
+  ::  that would delete every event the host shared
+  =/  index=json  (fall (mole |.(!<(json (need-vase:tarball sang.u.u.ix)))) ~)
+  ?.  (has-objects index)  (pure:m |+'the host\'s index could not be read')
   =/  listed=(map @t json)  (omap (obj:gcal index 'objects'))
   =/  moved=(list [u=@t o=json])
     (skim ~(tap by listed) |=([u=@t o=json] !=((gs o 'etag') (gs [%o etags] u))))
@@ -3812,7 +3934,8 @@
   ;<  ov=(unit (unit view:nexus))  bind:m
     (peek-remote-wait host [%& %& dir (crip (trip (gs o.i.moved 'file')))])
   ?.  ?=([~ ~ %file *] ov)  (pure:m |+'the host did not answer for an event; the next pass asks again')
-  =/  oj=json  (fall (mole |.(!<(json (need-vase:tarball sang.u.u.ov)))) *json)
+  =/  oj=json  (fall (mole |.(!<(json (need-vase:tarball sang.u.u.ov)))) ~)
+  ?.  ?=([%o *] oj)  (pure:m |+'an event the host shared could not be read; the next pass asks again')
   $(moved t.moved, got (~(put by got) u.i.moved oj))
 ::  +share-whole: a host's whole share file, every object's text
 ++  share-whole
@@ -3823,8 +3946,15 @@
     (peek-remote-wait host [%& %& (snoc base %shares) (crip "{(trip hcal)}.json")])
   ?~  vw  (pure:m |+'the host did not answer (down, or the share was revoked)')
   ?.  ?=([~ %file *] u.vw)  (pure:m |+'the host has no such shared calendar any more')
-  =/  share=json  (fall (mole |.(!<(json (need-vase:tarball sang.u.u.vw)))) *json)
+  =/  share=json  (fall (mole |.(!<(json (need-vase:tarball sang.u.u.vw)))) ~)
+  ?.  (has-objects share)  (pure:m |+'the host\'s share file could not be read')
   (pure:m &+(row-put share ~[['via' s+'whole']]))
+::  +has-objects: a share file or index that names its objects (maybe
+::  none), as opposed to one that could not be read
+++  has-objects
+  |=  j=json
+  ^-  ?
+  ?=([~ %o *] (~(get by (omap j)) 'objects'))
 ::  +ship-pull: the host's share file, diffed by etag against what we
 ::  hold; changed objects are applied, missing ones deleted
 ++  ship-pull
@@ -3926,6 +4056,13 @@
   ::  mode is for display): nothing to push, so the watermark just
   ::  follows the local seq and the pull's suppressed rows are pruned
   ?:  (ship-read-only c id)
+    ::  edits made while it was editable that never reached the host are
+    ::  kept in the conflict log: the next pull puts the host's copy back
+    =/  lost=(list [uid:cal ?(%put %del)])  (changes-since u.k since sup)
+    ;<  ~  bind:m
+      %^  log-clashes  pre  id
+      :_  'the calendar became read-only before this edit reached the host'
+      (turn lost |=([u=uid:cal *] [u (~(get by entries.u.k) u) '']))
     (pure:m (row-put row ~[['pushed_seq' (numb:enjs:format seq.u.k)] ['suppressed' (suppress-json sup seq.u.k)]]))
   =/  changes=(list [uid:cal ?(%put %del)])  (changes-since u.k since sup)
   ;<  now=@da  bind:m  get-time:io
@@ -4154,37 +4291,61 @@
   $(pushes t.pushes)
 ::  +do-sync: fetch each feed, parse its ICS, and convert single
 ::  (non-recurring) vevents inside [lo hi] into events tagged with
-::  feed name + uid. Stable ids: same feed+uid = same event id.
-::
+::  feed name + uid. Stable ids: same feed+uid = same event id. ok names
+::  the feeds that answered and read; seen is every event id they hold,
+::  in the window or not, so +apply-feeds deletes only what a feed that
+::  answered no longer has.
++$  feed-sync
+  $:  got=(map eid:cal event:cal)
+      seen=(set eid:cal)
+      ok=(set @t)
+      skipped=@ud
+  ==
+++  feed-id
+  |=  [nm=@t uid=@t]
+  ^-  @ta
+  (crip "gc-{(trip (scot %uw (mug [nm uid])))}")
 ++  do-sync
   |=  [feeds=(list [nm=@t url=@t]) lo=@da hi=@da dz=(unit @t)]
-  =/  m  (fiber:fiber:nexus ,[(map eid:cal event:cal) skipped=@ud])
+  =/  m  (fiber:fiber:nexus ,feed-sync)
   ^-  form:m
-  =/  out=(map eid:cal event:cal)  ~
-  =/  skipped=@ud  0
+  =|  out=feed-sync
   |-
-  ?~  feeds  (pure:m [out skipped])
+  ?~  feeds  (pure:m out)
   ~&  >  "%calendar sync: fetching {(trip nm.i.feeds)}"
-  ::  soft, and with the deadline: this runs in the event fiber, and a
-  ::  refused road or a request that never answers must not take every
-  ::  later edit down with it
   ;<  [status=@ud body=@t]  bind:m  (fetch-full [%'GET' url.i.feeds ~ ~])
-  =/  evs=(list vevent:ics)
+  =/  evs=(unit (list vevent:ics))
     ?.  &(=(200 status) !=('' body))  ~
-    (fall (mole |.((events:ics body))) ~)
-  =/  res=[got=(map eid:cal event:cal) sk=@ud]
-    %+  roll  evs
-    |=  [ve=vevent:ics acc=[got=(map eid:cal event:cal) sk=@ud]]
-    ?.  =('' rrule.ve)  acc(sk +(sk.acc))
+    (mole |.((events:ics body)))
+  ?~  evs
+    ~&  >>>  "%calendar sync: {(trip nm.i.feeds)} failed (status {(scow %ud status)}); its events stay"
+    $(feeds t.feeds)
+  =.  ok.out  (~(put in ok.out) nm.i.feeds)
+  =.  out
+    %+  roll  u.evs
+    |=  [ve=vevent:ics acc=_out]
+    ?:  =('' uid.ve)  acc
+    =/  id=@ta  (feed-id nm.i.feeds uid.ve)
+    =.  seen.acc  (~(put in seen.acc) id)
+    ?.  =('' rrule.ve)  acc(skipped +(skipped.acc))
     =/  ev=(unit event:cal)  (ics-event ve nm.i.feeds lo hi dz)
     ?~  ev  acc
-    =/  id=@ta  (crip "gc-{(trip (scot %uw (mug [nm.i.feeds uid.ve])))}")
     acc(got (~(put by got.acc) id u.ev))
-  %=  $
-    feeds    t.feeds
-    out      (~(uni by out) got.res)
-    skipped  (add skipped sk.res)
-  ==
+  $(feeds t.feeds)
+::  +apply-feeds: a sync's events into the calendar. A feed event goes
+::  only when its feed answered and no longer holds it.
+++  apply-feeds
+  |=  res=feed-sync
+  |=  c=calendar:cal
+  ^-  calendar:cal
+  =/  stale=(list @ta)
+    %+  murn  ~(tap by (events-all:cal c))
+    |=  [id=@ta e=event:cal]
+    =/  f=@t  (meta-str:cal (meta-of:cal e) 'feed')
+    ?:  |(=('' f) !(~(has in ok.res) f) (~(has in seen.res) id))  ~
+    `id
+  =.  c  (roll stale |=([id=@ta acc=_c] (del-ev acc '' id)))
+  (roll ~(tap by got.res) |=([[id=@ta e=event:cal] acc=_c] (put-ev acc '' id e)))
 ::  +ics-event: one parsed single vevent inside [lo hi] as a ship event,
 ::  read the way an import reads it, tagged with its feed and uid
 ++  ics-event
@@ -4378,14 +4539,19 @@
   ::  timed / allday both wrap a recur
   =/  rec=(unit recur:cal)  (parse-recur jon)
   ?~  rec  ~
+  ::  rrule args that cannot even be read (an "rrule" that is not text)
+  ::  make the poke a bad one: stored, every later read would trip on them
+  =/  rule=(unit (unit rule:rr))
+    ?.  =(%rrule name.kind.u.rec)  `~
+    (mole |.((of-args:rr args.u.rec)))
+  ?~  rule  ~
   ::  count (or an RRULE's COUNT) is how many occurrences; the bound is
   ::  the index that holds that many (+dom-of)
   =/  dom=(unit @ud)
     =/  n=(unit @ud)
       =/  c=(unit @ud)  (gn jon 'count')
       ?^  c  ?:(=(0 u.c) ~ c)
-      ?.  =(%rrule name.kind.u.rec)  ~
-      (biff (of-args:rr args.u.rec) |=(r=rule:rr count.r))
+      (biff u.rule |=(r=rule:rr count.r))
     ?~(n ~ `(fall (mole |.((dom-of:ics u.rec u.n))) u.n))
   =/  =bound:cal  [dom ~]
   ?:  =('allday' cat)

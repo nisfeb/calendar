@@ -401,10 +401,14 @@ function monthCells() {
 
 function renderMonth(rows) {
   var byDay = {};
+  // only the 42 days on screen: an event spanning years (a DURATION of
+  // P99999999D from a feed or a peer) must not walk every one of them
+  var cells = monthCells();
+  var lo = serial(cells[0].y, cells[0].m, cells[0].d), hi = lo + 41;
   rows.forEach(function(ev) {
     var s = pserial(evParts(ev, ev.l));
     var e = pserial(evParts(ev, Math.max(ev.l, ev.r - 1)));
-    for (var d = s, first = true; d <= e; d++, first = false) {
+    for (var d = Math.max(s, lo), first = d === s; d <= Math.min(e, hi); d++, first = false) {
       (byDay[d] = byDay[d] || []).push({ ev: ev, cont: !first });
     }
   });
@@ -1420,13 +1424,12 @@ syncBtn.onclick = function() {
   syncBtn.disabled = true;
   syncBtn.style.opacity = '0.4';
   postJSON('/google/sync').catch(function() {});
-  poke({ action: 'sync-feeds' }, function() {
-    setTimeout(function() {
-      syncBtn.disabled = false;
-      syncBtn.style.opacity = '';
-      refresh();
-    }, 1500);
-  });
+  var done = function() {
+    syncBtn.disabled = false;
+    syncBtn.style.opacity = '';
+    refresh();
+  };
+  postJSON('/sync-feeds').then(done, done);
 };
 
 var clockBtn = document.getElementById('clock-btn');
