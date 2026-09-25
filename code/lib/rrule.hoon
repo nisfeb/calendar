@@ -55,7 +55,8 @@
     `[(crip (cuss (trip i.kv))) i.t.kv]
   ?:  (lien parts |=([k=@t *] !(~(has in supported) k)))  ~
   =/  get  |=(k=@t ^-((unit @t) (bind (find-part parts k) |=([* v=@t] v))))
-  =/  fq=(unit @t)  (get 'FREQ')
+  ::  an enumerated value is case-insensitive (RFC 5545 3.1), as a key is
+  =/  fq=(unit @t)  (bind (get 'FREQ') |=(v=@t (crip (cuss (trip v)))))
   ?~  fq  ~
   =/  fr=(unit freq)
     ?:  =('DAILY' u.fq)    `%daily
