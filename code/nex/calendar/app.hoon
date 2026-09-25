@@ -1012,30 +1012,45 @@
 ::  +rise-later: a fiber that crashed goes on after a while by itself (a
 ::  %sig poke no one sends used to be the only way back). A crash that
 ::  comes again waits longer each time, 1, 2, 4 and up to 60 minutes (the
-::  count starts over an hour after the last), and only the first two
+::  count starts over two quiet hours after the last), and only the first two
 ::  print their whole trace, so a fiber that crashes on the same data every
 ::  time neither floods the console nor keeps the ship busy. A poke that
 ::  comes while it waits is refused at once (a nack) rather than held:
 ::  held pokes hang whoever sent them, and grubbery offers every held one
 ::  again on each step, which is what locked a ship up.
+::
+::  rise-later itself never fails. grubbery restarts a failed fiber at
+::  once, within the same event, so a failure in here would come straight
+::  back to it: a weir that refuses /sys/behn (or /sys/bowl.sig) made every
+::  fiber spin that way and locked ~feb on 2026-09-25. Its clock and timer
+::  are soft, on fixed wires (a nonce is itself a bowl.sig poke); with
+::  either refused it parks until a poke comes instead of setting a timer.
 ++  rise-later
   |=  [=prod:fiber:nexus msg=tape]
   =/  m  (fiber:fiber:nexus ,~)
   ^-  form:m
   ::  a clean start takes down any wait an earlier run left set: its wake
   ::  would come to a fiber no longer waiting for it
-  ?~  prod  (cancel-timer:io /rise)
+  ?~  prod
+    ;<  *  bind:m  (soft-behn /rise/rest [[/ %timer-rest] `wire`/rise])
+    (pure:m ~)
   =/  key=@t  (crip msg)
   ::  what a refused poke fails with; the restart that follows is not a crash
   =/  note=tang  ~[leaf+"{msg}: waiting after a crash; the poke was refused"]
-  ;<  now=@da  bind:m  get-time:io
+  =/  crash=?  !=(note u.prod)
+  ;<  clock=(unit @da)  bind:m  soft-now
+  ?~  clock
+    %-  ?.(crash same (slog [leaf+"{msg}: no clock (weir?); waiting for a poke" u.prod]))
+    (rise-park note)
+  =/  now=@da  u.clock
   ;<  log=json  bind:m  (read-json-grub './' 'rise.json')
   =/  row=json  (fall (~(get by (omap log)) key) [%o ~])
-  =/  crash=?  !=(note u.prod)
+  ::  the count starts over only after a quiet spell longer than the
+  ::  longest wait, so the waits stay at an hour, not back to a minute
   =/  n=@ud
     =/  was=@ud  (fall (gn row 'n') 0)
     ?.  crash  was
-    ?:((gth now (add (ms-to-da (fall (gn row 'last_ms') 0)) ~h1)) 1 +(was))
+    ?:((gth now (add (ms-to-da (fall (gn row 'last_ms') 0)) ~h2)) 1 +(was))
   =/  until=@da
     ?.  crash  (ms-to-da (fall (gn row 'until_ms') 0))
     (add now (min ~h1 (mul ~m1 (bex (dec (min n 7))))))
@@ -1058,7 +1073,16 @@
         ==
       [/ %json]
     (pure:m ~)
-  ;<  ~  bind:m  (set-timer:io /rise until)
+  ;<  set=?  bind:m
+    (soft-behn /rise/set [[/ %timer-set] `[wire @da]`[/rise until]])
+  %-  ?:(|(set !crash) same (slog leaf+"{msg}: no timer (weir?); waiting for a poke" ~))
+  (rise-park note)
+::  +rise-park: wait for the /rise wake; a poke meanwhile is refused with
+::  note (the restart it brings is not a crash, see +rise-later)
+++  rise-park
+  |=  note=tang
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
   |=  input:fiber:nexus
   :+  ~  q.state
   ?+  in  [%wait ~]
@@ -1067,6 +1091,66 @@
     ?.  ?=([%rise *] !<(path q.sage.u.in))  [%wait ~]
     [%done ~]
   ==
+::  +soft-behn: a poke to the timer service, & when it landed. A refusal
+::  (a weir without /sys/behn) is | rather than a failure. The wire is
+::  fixed: a nonce would ask /sys/bowl.sig for entropy, refusable too.
+++  soft-behn
+  |=  [=wire =bask:tarball]
+  =/  m  (fiber:fiber:nexus ,?)
+  ^-  form:m
+  ;<  ~  bind:m
+    (send-dart:io %node wire &+&+[/sys/behn %'main.behn-state'] %poke bask)
+  |=  input:fiber:nexus
+  :+  ~  q.state
+  ?+  in  [%skip ~]
+      ~  [%wait ~]
+      [~ %veto *]  [%done |]
+      [~ %pack * *]
+    ?.  =(wire wire.u.in)  [%skip ~]
+    [%done =(~ err.u.in)]
+  ==
+::  +soft-now: the time, or ~ when /sys/bowl.sig refuses (+get-time:io
+::  fails instead). The answer and its ack come in either order.
+++  soft-now
+  =/  m  (fiber:fiber:nexus ,(unit @da))
+  ^-  form:m
+  ;<  ~  bind:m
+    (send-dart:io %node /rise/now &+&+[/sys %'bowl.sig'] %poke [[/ %bowl-req] %now])
+  ;<  first=(unit (each @da ~))  bind:m
+    =/  mi  (fiber:fiber:nexus ,(unit (each @da ~)))
+    ^-  form:mi
+    |=  input:fiber:nexus
+    :+  ~  q.state
+    ?+  in  [%skip ~]
+        ~  [%wait ~]
+        [~ %veto *]  [%done ~]
+        [~ %pack * *]  ?^(err.u.in [%done ~] [%done `[%| ~]])
+        [~ %poke * *]
+      ?.  =([/ %time] p.sage.u.in)  [%skip ~]
+      [%done `[%& !<(@da q.sage.u.in)]]
+    ==
+  ?~  first  (pure:m ~)
+  ?:  ?=(%| -.u.first)
+    ::  acked: now the answer
+    |=  input:fiber:nexus
+    :+  ~  q.state
+    ?+  in  [%skip ~]
+        ~  [%wait ~]
+        [~ %poke * *]
+      ?.  =([/ %time] p.sage.u.in)  [%skip ~]
+      [%done `!<(@da q.sage.u.in)]
+    ==
+  ::  the answer first: take its ack
+  ;<  ~  bind:m
+    =/  md  (fiber:fiber:nexus ,~)
+    ^-  form:md
+    |=  input:fiber:nexus
+    :+  ~  q.state
+    ?+  in  [%skip ~]
+        ~  [%wait ~]
+        [~ %pack *]  [%done ~]
+    ==
+  (pure:m `p.u.first)
 ::  +cal-of: a stored calendar view, or a fresh one when there is none.
 ::  The typed vase is taken as it is (cheap); an older shape is lifted.
 ::  One that is there but reads as neither is a crash, not an empty
