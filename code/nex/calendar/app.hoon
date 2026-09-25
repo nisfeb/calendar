@@ -96,6 +96,9 @@
           ::  refusals.json: refused share edits the sync fiber still has
           ::  to tell their peers about (+send-refusals)
           [%fall %& [/ %'refusals.json'] [[/ %json] [%a ~]]]
+          ::  share-writes.json: per shared calendar and uid, the version each
+          ::  peer's last accepted write left (+share-base-ok)
+          [%fall %& [/ %'share-writes.json'] [[/ %json] [%o ~]]]
           [%fall %& [/ %'share-offers.json'] [[/ %json] [%o ~]]]
           [%fall %& [/ %'ship-remotes.json'] [[/ %json] [%o ~]]]
           [%fall %& [/ %'google.sig'] [[/ %sig] ~]]
@@ -144,6 +147,8 @@
         =/  src=(unit @p)  (get-poke-src:io from)
         ;<  shares=json  bind:m
           ?~(src (pure:(fiber:fiber:nexus ,json) *json) (read-json-grub './' 'shares.json'))
+        ;<  writes=json  bind:m
+          ?~(src (pure:(fiber:fiber:nexus ,json) *json) (read-json-grub './' 'share-writes.json'))
         ::  the clock, only for what stamps a time
         ;<  now=@da  bind:m
           ?.  ?=(?(%'add-calendar' %'done-event') act)  (pure:(fiber:fiber:nexus ,@da) *@da)
@@ -159,7 +164,7 @@
           ::  its copy as a conflict and, told the calendar is read-only,
           ::  stops offering edits. A ship we share nothing with hears nothing.
           =/  tell
-            |=  [u=@t why=@t]
+            |=  [u=@t why=@t ics=@t]
             =/  m  (fiber:fiber:nexus ,~)
             ^-  form:m
             ~&  >>>  [%calendar-share-poke-refused u.src cid u why]
@@ -167,13 +172,13 @@
             ::  queued for the sync fiber to send (+send-refusals): waiting
             ::  on the peer here would hold every poke to the calendar, and
             ::  a peer could keep it waiting
-            (queue-refusal u.src cid u why mode)
+            (queue-refusal u.src cid u why mode ics)
           ?.  =('edit' mode)
-            ;<  ~  bind:m  (tell (gs jon 'uid') 'the calendar is shared with you read-only')
+            ;<  ~  bind:m  (tell (gs jon 'uid') 'the calendar is shared with you read-only' (gs jon 'ics'))
             $
           =/  k=(unit cal:cal)  (~(get by cals.c) cid)
           ?~  k
-            ;<  ~  bind:m  (tell (gs jon 'uid') 'the host has no such calendar')
+            ;<  ~  bind:m  (tell (gs jon 'uid') 'the host has no such calendar' (gs jon 'ics'))
             $
           ?:  =('share-put' act)
             =/  ves0=(list vevent:ics)  (fall (mole |.((events:ics (gs jon 'ics')))) ~)
@@ -185,16 +190,29 @@
             ::  our calendars is not the peer's to write
             =/  home=(unit [id=@ta e=entry:cal])  (find-entry:cal c u)
             ?:  |(=('' u) &(?=(^ home) !=(cid id.u.home)))
-              ;<  ~  bind:m  (tell u 'another calendar of the host holds this UID')
+              ;<  ~  bind:m  (tell u 'another calendar of the host holds this UID' (gs jon 'ics'))
+              $
+            ::  base: the host's version the peer last pulled. An edit made
+            ::  here (or by another peer) since is not the peer's to write
+            ::  over; its own last write through here is (+share-base-ok)
+            ?.  (share-base-ok writes cid u u.src (gs jon 'base') (~(get by entries.u.k) u))
+              ;<  ~  bind:m  (tell u 'it changed on the host since you last pulled it' (gs jon 'ics'))
               $
             =/  put=(unit [k=cal:cal =uid:cal])  (fall (mole |.((put-object u.k ves.al zone.c u extra.al))) ~)
             ?~  put
-              ;<  ~  bind:m  (tell u 'the host could not read the event')
+              ;<  ~  bind:m  (tell u 'the host could not read the event' (gs jon 'ics'))
               $
             ;<  ~  bind:m  (replace:io c(cals (~(put by cals.c) cid k.u.put)))
+            ;<  ~  bind:m  (note-share-write writes cid k.u.put u u.src)
             $
           ?:  =('share-del' act)
-            ;<  ~  bind:m  (replace:io c(cals (~(put by cals.c) cid (del-object u.k (gs jon 'uid')))))
+            =/  u=@t  (gs jon 'uid')
+            ?.  (share-base-ok writes cid u u.src (gs jon 'base') (~(get by entries.u.k) u))
+              ;<  ~  bind:m  (tell u 'it changed on the host since you last pulled it; the delete was not made' '')
+              $
+            =/  k2=cal:cal  (del-object u.k u)
+            ;<  ~  bind:m  (replace:io c(cals (~(put by cals.c) cid k2)))
+            ;<  ~  bind:m  (note-share-write writes cid k2 u u.src)
             $
           $
         ::  a read-only shared calendar takes no local edits; an action
@@ -414,13 +432,15 @@
         ::  calendar that keeps changing still gets pulled.
         =/  cal-road  (cord-to-road:tarball './calendar.calendar')
         ;<  *  bind:m  (keep:io /cal cal-road ~)
+        ::  a refusal queued in the calendar's fiber wakes a pass at once
+        ;<  *  bind:m  (keep:io /refusals (cord-to-road:tarball './refusals.json') ~)
         =|  pulled=@da
         |-
         ;<  cfg=json  bind:m  (google-config './')
         =/  tick=@dr  (mul ~m1 (max 1 (fall (gn cfg 'tick_min') 5)))
         ;<  now=@da  bind:m  get-time:io
         ;<  ~  bind:m  (set-timer:io /tick (max now (add pulled tick)))
-        ;<  what=?(%news %poke)  bind:m  (take-any /cal)
+        ;<  what=?(%news %poke)  bind:m  (take-any ~[/cal /refusals])
         ;<  ~  bind:m  (cancel-timer:io /tick)
         =/  pull=?  =(%poke what)
         ;<  ~  bind:m  (sync-pass %google pull)
@@ -504,8 +524,13 @@
           =/  id=@ta  (crip (trip id.i.hit))
           =/  u=@t  (gs jon 'uid')
           =/  local=(unit entry:cal)  (biff (~(get by cals.c) id) |=(k=cal:cal (~(get by entries.k) u)))
+          =/  why=@t  (crip "the host refused this edit: {(trip (gs jon 'why'))}")
+          ::  the object as we sent it, when the host says it: a pull may
+          ::  have put the host's copy over ours before this notice came
+          =/  sent=@t  (gs jon 'ics')
           ;<  ~  bind:m
-            (google-conflict './' id u local '' (crip "the host refused this edit: {(trip (gs jon 'why'))}"))
+            ?:  =('' sent)  (google-conflict './' id u local '' why)
+            (conflict-row './' id u sent '' why)
           =/  k=(unit cal:cal)  (~(get by cals.c) id)
           ;<  ~  bind:m
             ?.  &(=('read' (gs jon 'mode')) ?=(^ k))  (pure:(fiber:fiber:nexus ,~) ~)
@@ -2587,6 +2612,19 @@
     %+  fall
       (mole |.((write-calendar:ics 'conflict' ~[(write-entry:ics u.local (exdates-of u.local) now)])))
     ''
+  (conflict-row-at pre id uid ics remote-updated why now cs)
+::  +conflict-row: a conflict row from an object already in ICS
+++  conflict-row
+  |=  [pre=@t id=@ta =uid:cal ics=@t remote-updated=@t why=@t]
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  ;<  now=@da  bind:m  get-time:io
+  ;<  cs=json  bind:m  (read-json-grub pre 'google-conflicts.json')
+  (conflict-row-at pre id uid ics remote-updated why now cs)
+++  conflict-row-at
+  |=  [pre=@t id=@ta =uid:cal ics=@t remote-updated=@t why=@t now=@da cs=json]
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
   =/  all=(list json)  ?:(?=([%a *] cs) p.cs ~)
   =/  same  |=(c=json &(=(uid (gs c 'uid')) =(id (gs c 'cal'))))
   ::  a later row with no copy (a refused delete) never drops a saved one
@@ -2697,11 +2735,11 @@
   |=  [[key=@ud val=logent:cal] acc=(map uid:cal ?(%put %del))]
   ?:  |((~(has in sup) [uid.val key]) (child-row k uid.val logged))  acc
   (~(put by acc) uid.val kind.val)
-::  +take-any: the next news on a wire, or any poke (a timer wake is one).
-::  A remote peek's answer that came after its timeout is taken and
-::  dropped here; left, it would sit in the queue for good.
+::  +take-any: the next news on one of these wires, or any poke (a timer
+::  wake is one). A remote peek's answer that came after its timeout is
+::  taken and dropped here; left, it would sit in the queue for good.
 ++  take-any
-  |=  =wire
+  |=  wires=(list wire)
   =/  m  (fiber:fiber:nexus ,?(%news %poke))
   ^-  form:m
   |=  input:fiber:nexus
@@ -2709,7 +2747,7 @@
   ?+  in  [%skip ~]
       ~  [%wait ~]
       [~ %news * *]
-    ?.(=(wire wire.u.in) [%skip ~] [%done %news])
+    ?~((find ~[wire.u.in] wires) [%skip ~] [%done %news])
       [~ %poke * *]
     [%done %poke]
       [~ %peek * *]
@@ -3779,23 +3817,51 @@
     |=([s=@t v=json] ?:(&(?=([%s *] v) =('edit' p.v)) (slaw %p s) ~))
   ;<  ~  bind:m  (ug-set (group-name id 'read') readers (sy ~[file folder]) ~)
   (ug-set (group-name id 'edit') editors (sy ~[file folder]) (sy ~[cal-road]))
-::  +queue-refusal: a refused share edit, to be said back to the peer.
-::  One row per peer, calendar and uid (a peer resending the same edit
-::  adds nothing), at most 100: a flood of refusals stays small.
+::  +share-base-ok: may a peer's edit (or delete) of uid go in? Yes when
+::  it names no base (a new object, or a peer on older code, which is
+::  last-writer-wins as before), or when the host's copy is still the
+::  version it names, or the one this peer's own last write left (the
+::  host keeps a peer's object in its own words, so its etag is one the
+::  peer never sees). No when the host deleted it since.
+++  share-base-ok
+  |=  [writes=json cid=@ta u=@t peer=@p base=@t cur=(unit entry:cal)]
+  ^-  ?
+  ?:  =('' base)  &
+  ?~  cur  |
+  ?|  =(etag.u.cur base)
+      =(etag.u.cur (gs (obj:gcal (obj:gcal writes cid) u) (scot %p peer)))
+  ==
+::  +note-share-write: what a peer's accepted write left here, for its
+::  next edit's +share-base-ok. share-writes.json holds cal -> uid ->
+::  peer -> etag, only for uids the calendar still has.
+++  note-share-write
+  |=  [writes=json cid=@ta k=cal:cal u=@t peer=@p]
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  =/  rows=(map @t json)
+    %-  malt
+    %+  skim  ~(tap by (omap (obj:gcal writes cid)))
+    |=([v=@t *] (~(has by entries.k) v))
+  =?  rows  (~(has by entries.k) u)
+    =/  e=entry:cal  (~(got by entries.k) u)
+    (~(put by rows) u [%o (~(put by (omap (obj:gcal [%o rows] u))) (scot %p peer) s+etag.e)])
+  (write-json-grub './' 'share-writes.json' [%o (~(put by (omap writes)) cid [%o rows])])
+::  +queue-refusal: a refused share edit, to be said back to the peer
+::  with the object it sent (the peer logs that, whatever its own copy is
+::  by the time the notice comes). One row per peer, calendar and uid, the
+::  newest; at most 100: a flood of refusals stays small.
 ++  queue-refusal
-  |=  [to=@p cid=@ta u=@t why=@t mode=@t]
+  |=  [to=@p cid=@ta u=@t why=@t mode=@t ics=@t]
   =/  m  (fiber:fiber:nexus ,~)
   ^-  form:m
   ;<  q=json  bind:m  (read-json-grub './' 'refusals.json')
-  =/  rows=(list json)  ?:(?=([%a *] q) p.q ~)
+  =/  same  |=(r=json &(=((gs r 'to') (scot %p to)) =((gs r 'cal') cid) =((gs r 'uid') u)))
+  =/  rows=(list json)  (skip ?:(?=([%a *] q) p.q ~) same)
   =/  row=json
     %-  pairs:enjs:format
     :~  ['to' s+(scot %p to)]  ['cal' s+cid]  ['uid' s+u]
-        ['why' s+why]  ['mode' s+mode]
+        ['why' s+why]  ['mode' s+mode]  ['ics' s+ics]
     ==
-  ?:  %+  lien  rows
-      |=(r=json &(=((gs r 'to') (scot %p to)) =((gs r 'cal') cid) =((gs r 'uid') u)))
-    (pure:m ~)
   (write-json-grub './' 'refusals.json' [%a (scag 100 `(list json)`[row rows])])
 ::  +send-refusals: tell each queued peer its edit was refused, then take
 ::  the row off the queue (read again, so a row queued meanwhile stays).
@@ -3817,6 +3883,7 @@
         ['uid' s+(gs i.rows 'uid')]
         ['why' s+(gs i.rows 'why')]
         ['mode' s+(gs i.rows 'mode')]
+        ['ics' s+(gs i.rows 'ics')]
     ==
   ;<  cur=json  bind:m  (read-json-grub './' 'refusals.json')
   =/  left=(list json)  (skip ?:(?=([%a *] cur) p.cur ~) |=(r=json =(r i.rows)))
@@ -4025,6 +4092,9 @@
       (row-put row ~[['via' s+(gs share 'via')] ['fetched' (fall (bind (gn share 'fetched') numb:enjs:format) (numb:enjs:format 0))]])
     :~  ['seq' (numb:enjs:format rseq)]
         ['etags' [%o etags.res]]
+        ::  the host's versions as pulled, which a push names as its base
+        ::  (etags follows our pushes; this does not)
+        ['pulled' [%o etags.res]]
         ['last_ms' (numb:enjs:format (da-to-ms now))]
         ['error' s+'']
         ['suppressed' (suppress-json sup2 since)]
@@ -4072,15 +4142,19 @@
   ::  so a host that later puts the old content back would otherwise
   ::  look unchanged against the etag of our last pull and be skipped
   =/  etags=(map @t json)  (omap (obj:gcal row 'etags'))
+  =/  pulled=json  (obj:gcal row 'pulled')
   |-
   ?^  changes
     =/  [u=uid:cal what=?(%put %del)]  i.changes
+    ::  base: the host's version our copy came from ('' for one the host
+    ::  never had); the host refuses an edit over a newer one
+    =/  base=@t  (gs pulled u)
     =/  body=json
       ?:  =(%del what)
-        (pairs:enjs:format ~[['action' s+'share-del'] ['cal' s+hcal] ['uid' s+u]])
+        (pairs:enjs:format ~[['action' s+'share-del'] ['cal' s+hcal] ['uid' s+u] ['base' s+base]])
       =/  ics=(unit @t)  (dav-object-ics c id u now)
       ?~  ics  [%o ~]
-      (pairs:enjs:format ~[['action' s+'share-put'] ['cal' s+hcal] ['uid' s+u] ['ics' s+u.ics]])
+      (pairs:enjs:format ~[['action' s+'share-put'] ['cal' s+hcal] ['uid' s+u] ['ics' s+u.ics] ['base' s+base]])
     ?:  =([%o ~] body)  $(changes t.changes)
     ;<  ok=?  bind:m  (remote-poke-wait u.host cal-lane body)
     ?.  ok

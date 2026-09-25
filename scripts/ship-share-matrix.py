@@ -4,7 +4,8 @@ Native @p sharing gate: HOST shares a calendar with PEER (edit), the peer
 accepts, both sides edit, the host revokes; then the same read-only. Then
 the refusals a host says back: an edit whose UID another host calendar
 holds, and an edit after the host made the share read-only without the
-peer hearing yet. The peer keeps its copy as a conflict, goes read-only in
+peer hearing yet, and an edit over one the host made since the peer's
+last pull (while two of the peer's own edits before a pull both go in). The peer keeps its copy as a conflict, goes read-only in
 the second case, and the next pull takes the refused object back out.
 Then how a peer reads: a big calendar comes whole the first time, and a
 change after that by the host's index and the one object that moved.
@@ -200,6 +201,50 @@ def run_refusal():
         poke(PEER, PJ, {'action': 'del-calendar', 'id': sid})
         curl(PEER, PJ, '/apps/calendar/google/conflicts/clear', {})
 
+def run_stale_edit():
+    # a peer's edit names the host version it came from (base): an edit the
+    # host made since is not overwritten, and the peer keeps its copy as a
+    # conflict; two edits of the peer's own before a pull both go in
+    print('== a peer edit over a newer host edit')
+    poke(HOST, HJ, {'action': 'del-calendar', 'id': CAL})
+    poke(HOST, HJ, {'action': 'add-calendar', 'id': CAL, 'name': 'ssm', 'color': '#336699'})
+    poke(HOST, HJ, {'action': 'add-event', 'cal': CAL, **ev('seed', 1795000000000)})
+    curl(PEER, PJ, '/apps/calendar/google/conflicts/clear', {})
+    curl(HOST, HJ, '/apps/calendar/share/share', {'id': CAL, 'ship': PEERNAME, 'mode': 'edit'})
+    key = None
+    def offered():
+        nonlocal key
+        for k, o in shares(PEER, PJ)['offers'].items():
+            if o['cal'] == CAL: key = k; return True
+        return False
+    if not wait('peer: offer arrived', offered, 30): return
+    sid = json.loads(curl(PEER, PJ, '/apps/calendar/share/accept', {'key': key}))['id']
+    sync(PEER, PJ)
+    wait('peer: pulled seed', lambda: names(PEER, PJ, sid) == ['seed'])
+    try:
+        uid = uids(HOST, HJ, CAL)['seed']
+        # the host edits, then the peer edits its older copy before pulling
+        poke(HOST, HJ, {'action': 'edit-event', 'id': uid, 'home': CAL, **ev('host moved', 1795003600000)})
+        poke(PEER, PJ, {'action': 'edit-event', 'id': uid, 'home': sid, **ev('peer renamed', 1795000000000)})
+        wait('peer: the stale edit is refused and logged with its copy',
+             lambda: any('changed on the host' in c['why'] and 'peer renamed' in c['local'] for c in conflicts(PEER, PJ)), 120)
+        check('host: its edit stands', names(HOST, HJ, CAL) == ['host moved'])
+        sync(PEER, PJ)
+        wait('peer: the next pull brings the host\'s edit', lambda: names(PEER, PJ, sid) == ['host moved'])
+        # two edits of the peer's own before a pull: both go in
+        curl(PEER, PJ, '/apps/calendar/google/conflicts/clear', {})
+        poke(PEER, PJ, {'action': 'edit-event', 'id': uid, 'home': sid, **ev('peer one', 1795003600000)})
+        wait('host: the peer\'s first edit', lambda: names(HOST, HJ, CAL) == ['peer one'])
+        poke(PEER, PJ, {'action': 'edit-event', 'id': uid, 'home': sid, **ev('peer two', 1795003600000)})
+        wait('host: and its second, before any pull', lambda: names(HOST, HJ, CAL) == ['peer two'])
+        check('peer: no refusal for its own edits', not [c for c in conflicts(PEER, PJ) if 'refused' in c['why']])
+    finally:
+        curl(HOST, HJ, '/apps/calendar/share/revoke', {'id': CAL, 'ship': PEERNAME})
+        poke(HOST, HJ, {'action': 'del-calendar', 'id': CAL})
+        time.sleep(3)
+        poke(PEER, PJ, {'action': 'del-calendar', 'id': sid})
+        curl(PEER, PJ, '/apps/calendar/google/conflicts/clear', {})
+
 def run_index():
     print('== a share read by its index')
     poke(HOST, HJ, {'action': 'del-calendar', 'id': CAL})
@@ -296,6 +341,7 @@ curl(HOST, HJ, '/apps/calendar/share/revoke', {'id': CAL, 'ship': PEERNAME})
 poke(HOST, HJ, {'action': 'del-calendar', 'id': CAL})
 for k in KEEP: poke(PEER, PJ, {'action': 'del-calendar', 'id': k})
 run_refusal()
+run_stale_edit()
 run_index()
 run_writes_during_pulls()
 print('SHIP SHARE MATRIX ' + ('PASSED' if not fails else 'FAILED: ' + ', '.join(fails)))
