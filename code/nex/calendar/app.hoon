@@ -382,7 +382,15 @@
           ~&  >>>  "%calendar: bad add-event"
           $
         ;<  ev2=event:cal  bind:m  (apply-until u.ev (gn jon 'until_ms'))
-        =/  id=@ta  (crip "{(scow %uv (end [3 8] eny))}@{(scow %p our)}")
+        ::  a poke answers nothing but its ack, so a client that needs the
+        ::  new event's id names it: an id taken or unusable refuses the add
+        =/  want=@t  (gs jon 'id')
+        ?:  &(!=('' want) !(new-id-ok c want))
+          ~&  >>>  "%calendar: add-event id taken or unusable"
+          $
+        =/  id=@ta
+          ?.  =('' want)  (crip (trip want))
+          (crip "{(scow %uv (end [3 8] eny))}@{(scow %p our)}")
         ;<  ~  bind:m  (replace:io (put-ev-in c (cal-arg jon) '' id ev2))
         $
           ::
@@ -3565,6 +3573,7 @@
   ?.  (has-objects share)  (pure:m |+'the host\'s share file could not be read')
   (pure:m &+(row-put share ~[['via' s+'whole']]))
 ++  has-objects  has-objects:core
+++  new-id-ok  new-id-ok:core
 ::  +ship-pull: the host's share file, diffed by etag against what we
 ::  hold; changed objects are applied, missing ones deleted
 ++  ship-pull

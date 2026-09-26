@@ -47,6 +47,12 @@ and DAVx5 see them as tasks. Google Calendar has no tasks (they live in Google
 Tasks, a separate API), so a task in a Google-linked calendar stays on this
 ship. Sharing with ships and following over CalDAV carry tasks like events.
 
+API: `add-event` takes an optional `id`, the new event's id, chosen by the
+caller: a poke answers only with its ack, so a client that needs the id
+names it. It must not be in use and must hold no `/`, `#` or control
+character (at most 255 bytes); otherwise the add is refused. Without one,
+the ship makes an id.
+
 API: `add-event` with `cat: "todo"`, `due_ms` and `done_ms` (both optional);
 `done-event {id, done}` ticks or unticks; `events.json` rows carry `due_ms`
 and `done`, `window.json` rows `done`. Gate: `scripts/todo-matrix.py`.

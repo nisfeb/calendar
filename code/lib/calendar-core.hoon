@@ -567,6 +567,17 @@
   ?|  =(etag.u.cur base)
       =(etag.u.cur (gs (obj:gcal (obj:gcal writes cid) u) (scot %p peer)))
   ==
+::  +new-id-ok: an id a client picked for a new event: text a key can
+::  hold (no slash, no #, which names an override child, no control
+::  characters, at most 255 bytes) that no calendar holds yet
+++  new-id-ok
+  |=  [c=calendar:cal id=@t]
+  ^-  ?
+  ?&  !=('' id)
+      (lte (met 3 id) 255)
+      !(lien (trip id) |=(ch=@t |(=('/' ch) =('#' ch) (lth ch 32) =(127 ch))))
+      ?=(~ (find-entry:cal c id))
+  ==
 ::  +has-objects: a share file or index that names its objects (maybe
 ::  none), as opposed to one that could not be read
 ++  has-objects

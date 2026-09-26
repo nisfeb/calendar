@@ -559,4 +559,21 @@
     ::  with no zone, UTC midnight
     (expect-eq !>(1) !>((lent (alarm-pushes:core ~[r] ens ~2026.11.2..22.59.59 ~2026.11.2..23.00.00 ~))))
   ==
+::
+++  test-new-id-ok
+  =/  c  (cals ~[[%a ~[(ent 'held' 'taken@test')]]])
+  ;:  weld
+    (expect !>((new-id-ok:core c 'mine-1@orrery')))
+    ::  a space is text; the control characters below it are not
+    (expect !>((new-id-ok:core c 'a b')))
+    (expect !>(!(new-id-ok:core c (crip ~['a' `@t`31]))))
+    (expect !>((new-id-ok:core c (crip (reap 255 'x')))))
+    (expect !>(!(new-id-ok:core c (crip (reap 256 'x')))))
+    (expect !>(!(new-id-ok:core c '')))
+    (expect !>(!(new-id-ok:core c 'taken@test')))
+    (expect !>(!(new-id-ok:core c 'a/b')))
+    (expect !>(!(new-id-ok:core c 'a#b')))
+    (expect !>(!(new-id-ok:core c 'a\0ab')))
+    (expect !>(!(new-id-ok:core c (crip ~['a' `@t`127]))))
+  ==
 --
