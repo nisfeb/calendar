@@ -119,9 +119,9 @@
           ::
           [~ %'main.sig']
         ;<  ~  bind:m  (rise-later prod "calendar: the main fiber")
-        ::  a refused timer or clock road is recorded here (the kernel says it)
+        ::  the roads the main fiber asks softly: the timer, the clock, and
+        ::  the web binding, which it makes here. A refusal is recorded
         ;<  ~  bind:m  check-roads
-        ;<  ~  bind:m  (bind-http-self:io [~ /apps/calendar])
         ::  any ship may poke our share inbox: the road rides on /public
         ;<  ~  bind:m  lay-inbox-road
         (http-dispatch:io %cal)
@@ -1141,8 +1141,25 @@
   =/  crash=?  !=(note u.prod)
   ;<  clock=(unit @da)  bind:m  soft-now
   ?~  clock
-    ~?  >>  crash  "{msg} crashed, and the clock road /sys/bowl.sig is refused; grant it under Permits, then reload"
-    %-  ?.(crash same (slog u.prod))
+    ::  no clock to time a retry by. The crash is still counted, with no
+    ::  times, so it is on record; the kernel has printed it
+    ;<  ~  bind:m
+      =/  m  (fiber:fiber:nexus ,~)
+      ?.  crash  (pure:m ~)
+      ;<  log=json  bind:m  (read-json-grub './' 'rise.json')
+      =/  row=json  (fall (~(get by (omap log)) key) [%o ~])
+      ;<  *  bind:m
+        %^  over-as-soft:io  (grub-road './' 'rise.json')
+          :-  [/ %json]
+          :-  %o
+          %+  ~(put by (omap log))  key
+          %-  pairs:enjs:format
+          :~  ['n' (numb:enjs:format +((fall (gn row 'n') 0)))]
+              ['last_ms' (numb:enjs:format 0)]
+              ['until_ms' (numb:enjs:format 0)]
+          ==
+        [/ %json]
+      (pure:m ~)
     (rise-park note)
   =/  now=@da  u.clock
   ;<  log=json  bind:m  (read-json-grub './' 'rise.json')
@@ -1160,10 +1177,9 @@
   ;<  ~  bind:m
     =/  m  (fiber:fiber:nexus ,~)
     ?.  crash  (pure:m ~)
-    ::  the console hears of the first crash of a streak, trace and all;
-    ::  the rest are counted in rise.json (docs/logging.md)
-    ~?  >>  =(1 n)  "{msg} crashed; it tries again by itself in {(a-co:co (div (sub until now) ~m1))} min (count and times in rise.json)"
-    %-  ?.(=(1 n) same (slog u.prod))
+    ::  counted here, not printed: the kernel prints every fiber crash
+    ::  with its trace (%fiber-crash), and a second line would be one
+    ::  cause said twice (docs/logging.md)
     ;<  *  bind:m
       %^  over-as-soft:io  (grub-road './' 'rise.json')
         :-  [/ %json]
@@ -2158,11 +2174,16 @@
   ?.  said  (pure:m ~)
   ~&  >  "calendar: {(trip key)} cleared"
   (pure:m ~)
-::  +check-roads: the timer and the clock, asked softly from the main
-::  fiber, which needs neither and so is still here to say what stopped.
-::  Recorded, not printed: a fiber that waits on the refused road is
-::  parked by the kernel, and the kernel's one line for the app is the
-::  console's. The record adds what stopped, where Settings shows it.
+::  +check-roads: the timer, the clock and the web binding, asked softly
+::  from the main fiber, which is never parked and so is here to say what
+::  stopped. The timer and the clock are recorded, not printed: a fiber
+::  that waits on one is parked by the kernel, and the kernel's one line
+::  for the app is the console's. The web binding is the calendar's to
+::  say: the kernel's bind swallows a refusal in silence and parks
+::  nothing, so with that road alone refused nothing else would speak.
+::  When the timer or the clock is refused too (a fresh install is
+::  refused everything), the kernel's line covers the app and this one
+::  is recorded only.
 ++  check-roads
   =/  m  (fiber:fiber:nexus ,~)
   ^-  form:m
@@ -2171,13 +2192,38 @@
     ?:  timer  (unfault './' 'road/behn')
     %:  fault  './'  'road/behn'  %error  |
       "the timer road /sys/behn/ is refused, so reminders and syncing are stopped"
-      "grant it under Permits, then reload the calendar"
+      "grant it at /apps/grubbery/permits, then reload the calendar"
     ==
   ;<  clock=(unit @da)  bind:m  soft-now
-  ?^  clock  (unfault './' 'road/bowl')
-  %:  fault  './'  'road/bowl'  %error  |
-    "the clock road /sys/bowl.sig is refused, so nothing that needs the time runs"
-    "grant it under Permits, then reload the calendar"
+  ;<  ~  bind:m
+    ?^  clock  (unfault './' 'road/bowl')
+    %:  fault  './'  'road/bowl'  %error  |
+      "the clock road /sys/bowl.sig is refused, so nothing that needs the time runs"
+      "grant it at /apps/grubbery/permits, then reload the calendar"
+    ==
+  ;<  web=?  bind:m  (soft-bind [~ /apps/calendar])
+  ?:  web  (unfault './' 'road/eyre')
+  %:  fault  './'  'road/eyre'  %error  &(timer ?=(^ clock))
+    "the web road /sys/eyre/ is refused, so the calendar's page and CalDAV do not answer"
+    "grant it at /apps/grubbery/permits, then reload the calendar"
+  ==
+::  +soft-bind: bind our route to this grub, & when eyre took it. The
+::  kernel's +bind-http-self is this poke with the refusal swallowed.
+::  The wire is fixed: a nonce would ask /sys/bowl.sig, refusable too.
+++  soft-bind
+  |=  =binding:eyre
+  =/  m  (fiber:fiber:nexus ,?)
+  ^-  form:m
+  ;<  ~  bind:m
+    (send-dart:io %node /bind-self &+&+[/sys/eyre %'main.server-state'] %poke [[/ %eyre-action] [%bind-self binding]])
+  |=  input:fiber:nexus
+  :+  ~  q.state
+  ?+  in  [%skip ~]
+      ~  [%wait ~]
+      [~ %veto *]  [%done |]
+      [~ %pack * *]
+    ?.  =(/bind-self wire.u.in)  [%skip ~]
+    [%done &]
   ==
 ++  google-config  |=(pre=@t (read-json-grub pre 'google.json'))
 ++  google-auth    |=(pre=@t (read-json-grub pre 'google-auth.json'))
@@ -3317,7 +3363,7 @@
   ?^  reg
     %:  fault  './'  'road/inbox'  %warning  &
       "the registry road is refused, so other ships cannot send edits to calendars shared with them"
-      "grant /sys/ames/registry under Permits, then reload the calendar"
+      "grant /sys/ames/registry at /apps/grubbery/permits, then reload the calendar"
     ==
   ::  the registry names a group by its short name and takes only OUR
   ::  roads: a %how replaces every road under our prefix in that group
@@ -3326,7 +3372,7 @@
   ?^  err
     %:  fault  './'  'road/inbox'  %warning  &
       "the share inbox road could not be laid in the public group, so other ships cannot send edits"
-      "grant /sys/ames/usergroups under Permits, then reload the calendar"
+      "grant /sys/ames/usergroups at /apps/grubbery/permits, then reload the calendar"
     ==
   (unfault './' 'road/inbox')
 ++  ship-read-only  ship-read-only:core

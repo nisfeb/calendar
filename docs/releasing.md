@@ -258,8 +258,8 @@ and each would have been caught by one of these (lattice
    `/sys/bowl.sig` refused: the calendar parks, it never spins.
    Then `scripts/quiet-check.sh` (`docs/logging.md`): the console
    captured while the calendar reloads, upgrades, loses the timer road
-   and gets it back. A healthy calendar prints nothing; the refused road
-   prints one line and is recorded.
+   and the web road in turn and gets each back. A healthy calendar prints
+   nothing; a refused road is one line and a record.
 6. A big input, if the release touches a parser or a sync path: an import
    of thousands of objects, and of one series with thousands of
    overrides, must answer in seconds, with the ship answering throughout.
