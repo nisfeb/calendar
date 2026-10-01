@@ -307,6 +307,7 @@
           =/  ti=@t  (gs jon 'title')
           =/  zo=@t  (gs jon 'zone')
           =/  hd=(unit @ud)  (gn jon 'horizon_days')
+          =/  lm=(unit @ud)  (gn jon 'lead_min')
           =.  title.c  ?:(=('' ti) title.c ti)
           ::  a zone pytz does not know is not taken (every timed event
           ::  with none of its own would be placed in it)
@@ -317,6 +318,9 @@
           ::  ponytail: ten years is as far as the index is walked ahead
           =.  horizon.c  ?~(hd horizon.c (mul (max 1 (min 3.650 u.hd)) ~d1))
           ;<  ~  bind:m  (replace:io c)
+          ::  lead_min: the heads-up before every timed event; 0 turns it
+          ::  off and leaves the alarms events carry
+          ;<  ~  bind:m  ?~(lm (pure:(fiber:fiber:nexus ,~) ~) (set-lead-min u.lm))
           $
         ?:  =('add-feed' act)
           =/  nm=@t   (gs jon 'name')
@@ -343,10 +347,18 @@
           ?~  ev
             ~&  >>>  "%calendar: bad edit-event"
             $
+          ::  alarms: absent keeps the entry's, a list replaces them, and
+          ::  one that cannot be read refuses the whole edit
+          =/  als=alarms-arg:core  (parse-alarms jon)
+          ?:  ?=(%bad -.als)
+            ~&  >>>  "%calendar: refused edit-event: {why.als}"
+            $
           ::  the shape is replaced but exceptions survive the edit
           =/  merged=event:cal  (carry-skips u.old u.ev)
           ;<  new=event:cal  bind:m  (apply-until merged (gn jon 'until_ms'))
-          ;<  ~  bind:m  (replace:io (put-ev-in c (cal-arg jon) home id new))
+          =.  c  (put-ev-in c (cal-arg jon) home id new)
+          =?  c  ?=(%set -.als)  (set-alarms c (fall (cal-arg jon) home) id l.als)
+          ;<  ~  bind:m  (replace:io c)
           $
         ?:  =('done-event' act)
           ::  tick or untick a task
@@ -381,6 +393,10 @@
         ?~  ev
           ~&  >>>  "%calendar: bad add-event"
           $
+        =/  als=alarms-arg:core  (parse-alarms jon)
+        ?:  ?=(%bad -.als)
+          ~&  >>>  "%calendar: refused add-event: {why.als}"
+          $
         ;<  ev2=event:cal  bind:m  (apply-until u.ev (gn jon 'until_ms'))
         ::  a poke answers nothing but its ack, so a client that needs the
         ::  new event's id names it: an id taken or unusable refuses the add
@@ -391,7 +407,9 @@
         =/  id=@ta
           ?.  =('' want)  (crip (trip want))
           (crip "{(scow %uv (end [3 8] eny))}@{(scow %p our)}")
-        ;<  ~  bind:m  (replace:io (put-ev-in c (cal-arg jon) '' id ev2))
+        =.  c  (put-ev-in c (cal-arg jon) '' id ev2)
+        =?  c  ?=(%set -.als)  (set-alarms c '' id l.als)
+        ;<  ~  bind:m  (replace:io c)
         $
           ::
           ::  /order.calendar-cache: reinflate on calendar news
@@ -579,7 +597,9 @@
         ;<  ~  bind:m  (wait:io tick)
         ;<  now=@da  bind:m  get-time:io
         ;<  st=json  bind:m  (get-state-as:io ,json)
-        =/  lead=@dr  (mul (max 1 (fall (gn st 'lead_min') 30)) ~m1)
+        ::  lead_min 0: no heads-up, only the alarms events carry
+        =/  lead-min=@ud  (fall (gn st 'lead_min') 30)
+        =/  lead=@dr  (mul (max 1 lead-min) ~m1)
         =/  fired=@da
           =/  ms=(unit @ud)  (gn st 'fired_ms')
           ?~(ms *@da (ms-to-da u.ms))
@@ -600,7 +620,7 @@
           %+  skim  ~(tap in (window:cal order.ca lo hi))
           |=  r=ref:cal
           &((gth l.span.r lo) (lte l.span.r hi))
-        ;<  ~  bind:m  (send-pushes (lead-pushes due (keyed-events c) now))
+        ;<  ~  bind:m  (send-pushes ?:(=(0 lead-min) ~ (lead-pushes due (keyed-events c) now)))
         ::  alarms: a relative one fires when its occurrence minus the
         ::  lead falls in (from, now]; an absolute one when its moment
         ::  does. Occurrences up to 31 days out are considered — the
@@ -770,7 +790,8 @@
           ;<  ca=cache:cal  bind:m  (fresh-cache '../' c u.to)
           =/  refs=(list ref:cal)
             ~(tap in (window:cal order.ca u.from u.to))
-          =/  evs=(map eid:cal event:cal)  (keyed-events c)
+          =/  ens=(map eid:cal entry:cal)  (keyed c)
+          =/  evs=(map eid:cal event:cal)  (~(run by ens) |=(e=entry:cal event.e))
           =/  want=(unit @t)  (get-key:kv:html-utils 'tag' args)
           =/  rows=json
             :-  %a
@@ -779,6 +800,8 @@
             ^-  (unit json)
             =/  ev=(unit event:cal)  (~(get by evs) eid.r)
             ?~  ev  ~
+            =/  en=(unit entry:cal)  (~(get by ens) eid.r)
+            =/  als=(list alarm:cal)  ?~(en ~ alarms.u.en)
             ?.  ?~(want & ?=(^ (find ~[u.want] (meta-tags:cal (meta-of:cal u.ev)))))  ~
             =/  [cid=@ta u=uid:cal]  (unkey eid.r)
             :-  ~
@@ -793,6 +816,7 @@
                 ['done' b+?:(?=(%todo -.u.ev) ?=(^ done.u.ev) |)]
                 ['l' (numb:enjs:format (da-to-ms l.span.r))]
                 ['r' (numb:enjs:format (da-to-ms r.span.r))]
+                ['alarms' (alarms-json:cal als)]
             ==
           =/  caps=json
             :-  %a
@@ -835,7 +859,8 @@
               ?~(dom.u.rc ~ ~[['count' (numb:enjs:format (fall (mole |.((count-of:ics recur.u.rc u.dom.u.rc))) u.dom.u.rc))]])
               ?~(idx ~ ~[['before' (numb:enjs:format (fall (mole |.((count-of:ics recur.u.rc u.idx))) u.idx))]])
             ==
-          (send-json eyre-id [%o (~(gas by (~(put by p.ej) 'cal' s+cid.u.got)) extra)])
+          =/  more=(list [@t json])  ~[['cal' s+cid.u.got] ['alarms' (alarms-json:cal alarms.e.u.got)]]
+          (send-json eyre-id [%o (~(gas by (~(gas by p.ej) more)) extra)])
         ::  /tags.json: every tag in use, with how many events carry it
         ?:  ?=([%'tags.json' ~] suffix)
           ;<  c=calendar:cal  bind:m  (read-cal '../')
@@ -888,6 +913,7 @@
                   ['etag' s+etag.e]
                   ['meta' [%o (meta-of:cal event.e)]]
                   ['cat' s+-.event.e]
+                  ['alarms' (alarms-json:cal alarms.e)]
               ==
             ^-  (list [@t json])
             ?.  ?=(%todo -.event.e)  ~
@@ -1014,12 +1040,14 @@
             =/  bt=tape  (spud u.base)
             ?:(?&(?=(^ bt) =('/' i.bt)) t.bt bt)
           ;<  c=calendar:cal  bind:m  (read-cal '../')
+          ;<  rem=json  bind:m  (read-json-grub '../' 'reminders.json')
           =/  =json
             %-  pairs:enjs:format
             :~  ['title' s+title.c]
                 ['zone' ?~(zone.c ~ s+u.zone.c)]
                 ['ball' s+(crip ball)]
                 ['ship' s+(scot %p our)]
+                ['lead_min' (numb:enjs:format (fall (gn rem 'lead_min') 30))]
             ==
           (send-json eyre-id json)
         ::  static files, only these: the shell is the default, and the
@@ -2028,6 +2056,16 @@
   =/  m  (fiber:fiber:nexus ,~)
   ^-  form:m
   (over:io (grub-road pre name) [[/ %json] jon])
+::  +set-lead-min: the reminders fiber's heads-up, in minutes before a
+::  timed event's start (its other keys, the watermarks, stay). A week
+::  is the most, as its cache is built that far ahead
+++  set-lead-min
+  |=  n=@ud
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  ;<  rem=json  bind:m  (read-json-grub './' 'reminders.json')
+  =/  cur=(map @t json)  ?:(?=([%o *] rem) p.rem ~)
+  (write-json-grub './' 'reminders.json' [%o (~(put by cur) 'lead_min' (numb:enjs:format (min 10.080 n)))])
 ++  google-config  |=(pre=@t (read-json-grub pre 'google.json'))
 ++  google-auth    |=(pre=@t (read-json-grub pre 'google-auth.json'))
 ++  google-sync    |=(pre=@t (read-json-grub pre 'google-sync.json'))
@@ -3764,7 +3802,7 @@
   ^-  form:m
   ?~  pushes  (pure:m ~)
   ;<  ~  bind:m
-    (send-push:io [~ ~ ~ [name.i.pushes body.i.pushes ~ `'/apps/calendar' `tag.i.pushes]])
+    (send-push:io [~ ~ ~ [name.i.pushes body.i.pushes `'/apps/calendar/icon.svg' `'/apps/calendar' `tag.i.pushes]])
   $(pushes t.pushes)
 +$  feed-sync  feed-sync:core
 ++  feed-id  feed-id:core
@@ -3895,4 +3933,6 @@
   ==
 ++  parse-recur  parse-recur:core
 ++  parse-event  parse-event:core
+++  parse-alarms  parse-alarms:core
+++  set-alarms  set-alarms:core
 --

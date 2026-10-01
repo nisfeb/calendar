@@ -34,8 +34,12 @@ bang() { get "$I?info=1" | python3 -c 'import json,sys; d=json.load(sys.stdin); 
 snap "$work/before"
 t0=$(date +%s)
 for f in "$@"; do
-  curl -s -o /dev/null -m 120 -b "$JAR" --data-urlencode action=create-file \
-    --data-urlencode filename="$(basename "$f")" "$B$D/code/$(dirname "$f")" || true
+  # create-file on a path that exists never answers (it waits out the
+  # timeout), so only a file the ship lacks is created
+  if [[ "$(curl -s -o /dev/null -w '%{http_code}' -m 30 -b "$JAR" "$B$D/code/$f?raw=1")" != 200 ]]; then
+    curl -s -o /dev/null -m 120 -b "$JAR" --data-urlencode action=create-file \
+      --data-urlencode filename="$(basename "$f")" "$B$D/code/$(dirname "$f")" || true
+  fi
   curl -s -o /dev/null -w "write $f -> %{http_code}\n" -m 600 -b "$JAR" \
     --data-urlencode action=write-text --data-urlencode "content@$SRC/$f" "$B$D/code/$f"
 done

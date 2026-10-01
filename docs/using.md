@@ -22,6 +22,11 @@ where each comes from:
 - **Google Calendar** — your own OAuth client, connect, link calendars, both
   ways. See `docs/google.md`.
 - **ICS feeds** — read-only subscriptions to any `.ics` address.
+- **Notifications** — browser notifications from this ship: a notice before
+  each timed event (30 minutes by default) and one at each alarm an event
+  carries. One subscription serves every app on the ship (furum's too), and a
+  browser already on in furum already gets these. Nothing is sent if the
+  calendar's push road was refused under Permits.
 
 ## Tasks
 
@@ -52,6 +57,21 @@ caller: a poke answers only with its ack, so a client that needs the id
 names it. It must not be in use and must hold no `/`, `#` or control
 character (at most 255 bytes); otherwise the add is refused. Without one,
 the ship makes an id.
+
+API: every event object (`window.json`, `events.json`, `event.json`) carries
+`alarms`, `[]` when there are none: `{"kind":"before","s":900,"desc":""}`,
+`{"kind":"at","at_ms":…,"desc":""}` or
+`{"kind":"offset","from":"start"|"end","after":true|false,"s":600,"desc":""}`
+(`s` whole seconds; `desc` verbatim, Google's method lands there).
+`add-event` and `edit-event` take an optional `alarms` list in the same
+shape: absent keeps the entry's, a list replaces them, `[]` clears them, and
+one that cannot be read (an unknown kind, a negative `s`, `at` without
+`at_ms`) refuses the whole poke, with the reason on the ship's log. A change
+moves the etag and seq like any edit, so CalDAV clients and Google (which
+takes `before` alarms) hear of it. `config.json` carries `lead_min`, the
+heads-up sent before every timed event (30 by default), and
+`{"action":"config","lead_min":N}` sets it; `0` turns it off and leaves the
+alarms events carry. Gate: `scripts/edge-matrix.py`.
 
 API: `add-event` with `cat: "todo"`, `due_ms` and `done_ms` (both optional);
 `done-event {id, done}` ticks or unticks; `events.json` rows carry `due_ms`

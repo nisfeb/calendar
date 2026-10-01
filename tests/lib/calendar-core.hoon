@@ -576,4 +576,81 @@
     (expect !>(!(new-id-ok:core c 'a\0ab')))
     (expect !>(!(new-id-ok:core c (crip ~['a' `@t`127]))))
   ==
+::
+::  ==  alarms over JSON (the Talon contract): read out by kind, written
+::  back, refused in words, and firing when they should
+::
+++  al-before  ^-(alarm:cal [[%rel ~m15] ''])
+++  al-at      ^-(alarm:cal [[%abs at] 'email'])
+++  al-after   ^-(alarm:cal [[%off | & ~m10] ''])
+++  al-end     ^-(alarm:cal [[%off & | ~m5] 'before end'])
+++  al-four    ^-((list alarm:cal) ~[al-before al-at al-after al-end])
+++  al-poke    |=(l=(list json) ^-(json (obj ~[['action' s+'edit-event'] ['alarms' a+l]])))
+++  test-alarm-json
+  ;:  weld
+    (expect-eq !>((obj ~[['desc' s+''] ['kind' s+'before'] ['s' (numb:enjs:format 900)]])) !>((alarm-json:cal al-before)))
+    (expect-eq !>((obj ~[['desc' s+'email'] ['kind' s+'at'] ['at_ms' (numb:enjs:format ms)]])) !>((alarm-json:cal al-at)))
+    (expect-eq !>((obj ~[['desc' s+''] ['kind' s+'offset'] ['from' s+'start'] ['after' b+&] ['s' (numb:enjs:format 600)]])) !>((alarm-json:cal al-after)))
+    (expect-eq !>((obj ~[['desc' s+'before end'] ['kind' s+'offset'] ['from' s+'end'] ['after' b+|] ['s' (numb:enjs:format 300)]])) !>((alarm-json:cal al-end)))
+    ::  seconds stay whole, and finer than a minute
+    (expect-eq !>((obj ~[['desc' s+''] ['kind' s+'before'] ['s' (numb:enjs:format 90)]])) !>((alarm-json:cal [[%rel ~s90] ''])))
+    (expect-eq !>(`json`[%a ~]) !>((alarms-json:cal ~)))
+  ==
+++  test-parse-alarms
+  ;:  weld
+    ::  absent keeps; [] clears; a list is taken in order, and reads back
+    ::  what alarm-json wrote
+    (expect-eq !>(`alarms-arg:core`[%keep ~]) !>((parse-alarms:core (obj ~[['action' s+'edit-event']]))))
+    (expect-eq !>(`alarms-arg:core`[%set ~]) !>((parse-alarms:core (al-poke ~))))
+    (expect-eq !>(`alarms-arg:core`[%set al-four]) !>((parse-alarms:core (al-poke (turn al-four alarm-json:cal)))))
+    ::  before the start, phrased as an offset, is a before
+    (expect-eq !>(`alarms-arg:core`[%set ~[al-before]]) !>((parse-alarms:core (al-poke ~[(obj ~[['kind' s+'offset'] ['from' s+'start'] ['after' b+|] ['s' (numb:enjs:format 900)]])]))))
+    ::  refused: an unknown kind, a negative s, at without at_ms, from that
+    ::  is neither end, alarms that is not a list, an alarm that is not an object
+    (expect !>(=(%bad -:(parse-alarms:core (al-poke ~[(obj ~[['kind' s+'snooze'] ['s' (numb:enjs:format 1)]])])))))
+    (expect !>(=(%bad -:(parse-alarms:core (al-poke ~[(obj ~[['kind' s+'before'] ['s' n+'-5']])])))))
+    (expect !>(=(%bad -:(parse-alarms:core (al-poke ~[(obj ~[['kind' s+'at']])])))))
+    (expect !>(=(%bad -:(parse-alarms:core (al-poke ~[(obj ~[['kind' s+'offset'] ['from' s+'middle'] ['after' b+&] ['s' (numb:enjs:format 1)]])])))))
+    (expect !>(=(%bad -:(parse-alarms:core (obj ~[['alarms' s+'none']])))))
+    (expect !>(=(%bad -:(parse-alarms:core (al-poke ~[s+'x'])))))
+    ::  one bad alarm refuses the list, the good ones with it
+    (expect !>(=(%bad -:(parse-alarms:core (al-poke ~[(alarm-json:cal al-before) (obj ~[['kind' s+'never']])])))))
+  ==
+++  test-set-alarms
+  =/  c  (cals ~[[%a ~[(ent 'e' 'e@test')]]])
+  =/  e1  (~(got by entries:(~(got by cals.c) %a)) 'e@test')
+  =/  c2  (set-alarms:core c %a 'e@test' ~[al-before])
+  =/  e2  (~(got by entries:(~(got by cals.c2) %a)) 'e@test')
+  =/  c3  (set-alarms:core c2 %a 'e@test' ~[al-before])
+  =/  c4  (set-alarms:core c3 '' 'e@test' ~)
+  =/  e4  (~(got by entries:(~(got by cals.c4) %a)) 'e@test')
+  ;:  weld
+    (expect-eq !>(~[al-before]) !>(alarms.e2))
+    ::  a change moves the seq and the etag, so CalDAV clients refetch
+    (expect !>((gth seq.e2 seq.e1)))
+    (expect !>(!=(etag.e1 etag.e2)))
+    ::  the same list again is no change at all
+    (expect-eq !>(c2) !>(c3))
+    ::  [] clears, the entry found by id alone
+    (expect-eq !>(`(list alarm:cal)`~) !>(alarms.e4))
+    (expect !>((gth seq.e4 seq.e2)))
+    ::  an id that is nowhere changes nothing
+    (expect-eq !>(c4) !>((set-alarms:core c4 %a 'nobody@test' ~[al-at])))
+  ==
+++  test-alarms-poked-in-fire
+  ::  the four kinds on a timed 10:00-11:00 event, as a client would send
+  ::  them, fire at 09:45, 10:00 (at is 10:00), 10:10 and 10:55
+  =/  als=alarms-arg:core  (parse-alarms:core (al-poke (turn al-four alarm-json:cal)))
+  ?>  ?=(%set -.als)
+  =/  r=ref:cal  [%e 0 [at (add at ~h1)]]
+  =/  ens  (malt ~[[%e [(ev 'meet') 'e' '' 0 l.als ~]]])
+  =/  fires  |=([from=@da now=@da] (lent (alarm-pushes:core ~[r] ens from now ~)))
+  ;:  weld
+    (expect-eq !>(1) !>((fires ~2026.11.2..09.44.59 ~2026.11.2..09.45.00)))
+    (expect-eq !>(1) !>((fires ~2026.11.2..09.59.59 ~2026.11.2..10.00.00)))
+    (expect-eq !>(1) !>((fires ~2026.11.2..10.09.59 ~2026.11.2..10.10.00)))
+    (expect-eq !>(1) !>((fires ~2026.11.2..10.54.59 ~2026.11.2..10.55.00)))
+    (expect-eq !>(0) !>((fires ~2026.11.2..09.29.59 ~2026.11.2..09.30.00)))
+    (expect-eq !>(4) !>((fires ~2026.11.2..09.00.00 ~2026.11.2..11.00.00)))
+  ==
 --

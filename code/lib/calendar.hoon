@@ -498,6 +498,30 @@
       ==
     ==
   [%o (~(gas by *(map @t json)) (weld common rest))]
+::  +alarms-json: an entry's alarms as a client reads them, one object
+::  per alarm by its trigger. s is whole seconds: a @dr can be finer than
+::  a minute, and what CalDAV gave is kept
+++  alarms-json
+  |=  l=(list alarm)
+  ^-  json
+  [%a (turn l alarm-json)]
+++  alarm-json
+  |=  a=alarm
+  ^-  json
+  %-  pairs:enjs:format
+  ^-  (list [@t json])
+  :-  ['desc' s+desc.a]
+  ^-  (list [@t json])
+  ?-  -.trigger.a
+    %rel  ~[['kind' s+'before'] ['s' (numb:enjs:format (div before.trigger.a ~s1))]]
+    %abs  ~[['kind' s+'at'] ['at_ms' (numb:enjs:format (da-to-ms at.trigger.a))]]
+      %off
+    :~  ['kind' s+'offset']
+        ['from' s+?:(end.trigger.a 'end' 'start')]
+        ['after' b+late.trigger.a]
+        ['s' (numb:enjs:format (div d.trigger.a ~s1))]
+    ==
+  ==
 ::  +calendar-json: whole-calendar display codec for the mark
 ::
 ++  calendar-json

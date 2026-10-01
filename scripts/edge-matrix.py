@@ -18,7 +18,9 @@ If-Match, PROPFIND with no Depth, an object of overrides alone, an
 unchanged re-PUT, meta a client PUT does not carry, skip undo, "this and
 following" as one action, events.json filtered by window and kind, the
 config zone, the window cap, a task due in the calendar's zone, a calendar
-id that is not a knot. Cleans up.
+id that is not a knot. Alarms over JSON (read by kind, kept, replaced,
+cleared, refused, through an ICS export and import) and `lead_min`.
+Cleans up.
 """
 import sys, json, time, subprocess, base64, urllib.request, urllib.error
 
@@ -263,6 +265,47 @@ check('a task due at 22:00 in the zone sits on that day', wait(lambda: [r['l'] f
 poke({'action': 'config', 'zone': z0 or 'none'})
 poke({'action': 'add-calendar', 'id': 'Bad/ID', 'name': 'bad', 'color': '#336699'}); time.sleep(2)
 check('a calendar id that is not a knot is refused', 'Bad/ID' not in {c['id'] for c in curl('/calendars.json')})
+
+# ---- alarms over JSON (the Talon contract), and the heads-up minutes
+AL = [{'kind': 'before', 's': 900, 'desc': ''}, {'kind': 'at', 'at_ms': 1796000000000, 'desc': 'email'},
+      {'kind': 'offset', 'from': 'start', 'after': True, 's': 600, 'desc': ''},
+      {'kind': 'offset', 'from': 'end', 'after': False, 's': 300, 'desc': 'before end'}]
+SHAPE = {'cal': 'edge-two', 'cat': 'timed', 'kind': 'once', 'start_ms': 1796100000000, 'zone': 'none', 'fin': 'dur', 'dur_min': 60}
+
+
+def alarm_ev(uid='edge-alarms@test'):
+    ev = curl('/event.json?id=' + urllib.request.quote(uid) + '&cal=edge-two')
+    return ev if isinstance(ev, dict) else {}
+
+
+def shape(l): return [(a['kind'], a.get('s'), a.get('at_ms'), a.get('from'), a.get('after')) for a in l]
+
+
+poke(dict(SHAPE, action='add-event', id='edge-alarms@test', meta={'name': 'edge alarms'}, alarms=AL))
+check('alarms poked in read back by kind', wait(lambda: alarm_ev().get('alarms') == AL), alarm_ev())
+check('events.json carries alarms', [e.get('alarms') for e in events() if e['id'] == 'edge-alarms@test'] == [AL])
+win = rows(1796000000000, 1796200000000)
+check('window.json carries alarms, [] where none', all('alarms' in r for r in win) and [r['alarms'] for r in win if r['id'] == 'edge-alarms@test'] == [AL], win[:2])
+poke(dict(SHAPE, action='edit-event', id='edge-alarms@test', meta={'name': 'edge alarms 2'}))
+check('an edit without alarms keeps them', wait(lambda: alarm_ev()['meta']['name'] == 'edge alarms 2') and alarm_ev().get('alarms') == AL, alarm_ev())
+poke(dict(SHAPE, action='edit-event', id='edge-alarms@test', meta={'name': 'edge alarms 3'}, alarms=[{'kind': 'snooze'}]))
+poke(dict(SHAPE, action='edit-event', id='edge-alarms@test', meta={'name': 'edge alarms 4'}, alarms=[{'kind': 'before', 's': -5}]))
+poke(dict(SHAPE, action='edit-event', id='edge-alarms@test', meta={'name': 'edge alarms 5'}, alarms=[{'kind': 'at', 'desc': 'no at_ms'}]))
+time.sleep(3)
+check('a malformed alarm refuses the whole edit', alarm_ev()['meta']['name'] == 'edge alarms 2' and alarm_ev().get('alarms') == AL, alarm_ev())
+ics = curl('/export.ics?cal=edge-two')
+ics = ics if isinstance(ics, str) else ''
+block = ics[ics.rfind('BEGIN:VEVENT', 0, max(0, ics.find('UID:edge-alarms@test'))):]
+block = block[:block.find('END:VEVENT') + len('END:VEVENT\r\n')]
+check('alarms export as VALARMs', block.count('BEGIN:VALARM') == 4 and 'TRIGGER:-PT15M' in block and 'TRIGGER;RELATED=END:-PT5M' in block and 'TRIGGER;VALUE=DATE-TIME:' in block, block[:700])
+curl('/import?cal=edge-two', raw=vcal(block.replace('UID:edge-alarms@test', 'UID:edge-alarms-2@test')))
+check('alarms survive an ICS export and re-import', wait(lambda: shape(alarm_ev('edge-alarms-2@test').get('alarms') or []) == shape(AL)), alarm_ev('edge-alarms-2@test'))
+poke(dict(SHAPE, action='edit-event', id='edge-alarms@test', meta={'name': 'edge alarms 6'}, alarms=[]))
+check('[] clears them', wait(lambda: alarm_ev()['meta']['name'] == 'edge alarms 6') and alarm_ev().get('alarms') == [], alarm_ev())
+lead0 = curl('/config.json').get('lead_min')
+poke({'action': 'config', 'lead_min': 5})
+check('config.json carries lead_min and the config poke sets it', lead0 is not None and wait(lambda: curl('/config.json').get('lead_min') == 5), (lead0, curl('/config.json')))
+poke({'action': 'config', 'lead_min': lead0 if isinstance(lead0, int) else 30})
 
 # ---- cleanup
 poke({'action': 'del-calendar', 'id': 'edge-two'})

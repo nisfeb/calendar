@@ -1857,3 +1857,71 @@ getJSON('/config.json')
     boot();
   })
   .catch(boot);
+
+// browser notifications: the kernel's service worker and push routes.
+// The ship's reminders fiber sends to every subscription the kernel
+// holds, so turning this on is the whole client side.
+(function() {
+  var btn = document.getElementById('push-toggle');
+  var say = function(t) { document.getElementById('push-status').textContent = t; };
+  if (!('PushManager' in window) || !('serviceWorker' in navigator)) {
+    btn.disabled = true;
+    say(window.isSecureContext ? 'This browser has no web push' : 'Web push needs https');
+    return;
+  }
+  // register() settles while the worker still installs; subscribe needs
+  // it active, so wait for ready like furum does
+  var swReady = navigator.serviceWorker.register('/grubbery/push/sw', { scope: '/apps/calendar' })
+    .then(function() { return navigator.serviceWorker.ready; });
+  var post = function(u, b) {
+    return fetch(u, { method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' }, body: JSON.stringify(b) });
+  };
+  var sub = null;
+  function show(on) {
+    btn.textContent = on ? 'Turn notifications off' : 'Turn notifications on';
+    say(on ? 'On in this browser' : '');
+  }
+  swReady.then(function(reg) { return reg.pushManager.getSubscription(); })
+    .then(function(s) { sub = s; show(!!sub); })
+    .catch(function() { show(false); });
+  btn.onclick = function() {
+    var p;
+    if (sub) {
+      var id = null;
+      try { id = localStorage.getItem('cal-push-sub'); } catch (e) {}
+      p = (id ? post('/grubbery/push/unsubscribe', { sub_id: id }) : Promise.resolve())
+        .then(function() { return sub.unsubscribe(); })
+        .then(function() {
+          try { localStorage.removeItem('cal-push-sub'); } catch (e) {}
+          sub = null; show(false);
+        });
+    } else {
+      var made = null;
+      p = swReady.then(function(reg) {
+        return fetch('/grubbery/push/vapid-key', { credentials: 'include' })
+          .then(function(r) { if (!r.ok) throw new Error('push is not set up on this ship'); return r.text(); })
+          .then(function(key) {
+            var raw = atob(key.replace(/-/g, '+').replace(/_/g, '/'));
+            var arr = new Uint8Array(raw.length);
+            for (var i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+            return reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: arr });
+          });
+      }).then(function(s) {
+        made = s;
+        var k = s.toJSON();
+        return post('/grubbery/push/subscribe', { endpoint: k.endpoint, p256dh: k.keys.p256dh, auth: k.keys.auth });
+      }).then(function(r) { if (!r.ok) throw new Error('the ship refused the subscription'); return r.json(); })
+        .then(function(d) {
+          sub = made;
+          try { if (d.sub_id) localStorage.setItem('cal-push-sub', d.sub_id); } catch (e) {}
+          show(true);
+        })
+        .catch(function(e) {
+          // the ship never heard of a subscription it refused; drop the browser's half too
+          if (made && !sub) made.unsubscribe();
+          throw e;
+        });
+    }
+    busy(btn, p).catch(function(e) { toast('Notifications: ' + ((e && e.message) || 'failed')); });
+  };
+})();

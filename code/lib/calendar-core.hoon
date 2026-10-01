@@ -906,4 +906,57 @@
     ?:  =('to' f)  [%to (fall (bind (gn jon 'end_ms') ms-to-da) *@da)]
     [%dur (mul (fall (gn jon 'dur_min') 0) ~m1)]
   `[%timed u.rec zone fin bound meta]
+::  +parse-alarms: a poke's "alarms". Absent keeps the entry's (%keep),
+::  a list replaces them (%set; [] clears), and one that cannot be read
+::  refuses the whole poke (%bad, with the reason), never a silent drop
++$  alarms-arg  $%([%keep ~] [%set l=(list alarm:cal)] [%bad why=tape])
+++  parse-alarms
+  |=  jon=json
+  ^-  alarms-arg
+  =/  j=(unit json)  ?.(?=([%o *] jon) ~ (~(get by p.jon) 'alarms'))
+  ?~  j  [%keep ~]
+  ?.  ?=([%a *] u.j)  [%bad "alarms is not a list"]
+  =|  out=(list alarm:cal)
+  =/  l=(list json)  p.u.j
+  |-
+  ?~  l  [%set (flop out)]
+  =/  a=(each alarm:cal tape)  (parse-alarm i.l)
+  ?:  ?=(%| -.a)  [%bad p.a]
+  $(l t.l, out [p.a out])
+::  +parse-alarm: one alarm by its kind: before (s before the start), at
+::  (at_ms), offset (from start or end, after or not, s). s is whole
+::  seconds; a negative or fractional one does not read
+++  parse-alarm
+  |=  j=json
+  ^-  (each alarm:cal tape)
+  ?.  ?=([%o *] j)  [%| "an alarm is not an object"]
+  =/  kind=@t  (gs j 'kind')
+  =/  desc=@t  (gs j 'desc')
+  =/  s=(unit @ud)  (gn j 's')
+  ?:  =('before' kind)
+    ?~  s  [%| "before: s missing or not a whole number"]
+    [%& [%rel (mul u.s ~s1)] desc]
+  ?:  =('at' kind)
+    =/  at=(unit @ud)  (gn j 'at_ms')
+    ?~  at  [%| "at: at_ms missing or not a whole number"]
+    [%& [%abs (ms-to-da u.at)] desc]
+  ?:  =('offset' kind)
+    ?~  s  [%| "offset: s missing or not a whole number"]
+    =/  from=@t  (gs j 'from')
+    ?.  |(=('start' from) =('end' from))  [%| "offset: from is start or end"]
+    =/  after=(unit json)  (~(get by p.j) 'after')
+    ?.  ?=([~ %b *] after)  [%| "offset: after missing or not a boolean"]
+    ::  before the start, from the start, is a plain before
+    ?:  &(=('start' from) !p.u.after)  [%& [%rel (mul u.s ~s1)] desc]
+    [%& [%off =('end' from) p.u.after (mul u.s ~s1)] desc]
+  [%| "unknown alarm kind {(trip kind)}"]
+::  +set-alarms: an entry's alarms replaced. The etag follows, and the
+::  seq (so CalDAV clients and Google hear of it) only when they changed
+++  set-alarms
+  |=  [c=calendar:cal home=@ta id=@ta l=(list alarm:cal)]
+  ^-  calendar:cal
+  =/  got=(unit [cid=@ta e=entry:cal])  (locate c home id)
+  ?~  got  c
+  =/  k=cal:cal  (~(got by cals.c) cid.u.got)
+  c(cals (~(put by cals.c) cid.u.got (put-entry:cal k e.u.got(alarms l))))
 --
