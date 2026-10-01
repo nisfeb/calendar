@@ -431,6 +431,15 @@
   ^-  @t
   =/  j=(unit json)  (~(get by m) k)
   ?.(?=([~ %s *] j) '' p.u.j)
+::  +meta-priority: a task's priority (RFC 5545 PRIORITY: 1 highest, 9
+::  lowest), 0 when none or unreadable
+++  meta-priority
+  |=  m=meta
+  ^-  @ud
+  =/  j=(unit json)  (~(get by m) 'priority')
+  ?.  ?=([~ %n *] j)  0
+  =/  n=(unit @ud)  (rush p.u.j dem)
+  ?:(|(?=(~ n) (gth u.n 9)) 0 u.n)
 ::  +except-json: the occurrence indices a repeat has dropped. A client
 ::  that asked for a skip reads this back to see that the skip took;
 ::  the poke itself is silent, so this is the only proof there is.
@@ -472,6 +481,7 @@
       :~  ['due_ms' ?~(due.e ~ (numb:enjs:format (da-to-ms u.due.e)))]
           ['done_ms' ?~(done.e ~ (numb:enjs:format (da-to-ms u.done.e)))]
           ['done' b+?=(^ done.e)]
+          ['priority' (numb:enjs:format (meta-priority m))]
       ==
     ::
         %timed

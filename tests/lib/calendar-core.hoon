@@ -672,4 +672,22 @@
     ::  a due moment is not moved
     (expect-eq !>(1) !>((lent (alarm-pushes:core ~[r] ens2 ~2026.11.3..13.59.59 ~2026.11.3..14.00.00 ny))))
   ==
+++  test-parse-priority
+  =/  task=event:cal  [%todo ~ ~ (malt ~[['name' s+'t']])]
+  ;:  weld
+    (expect-eq !>(`priority-arg:core`[%keep ~]) !>((parse-priority:core (obj ~[['cat' s+'todo']]))))
+    (expect-eq !>(`priority-arg:core`[%set 1]) !>((parse-priority:core (obj ~[['priority' (numb:enjs:format 1)]]))))
+    (expect-eq !>(`priority-arg:core`[%set 0]) !>((parse-priority:core (obj ~[['priority' (numb:enjs:format 0)]]))))
+    (expect-eq !>(`priority-arg:core`[%set 9]) !>((parse-priority:core (obj ~[['priority' (numb:enjs:format 9)]]))))
+    (expect !>(=(%bad -:(parse-priority:core (obj ~[['priority' (numb:enjs:format 10)]])))))
+    (expect !>(=(%bad -:(parse-priority:core (obj ~[['priority' n+'-1']])))))
+    (expect !>(=(%bad -:(parse-priority:core (obj ~[['priority' s+'high']])))))
+    ::  set-pri: a task's meta gains or loses the key; an event is left alone
+    (expect-eq !>(3) !>((meta-priority:cal (meta-of:cal (set-pri:core task 3)))))
+    (expect-eq !>(0) !>((meta-priority:cal (meta-of:cal (set-pri:core (set-pri:core task 3) 0)))))
+    (expect-eq !>((ev 'e')) !>((set-pri:core (ev 'e') 3)))
+    ::  what the model does not read is 0: a string, a 12
+    (expect-eq !>(0) !>((meta-priority:cal (malt ~[['priority' s+'high']]))))
+    (expect-eq !>(0) !>((meta-priority:cal (malt ~[['priority' (numb:enjs:format 12)]]))))
+  ==
 --

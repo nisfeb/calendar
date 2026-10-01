@@ -125,4 +125,37 @@
     (expect !>(?=(^ (find "X-KEEP:kept" done))))
     (expect !>(?=(~ (find "STATUS:NEEDS-ACTION" done))))
   ==
+::
+::  priority: PRIORITY read into meta (not kept verbatim as well), and
+::  written back out from meta
+++  test-priority-in-and-out
+  =/  task=event:cal  [%todo `~2026.11.2 ~ (~(gas by *meta:cal) `(list [@t json])`~[['name' s+'t'] ['priority' (numb:enjs:format 2)]])]
+  =/  out=tape  (write-entry:ics [task 't@test' '' 0 ~ ~] ~ ~2026.11.1)
+  =/  bare=event:cal  [%todo `~2026.11.2 ~ (malt ~[['name' s+'t']])]
+  =/  plain=tape  (write-entry:ics [bare 't@test' '' 0 ~ ~] ~ ~2026.11.1)
+  =/  body=@t
+    %-  crip
+    %-  zing
+    %+  turn
+      :~  "BEGIN:VCALENDAR"
+          "VERSION:2.0"
+          "BEGIN:VTODO"
+          "UID:p@test"
+          "SUMMARY:p"
+          "DUE;VALUE=DATE:20261102"
+          "PRIORITY:5"
+          "X-KEEP:k"
+          "END:VTODO"
+          "END:VCALENDAR"
+      ==
+    |=(l=tape (weld l crlf:ics))
+  =/  ves=(list vevent:ics)  (events:ics body)
+  ;:  weld
+    (expect !>(?=(^ (find "PRIORITY:2" out))))
+    (expect !>(?=(~ (find "PRIORITY" plain))))
+    (expect-eq !>(1) !>((lent ves)))
+    (expect-eq !>(5) !>((meta-priority:cal (read-meta:ics (snag 0 ves)))))
+    (expect !>((meta-prop:ics ['PRIORITY' '5'])))
+    (expect !>(!(meta-prop:ics ['X-KEEP' 'k'])))
+  ==
 --

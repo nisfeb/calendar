@@ -27,7 +27,7 @@ def wait(fn, secs=20):
         time.sleep(1.5)
     return False
 DUE = 1792454400000  # 2026-10-20
-MINE = ('gate task', 'imported task', 'dav task', 'zoned task', 'start task', 'weekly task', 'half task', 'undated task')
+MINE = ('gate task', 'imported task', 'dav task', 'zoned task', 'start task', 'weekly task', 'half task', 'undated task', 'gate urgent', 'gate urgent 2', 'gate urgent 4')
 def clean():
     for n, e in todos().items():
         if n in MINE: poke({'action': 'del-event', 'id': e['id'], 'home': e['cal']})
@@ -53,6 +53,22 @@ try:
   check('import: listed, due kept', wait(lambda: todos()['imported task']['due_ms'] == 1792602000000), todos().get('imported task'))
   ex = curl('/apps/calendar/export.ics?cal=default')
   check('export: foreign PRIORITY kept', 'PRIORITY:5' in ex[ex.find('imported-task@test'):ex.find('imported-task@test') + 400])
+  # priority: read from PRIORITY, set and kept and cleared by poke, written back out
+  check('import: PRIORITY read as priority', todos()['imported task'].get('priority') == 5, todos().get('imported task'))
+  poke({'action': 'add-event', 'cat': 'todo', 'meta': {'name': 'gate urgent'}, 'priority': 1})
+  check('poke: priority set on add', wait(lambda: todos().get('gate urgent', {}).get('priority') == 1), todos().get('gate urgent'))
+  uid = todos()['gate urgent']['id']
+  poke({'action': 'edit-event', 'id': uid, 'cat': 'todo', 'meta': {'name': 'gate urgent 2'}})
+  check('edit without priority keeps it', wait(lambda: todos().get('gate urgent 2', {}).get('priority') == 1), todos().get('gate urgent 2'))
+  poke({'action': 'edit-event', 'id': uid, 'cat': 'todo', 'meta': {'name': 'gate urgent 3'}, 'priority': 12})
+  time.sleep(2)
+  check('priority 12 refuses the whole edit', 'gate urgent 2' in todos() and 'gate urgent 3' not in todos())
+  ex = curl('/apps/calendar/export.ics?cal=default')
+  check('export: PRIORITY written from priority', 'PRIORITY:1' in ex[ex.find('UID:' + uid):ex.find('UID:' + uid) + 400], ex[ex.find('UID:' + uid):ex.find('UID:' + uid) + 400])
+  win = json.loads(curl('/apps/calendar/window.json?from=%d&to=%d' % (int(time.time() * 1000) - 86400000 * 400, int(time.time() * 1000) + 86400000 * 400)))['rows']
+  check('window rows: tasks carry priority, events do not', all('priority' in r for r in win if r['cat'] == 'todo') and not any('priority' in r for r in win if r['cat'] != 'todo'), [(r['cat'], 'priority' in r) for r in win][:6])
+  poke({'action': 'edit-event', 'id': uid, 'cat': 'todo', 'meta': {'name': 'gate urgent 4'}, 'priority': 0})
+  check('priority 0 clears', wait(lambda: todos().get('gate urgent 4', {}).get('priority') == 0), todos().get('gate urgent 4'))
   # a client's shapes: a zoned DUE, a start-only task, a recurring one, an in-process one
   body = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//gate//EN\r\n" + \
     "BEGIN:VTODO\r\nUID:zoned-task@test\r\nDTSTAMP:20260901T000000Z\r\nSUMMARY:zoned task\r\nDUE;TZID=America/New_York:20261023T170000\r\nEND:VTODO\r\n" + \

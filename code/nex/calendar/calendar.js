@@ -268,7 +268,8 @@ function showPop(ev, x, y) {
   var sameDay = pserial(s) === pserial(e);
   var text;
   if (ev.cat === 'todo') {
-    text = (ev.due_ms ? 'Due ' + fmtDate(dueParts(ev.due_ms)) : ev.l ? 'Due ' + fmtDate(msToUTC(ev.l)) : 'No due date') + (ev.done ? ' · done' : '');
+    text = (ev.due_ms ? 'Due ' + fmtDate(dueParts(ev.due_ms)) : ev.l ? 'Due ' + fmtDate(msToUTC(ev.l)) : 'No due date') + (ev.done ? ' · done' : '')
+      + (ev.priority ? ' · ' + priBand(ev.priority) + ' priority' : '');
   } else if (isAllDay(ev)) {
     var as = evParts(ev, ev.l);
     var last = evParts(ev, Math.max(ev.l, ev.r - 1));
@@ -376,7 +377,7 @@ function chipEl(ev, cont) {
   var chip = document.createElement('div');
   chip.className = 'chip' + (cont ? ' cont' : '') + (ev.cat === 'todo' && ev.done ? ' todo-done' : '');
   chip.style.background = ev.color || '#4a6a8a';
-  var nm = ev.cat === 'todo' ? (ev.done ? '☑ ' : '☐ ') + ev.name : ev.name;
+  var nm = ev.cat === 'todo' ? (ev.done ? '☑ ' : '☐ ') + (ev.priority && ev.priority <= 4 ? '! ' : '') + ev.name : ev.name;
   chip.textContent = cont ? '· ' + nm
     : ev.all ? nm : fmtTime(parts(ev.l)) + ' ' + nm;
   chip.title = ev.name + (ev.note ? ' — ' + ev.note : '');
@@ -756,7 +757,8 @@ function loadTasks(cb) {
       cb((rows || []).filter(function(r) { return r.cat === 'todo'; }).map(function(r) {
         var m = r.meta || {};
         return { id: r.id, cal: r.cal, name: m.name || '', note: m.note || '', tags: m.tags || [],
-                 color: safeColor(m.color) || calColor(r.cal) || '', due_ms: r.due_ms || 0, done_ms: r.done_ms || 0, done: !!r.done, cat: 'todo' };
+                 color: safeColor(m.color) || calColor(r.cal) || '', due_ms: r.due_ms || 0, done_ms: r.done_ms || 0, done: !!r.done,
+                 priority: r.priority || 0, cat: 'todo' };
       }));
     })
     .catch(function(e) { loadFailed(e); cb(null); });
@@ -770,13 +772,18 @@ function taskRow(t) {
   cb.onclick = function(e) { e.stopPropagation(); poke({ action: 'done-event', id: t.id, home: t.cal, done: cb.checked }); setTimeout(load, 400); };
   var dot = document.createElement('span'); dot.className = 't-dot'; dot.style.background = t.color || '#4a6a8a';
   var nm = document.createElement('span'); nm.className = 't-name'; nm.textContent = t.name; nm.title = t.note || t.name;
+  var pr = null;
+  if (t.priority) {
+    pr = document.createElement('span'); pr.className = 't-pri p' + priBand(t.priority);
+    pr.textContent = priBand(t.priority); pr.title = 'Priority ' + t.priority;
+  }
   var due = document.createElement('span'); due.className = 't-due';
   if (t.due_ms) {
     due.textContent = fmtDate(dueParts(t.due_ms));
     if (!t.done && pserial(dueParts(t.due_ms)) < pserial(parts(Date.now()))) { due.classList.add('late'); due.textContent += ' · overdue'; }
   }
   var tg = document.createElement('span'); tg.className = 't-tags'; tg.textContent = t.tags.map(function(x) { return '#' + x; }).join(' ');
-  row.appendChild(cb); row.appendChild(dot); row.appendChild(nm); row.appendChild(due); row.appendChild(tg);
+  row.appendChild(cb); row.appendChild(dot); if (pr) row.appendChild(pr); row.appendChild(nm); row.appendChild(due); row.appendChild(tg);
   row.onclick = function() {
     if (calReadonly(t.cal)) return;
     getJSON('/event.json?id=' + encodeURIComponent(t.id) + '&cal=' + encodeURIComponent(t.cal || ''))
@@ -785,6 +792,9 @@ function taskRow(t) {
   };
   return pressable(row);
 }
+
+// RFC 5545 PRIORITY bands: 1-4 high, 5 medium, 6-9 low; 0 is none
+function priBand(p) { return !p ? '' : p <= 4 ? 'high' : p === 5 ? 'med' : 'low'; }
 
 // the open tasks by when they are due, in the calendar's zone
 var TASK_GROUPS = ['Overdue', 'Today', 'Tomorrow', 'This week', 'Later', 'Undated'];
@@ -820,7 +830,9 @@ function renderTasks(tasks) {
     sum.textContent = g.name;
     var n = document.createElement('span'); n.className = 'tg-n'; n.textContent = g.rows.length;
     sum.appendChild(n); det.appendChild(sum);
-    g.rows.forEach(function(t) { det.appendChild(taskRow(t)); });
+    // inside a group: highest priority first, none last, then by due and name
+    g.rows.sort(function(a, b) { return (a.priority || 10) - (b.priority || 10) || byDue(a, b); })
+      .forEach(function(t) { det.appendChild(taskRow(t)); });
     open.appendChild(det);
   });
   // done: the last week by default; older ones on request, or deleted
@@ -853,8 +865,9 @@ document.getElementById('task-done-clear').onclick = function() {
 // 2026-10-12); the rest is the name. today is a day serial in the
 // calendar's zone. Nothing parsed = the whole text is the name.
 var WDL = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+var PRI_WORDS = { high: 1, h: 1, med: 5, medium: 5, m: 5, low: 9, l: 9 };
 function parseQuickTask(text, today) {
-  var words = text.trim().split(/\s+/).filter(Boolean), tags = [], due = null;
+  var words = text.trim().split(/\s+/).filter(Boolean), tags = [], due = null, pri = 0;
   var dow = function(s) { return (s + 3) % 7; };   // serial 0 (1970-01-01) was a Thursday
   var wd = function(w) { return w.length < 3 ? -1 : WDL.findIndex(function(n) { return n.indexOf(w) === 0; }); };
   var mon = function(w) { return w.length < 3 ? -1 : MN.findIndex(function(n) { return n.toLowerCase().indexOf(w) === 0; }); };
@@ -867,6 +880,9 @@ function parseQuickTask(text, today) {
   while (words.length > 1) {
     var w = words[words.length - 1].toLowerCase();
     if (w[0] === '#' && w.length > 1) { tags.unshift(w.slice(1)); words.pop(); continue; }
+    if (w[0] === '!' && w.length > 1 && !pri && (/^[1-9]$/.test(w.slice(1)) || PRI_WORDS[w.slice(1)])) {
+      pri = PRI_WORDS[w.slice(1)] || +w.slice(1); words.pop(); continue;
+    }
     if (due !== null) break;
     var d = null, take = 1, v = words.length > 2 ? words[words.length - 2].toLowerCase() : '';
     if (w === 'today' || w === 'tod') d = today;
@@ -879,7 +895,7 @@ function parseQuickTask(text, today) {
     if (d === null) break;
     due = d; words.length -= take;
   }
-  return { name: words.join(' '), due: due, tags: tags };
+  return { name: words.join(' '), due: due, tags: tags, priority: pri };
 }
 window.parseQuickTask = parseQuickTask;
 var taskName = document.getElementById('task-name');
@@ -887,6 +903,7 @@ taskName.addEventListener('input', function() {
   var q = parseQuickTask(taskName.value, pserial(parts(Date.now())));
   var bits = [];
   if (q.due !== null) bits.push('Due ' + fmtDate(unserial(q.due)));
+  if (q.priority) bits.push(priBand(q.priority) + ' priority');
   if (q.tags.length) bits.push(q.tags.map(function(t) { return '#' + t; }).join(' '));
   document.getElementById('task-hint').textContent = bits.join(' · ');
 });
@@ -904,6 +921,7 @@ taskSave.onclick = function() {
   var tags = q.tags.slice();
   if (state.tag && tags.indexOf(state.tag) < 0) tags.push(state.tag);
   if (tags.length) body.meta.tags = tags;
+  if (q.priority) body.priority = q.priority;
   taskSave.disabled = true;
   poke(body, function(ok) {
     taskSave.disabled = false;
@@ -1683,10 +1701,23 @@ fCal.addEventListener('change', function() {
   if (!colorTouched && !(editCtx && editCtx.meta.color)) fColor.value = hex6(calColor(fCal.value));
 });
 
+// the priority select: None, High, Medium, Low, plus the task's own number
+// when it is another one (a client may send any of 1 to 9)
+function setPriSelect(p) {
+  var sel = document.getElementById('f-pri');
+  sel.querySelectorAll('option[data-kept]').forEach(function(o) { o.remove(); });
+  if (p && !sel.querySelector('option[value="' + p + '"]')) {
+    var o = document.createElement('option'); o.value = p; o.dataset.kept = '1';
+    o.textContent = p + ' (' + priBand(p) + ')'; sel.appendChild(o);
+  }
+  sel.value = String(p || 0);
+}
+
 function openModal(opts) {
   opts = opts || {};
   editCtx = null;
   fAlarms = [];
+  setPriSelect(0);
   keptKindOption('');
   document.getElementById('modal-title').textContent = 'New Event';
   document.getElementById('edit-scope').classList.remove('on');
@@ -1761,6 +1792,7 @@ function openEdit(d, target) {
     editCtx.dueDate = du ? ymd(du) : '';
     document.getElementById('f-due').value = editCtx.dueDate;
     document.getElementById('f-done').checked = !!d.done;
+    setPriSelect(d.priority || 0);
     // sane defaults underneath, should the kind be switched to an event
     keptKindOption('');
     kindSel.value = 'once';
@@ -1911,6 +1943,7 @@ fSave.onclick = function() {
     if (editCtx && editCtx.due_ms && duv === editCtx.dueDate) body.due_ms = editCtx.due_ms;
     else if (duv) { var dp = duv.split('-'); body.due_ms = Date.UTC(+dp[0], +dp[1] - 1, +dp[2]); }
     if (document.getElementById('f-done').checked) body.done_ms = (editCtx && editCtx.done_ms) || Date.now();
+    body.priority = +document.getElementById('f-pri').value || 0;
   } else if (cat === 'date') {
     body.month = +document.getElementById('f-bmonth').value;
     body.day = whole('f-bday');

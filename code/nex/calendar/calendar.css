@@ -173,6 +173,10 @@ label.f { display: block; font-size: 11px; color: #888; margin: 10px 0 3px; lett
 .task-row .t-due { font-size: 12px; color: #9aa3b2; white-space: nowrap; }
 .task-row .t-due.late { color: #f87171; }
 .task-row .t-tags { font-size: 11px; color: #9aa3b2; }
+.t-pri { font-size: 11px; padding: 0 6px; border-radius: 8px; flex-shrink: 0; }
+.t-pri.phigh { background: rgba(248,113,113,0.18); color: #f87171; }
+.t-pri.pmed { background: rgba(251,191,36,0.18); color: #fbbf24; }
+.t-pri.plow { background: rgba(148,163,184,0.18); color: #9aa3b2; }
 #task-done-wrap summary { cursor: pointer; color: #9aa3b2; font-size: 13px; padding: 6px 0; }
 .tg summary { cursor: pointer; font-size: 13px; font-weight: 600; padding: 8px 0 4px; color: #cbd5e1; }
 .tg summary .tg-n { font-weight: 400; color: #9aa3b2; margin-left: 6px; }

@@ -962,4 +962,23 @@
   ?~  got  c
   =/  k=cal:cal  (~(got by cals.c) cid.u.got)
   c(cals (~(put by cals.c) cid.u.got (put-entry:cal k e.u.got(alarms l))))
+::  +parse-priority: a poke's "priority" on a task: absent keeps (%keep),
+::  0 clears, 1 to 9 sets, and anything else refuses the poke (%bad)
++$  priority-arg  $%([%keep ~] [%set n=@ud] [%bad why=tape])
+++  parse-priority
+  |=  jon=json
+  ^-  priority-arg
+  =/  j=(unit json)  ?.(?=([%o *] jon) ~ (~(get by p.jon) 'priority'))
+  ?~  j  [%keep ~]
+  =/  n=(unit @ud)  (gn jon 'priority')
+  ?~  n  [%bad "priority is not a whole number"]
+  ?:  (gth u.n 9)  [%bad "priority is 0 to 9"]
+  [%set u.n]
+::  +set-pri: a task with its priority set (0 is none); any other event
+::  as it was
+++  set-pri
+  |=  [e=event:cal n=@ud]
+  ^-  event:cal
+  ?.  ?=(%todo -.e)  e
+  e(meta ?:(=(0 n) (~(del by meta.e) 'priority') (~(put by meta.e) 'priority' (numb:enjs:format n))))
 --

@@ -646,6 +646,8 @@
     =/  tags=(list @t)  (meta-tags:cal m)
     ?~(tags ~ ~[(line "CATEGORIES" (sep-join:rr "," (turn tags |=(t=@t (escape t)))))])
     ?:(=('' (ms 'color')) ~ ~[(line "COLOR" (escape (ms 'color')))])
+    =/  pri=@ud  (meta-priority:cal m)
+    ?:(=(0 pri) ~ ~[(line "PRIORITY" (a-co:co pri))])
     timing
     recur-lines
     alarm-lines
@@ -706,6 +708,8 @@
     %+  turn  (skim extra.ve |=(p=prop =('CATEGORIES' (base-key k.p))))
     |=(p=prop (split-categories v.p))
   =/  color=(unit prop)  (get-prop extra.ve 'COLOR')
+  ::  PRIORITY (RFC 5545): 1 highest to 9 lowest; 0 or unreadable is none
+  =/  pri=@ud  (fall (biff (get-prop extra.ve 'PRIORITY') |=(p=prop (rush v.p dem))) 0)
   %-  ~(gas by *(map @t json))
   ^-  (list [@t json])
   ;:  weld
@@ -719,9 +723,11 @@
     ?~(tags ~ ~[['tags' [%a (turn tags |=(t=@t `json`s+t))]]])
     ^-  (list [@t json])
     ?~(color ~ ~[['color' s+(unescape v.u.color)]])
+    ^-  (list [@t json])
+    ?:(|(=(0 pri) (gth pri 9)) ~ ~[['priority' (numb:enjs:format pri)]])
   ==
 ::  +meta-prop: a prop read into meta, so not kept verbatim as well
-++  meta-prop  |=(p=prop ?=(?(%'CATEGORIES' %'COLOR') (base-key k.p)))
+++  meta-prop  |=(p=prop ?=(?(%'CATEGORIES' %'COLOR' %'PRIORITY') (base-key k.p)))
 ::  +to-entry: a read VEVENT as an entry (uid kept, etag and seq left for
 ::  +put-entry) plus its EXDATEs as naive moments of the series (for the
 ::  caller to map to indices through the kind). ~ when there is no usable

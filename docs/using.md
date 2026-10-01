@@ -55,7 +55,11 @@ and a date: `today`, `tomorrow`, a weekday (`fri` is the coming Friday),
 `in 3 days`, `next week`, `oct 12`, `2026-10-12`; the line under the box
 shows what was read, and the date picker still works when nothing is typed.
 Keys in the view: `j`/`k` or the arrows move along the rows, `x` ticks the
-one in focus, `n` goes to the box.
+one in focus, `n` goes to the box. A task can carry a **priority** (High,
+Medium, Low in the form; `!high`, `!med`, `!low` or `!1` to `!9` in the
+box): a badge on the row, and the order inside each group, highest first.
+It is iCalendar `PRIORITY` (1 highest, 9 lowest), so Thunderbird and
+Tasks.org show the same thing.
 A task with a due date also sits on that day in the month, week and day views,
 with a box that shows whether it is done. The event form has a **Task** kind
 with the same two fields, so a task can carry a note, tags and a color like
@@ -95,6 +99,12 @@ takes `before` alarms) hear of it. `config.json` carries `lead_min`, the
 heads-up sent before every timed event (30 by default), and
 `{"action":"config","lead_min":N}` sets it; `0` turns it off and leaves the
 alarms events carry. Gate: `scripts/edge-matrix.py`.
+
+API: every task object (`events.json`, `event.json`, `window.json` rows
+with `cat: "todo"`) carries `priority`, 0 to 9, always present (0 = none,
+1 highest). `add-event` and `edit-event` on a task take an optional
+`priority`: absent keeps it, 1 to 9 sets it, 0 clears it, anything else
+refuses the poke. It is the task's `PRIORITY` over CalDAV.
 
 API: `add-event` with `cat: "todo"`, `due_ms` and `done_ms` (both optional);
 `done-event {id, done}` ticks or unticks; `events.json` rows carry `due_ms`

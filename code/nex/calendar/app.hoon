@@ -361,8 +361,14 @@
           ?:  ?=(%bad -.als)
             ~&  >>>  "%calendar: refused edit-event: {why.als}"
             $
+          =/  pri=priority-arg:core  (parse-priority jon)
+          ?:  ?=(%bad -.pri)
+            ~&  >>>  "%calendar: refused edit-event: {why.pri}"
+            $
           ::  the shape is replaced but exceptions survive the edit
           =/  merged=event:cal  (carry-skips u.old u.ev)
+          ::  a task's priority: named sets or clears it; absent keeps it
+          =.  merged  (set-pri merged ?:(?=(%set -.pri) n.pri (meta-priority:cal (meta-of:cal u.old))))
           ;<  new=event:cal  bind:m  (apply-until merged (gn jon 'until_ms'))
           =.  c  (put-ev-in c (cal-arg jon) home id new)
           =?  c  ?=(%set -.als)  (set-alarms c (fall (cal-arg jon) home) id l.als)
@@ -405,7 +411,12 @@
         ?:  ?=(%bad -.als)
           ~&  >>>  "%calendar: refused add-event: {why.als}"
           $
-        ;<  ev2=event:cal  bind:m  (apply-until u.ev (gn jon 'until_ms'))
+        =/  pri=priority-arg:core  (parse-priority jon)
+        ?:  ?=(%bad -.pri)
+          ~&  >>>  "%calendar: refused add-event: {why.pri}"
+          $
+        =/  ev1=event:cal  ?:(?=(%set -.pri) (set-pri u.ev n.pri) u.ev)
+        ;<  ev2=event:cal  bind:m  (apply-until ev1 (gn jon 'until_ms'))
         ::  a poke answers nothing but its ack, so a client that needs the
         ::  new event's id names it: an id taken or unusable refuses the add
         =/  want=@t  (gs jon 'id')
@@ -814,18 +825,23 @@
             =/  [cid=@ta u=uid:cal]  (unkey eid.r)
             :-  ~
             %-  pairs:enjs:format
-            :~  ['id' s+u]
-                ['cal' s+cid]
-                ['idx' (numb:enjs:format idx.r)]
-                ['meta' [%o (meta-of:cal u.ev)]]
-                ['cat' s+-.u.ev]
-                ['kind' s+(ev-kind u.ev)]
-                ['all' b+(all-day:cal u.ev)]
-                ['done' b+?:(?=(%todo -.u.ev) ?=(^ done.u.ev) |)]
-                ['l' (numb:enjs:format (da-to-ms l.span.r))]
-                ['r' (numb:enjs:format (da-to-ms r.span.r))]
-                ['alarms' (alarms-json:cal als)]
-            ==
+            %+  weld
+              ^-  (list [@t json])
+              :~  ['id' s+u]
+                  ['cal' s+cid]
+                  ['idx' (numb:enjs:format idx.r)]
+                  ['meta' [%o (meta-of:cal u.ev)]]
+                  ['cat' s+-.u.ev]
+                  ['kind' s+(ev-kind u.ev)]
+                  ['all' b+(all-day:cal u.ev)]
+                  ['done' b+?:(?=(%todo -.u.ev) ?=(^ done.u.ev) |)]
+                  ['l' (numb:enjs:format (da-to-ms l.span.r))]
+                  ['r' (numb:enjs:format (da-to-ms r.span.r))]
+                  ['alarms' (alarms-json:cal als)]
+              ==
+            ^-  (list [@t json])
+            ?.  ?=(%todo -.u.ev)  ~
+            ~[['priority' (numb:enjs:format (meta-priority:cal (meta-of:cal u.ev)))]]
           =/  caps=json
             :-  %a
             %+  murn  ~(tap by stops.ca)
@@ -928,6 +944,7 @@
             :~  ['due_ms' ?~(due.event.e ~ (numb:enjs:format (da-to-ms u.due.event.e)))]
                 ['done_ms' ?~(done.event.e ~ (numb:enjs:format (da-to-ms u.done.event.e)))]
                 ['done' b+?=(^ done.event.e)]
+                ['priority' (numb:enjs:format (meta-priority:cal (meta-of:cal event.e)))]
             ==
           (send-json eyre-id rows)
         ::  /feeds.json: the named external ICS feeds
@@ -3944,4 +3961,6 @@
 ++  parse-event  parse-event:core
 ++  parse-alarms  parse-alarms:core
 ++  set-alarms  set-alarms:core
+++  parse-priority  parse-priority:core
+++  set-pri  set-pri:core
 --

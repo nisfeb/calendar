@@ -68,9 +68,10 @@ for name, d in seed.items():
     b = {'action': 'add-event', 'cal': 'page-two', 'cat': 'todo', 'meta': {'name': name}, 'id': name.replace(' ', '-') + '@page'}
     if d is not None: b['due_ms'] = d * DAY
     poke(b)
+poke({'action': 'add-event', 'cal': 'page-two', 'cat': 'todo', 'meta': {'name': 'page urgent'}, 'id': 'page-urgent@page', 'due_ms': today * DAY, 'priority': 1})
 poke({'action': 'add-event', 'cal': 'page-two', 'cat': 'todo', 'meta': {'name': 'page done old'}, 'id': 'page-done-old@page', 'due_ms': (today - 20) * DAY, 'done_ms': now_ms - 10 * DAY})
 poke({'action': 'add-event', 'cal': 'page-two', 'cat': 'todo', 'meta': {'name': 'page done new'}, 'id': 'page-done-new@page', 'done_ms': now_ms - 3600000})
-check('seeded', wait(lambda: len(tasks()) == 8), len(tasks()))
+check('seeded', wait(lambda: len(tasks()) == 9), len(tasks()))
 check('events.json task rows carry done_ms', abs(((task('page done old') or {}).get('done_ms') or 0) - (now_ms - 10 * DAY)) <= 1, task('page done old'))
 
 with Firefox() as ff:
@@ -79,8 +80,10 @@ with Firefox() as ff:
     check('tasks view shows the seeds', ff.wait("return document.querySelector('#task-open') && document.querySelector('#task-open').textContent.indexOf('page today') >= 0 ? 1 : 0"))
     groups = ff.js("""var out = {}; document.querySelectorAll('#task-open details.tg').forEach(function(d) {
         d.querySelectorAll('.task-row .t-name').forEach(function(n) { if (n.textContent.indexOf('page ') === 0) out[n.textContent] = d.dataset.g; }); }); return out;""")
-    want = {'page overdue': 'Overdue', 'page today': 'Today', 'page tomorrow': 'Tomorrow', 'page week': 'This week', 'page later': 'Later', 'page undated': 'Undated'}
+    want = {'page overdue': 'Overdue', 'page today': 'Today', 'page urgent': 'Today', 'page tomorrow': 'Tomorrow', 'page week': 'This week', 'page later': 'Later', 'page undated': 'Undated'}
     check('each task sits in its group', groups == want, groups)
+    today_rows = ff.js("var d = document.querySelector('#task-open details.tg[data-g=\"Today\"]'); return Array.prototype.map.call(d.querySelectorAll('.task-row'), function(r) { return [r.querySelector('.t-name').textContent, r.querySelector('.t-pri') ? r.querySelector('.t-pri').textContent : '']; }).filter(function(x) { return x[0].indexOf('page ') === 0; })")
+    check('high priority first in its group, with its badge', today_rows == [['page urgent', 'high'], ['page today', '']], today_rows)
     counts = ff.js("return Array.prototype.map.call(document.querySelectorAll('#task-open details.tg'), function(d) { return [d.dataset.g, +d.querySelector('.tg-n').textContent, d.querySelectorAll('.task-row').length]; })")
     check('group headers count their rows', counts and all(c[1] == c[2] and c[1] > 0 for c in counts), counts)
     done_names = ff.js("return Array.prototype.map.call(document.querySelectorAll('#task-done .t-name'), function(n) { return n.textContent; })")
@@ -99,7 +102,10 @@ with Firefox() as ff:
              ('review next week #work #q4', 'review', today + 7, ['work', 'q4']), ('#tag', '#tag', None, [])]
     for text, name, due, tags in cases:
         got = ff.js("return window.parseQuickTask(arguments[0], arguments[1])", text, today)
-        check('quick-add reads "%s"' % text, got == {'name': name, 'due': due, 'tags': tags}, got)
+        check('quick-add reads "%s"' % text, got == {'name': name, 'due': due, 'tags': tags, 'priority': 0}, got)
+    for text, want_p in [('buy milk !high', 1), ('x !3 tomorrow', 3), ('y !low #a', 9), ('z !med', 5), ('w !0', 0), ('v !urgent', 0)]:
+        got = ff.js("return window.parseQuickTask(arguments[0], arguments[1])", text, today)
+        check('quick-add priority in "%s"' % text, got.get('priority') == want_p and (want_p == 0 or '!' not in got['name']), got)
     # a quick-add through the box
     ff.js("""var i = document.getElementById('task-name'); i.value = 'page quick tomorrow #gate'; i.dispatchEvent(new Event('input'));
         document.getElementById('task-cal').value = 'page-two';""")
@@ -128,6 +134,18 @@ with Firefox() as ff:
     ff.js("document.querySelector('#f-alarms .alarm-row .nav-btn').click(); document.querySelector('#f-alarms .alarm-row .nav-btn').click(); document.getElementById('f-save').click()")
     check('removing them all saves []', wait(lambda: curl('/event.json?id=page-today%40page&cal=page-two').get('alarms') == []), curl('/event.json?id=page-today%40page&cal=page-two').get('alarms'))
     ff.wait("return !document.getElementById('modal-back').classList.contains('open') ? 1 : 0")
+    time.sleep(1.5)
+    # priority in the form: the select shows the task's, a change saves, None clears
+    check('the urgent task opens with High selected', open_row('page urgent') and ff.js("return document.getElementById('f-pri').value") == '1')
+    ff.js("document.getElementById('f-pri').value = '9'; document.getElementById('f-save').click()")
+    check('Low saves as 9', wait(lambda: (task('page urgent') or {}).get('priority') == 9), task('page urgent'))
+    ff.wait("return !document.getElementById('modal-back').classList.contains('open') ? 1 : 0")
+    time.sleep(1.5)
+    check('a 9 opens as Low', open_row('page urgent') and ff.js("return document.getElementById('f-pri').value") == '9')
+    ff.js("document.getElementById('f-pri').value = '0'; document.getElementById('f-save').click()")
+    check('None clears it', wait(lambda: (task('page urgent') or {}).get('priority') == 0), task('page urgent'))
+    ff.wait("return !document.getElementById('modal-back').classList.contains('open') ? 1 : 0")
+    time.sleep(1.5)
     # keys: focus the overdue row, j moves to the next, x ticks it
     ff.js("""var n = Array.prototype.find.call(document.querySelectorAll('#task-open .t-name'), function(x) { return x.textContent === 'page overdue'; }); n.parentNode.focus();
         document.dispatchEvent(new KeyboardEvent('keydown', {key: 'j', bubbles: true}));""")
