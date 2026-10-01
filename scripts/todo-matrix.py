@@ -63,6 +63,8 @@ try:
   poke({'action': 'edit-event', 'id': uid, 'cat': 'todo', 'meta': {'name': 'gate urgent 3'}, 'priority': 12})
   time.sleep(2)
   check('priority 12 refuses the whole edit', 'gate urgent 2' in todos() and 'gate urgent 3' not in todos())
+  rf = [r for r in json.loads(curl('/apps/calendar/outcomes.json')).get('refusals', []) if r.get('id') == uid]
+  check('the refusal is recorded with its reason', bool(rf) and rf[-1]['why'] == 'priority is 0 to 9', rf[-1:])
   ex = curl('/apps/calendar/export.ics?cal=default')
   check('export: PRIORITY written from priority', 'PRIORITY:1' in ex[ex.find('UID:' + uid):ex.find('UID:' + uid) + 400], ex[ex.find('UID:' + uid):ex.find('UID:' + uid) + 400])
   win = json.loads(curl('/apps/calendar/window.json?from=%d&to=%d' % (int(time.time() * 1000) - 86400000 * 400, int(time.time() * 1000) + 86400000 * 400)))['rows']

@@ -302,6 +302,12 @@ poke(dict(SHAPE, action='edit-event', id='edge-alarms@test', meta={'name': 'edge
 poke(dict(SHAPE, action='edit-event', id='edge-alarms@test', meta={'name': 'edge alarms 5'}, alarms=[{'kind': 'at', 'desc': 'no at_ms'}]))
 time.sleep(3)
 check('a malformed alarm refuses the whole edit', alarm_ev()['meta']['name'] == 'edge alarms 2' and alarm_ev().get('alarms') == AL, alarm_ev())
+# a refusal's reason has no way back through the poke, so it is recorded (docs/logging.md)
+out = curl('/outcomes.json')
+out = out if isinstance(out, dict) else {}
+mine = [r for r in out.get('refusals', []) if r.get('id') == 'edge-alarms@test']
+check('the refusals are recorded with their reasons', len(mine) >= 3 and all(r['action'] == 'edit-event' for r in mine[-3:]) and 'unknown alarm kind' in mine[-3]['why'] and 'whole number' in mine[-2]['why'] and 'at_ms' in mine[-1]['why'], mine[-3:])
+check('outcomes.json keeps at most twenty refusals, and a faults map', len(out.get('refusals', [])) <= 20 and isinstance(out.get('faults'), dict), out)
 ics = curl('/export.ics?cal=edge-two')
 ics = ics if isinstance(ics, str) else ''
 block = ics[ics.rfind('BEGIN:VEVENT', 0, max(0, ics.find('UID:edge-alarms@test'))):]

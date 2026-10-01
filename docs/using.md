@@ -106,6 +106,17 @@ with `cat: "todo"`) carries `priority`, 0 to 9, always present (0 = none,
 `priority`: absent keeps it, 1 to 9 sets it, 0 clears it, anything else
 refuses the poke. It is the task's `PRIORITY` over CalDAV.
 
+API: `outcomes.json` is the ship's record of what went wrong
+(`docs/logging.md`). `refusals` holds the last twenty refused pokes,
+newest last: `{at_ms, action, id, from, why}`, with `why` in words (an
+unknown alarm kind, a priority out of range, an id taken) and `from` the
+ship when it was a peer's share edit. A poke is acknowledged before it is
+read, so this is where a client reads why a change did not take. `faults`
+is a map of the conditions that stand now, by key (`google-auth`,
+`google-push/<calendar>`, `caldav-list/<calendar>`, `road/behn`, ...):
+`{since_ms, last_ms, count, level, said, what, remedy}`; a key is removed
+when its condition clears. Settings shows both under Faults and refusals.
+
 API: `add-event` with `cat: "todo"`, `due_ms` and `done_ms` (both optional);
 `done-event {id, done}` ticks or unticks; `events.json` rows carry `due_ms`
 and `done`, `window.json` rows `done`. Gate: `scripts/todo-matrix.py`.

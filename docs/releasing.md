@@ -256,6 +256,10 @@ and each would have been caught by one of these (lattice
    `rise.json`, a poke acknowledged, the routes compared.
 5. `scripts/weir-check.sh` twice, with `/sys/behn/` and with
    `/sys/bowl.sig` refused: the calendar parks, it never spins.
+   Then `scripts/quiet-check.sh` (`docs/logging.md`): the console
+   captured while the calendar reloads, upgrades, loses the timer road
+   and gets it back. A healthy calendar prints nothing; the refused road
+   prints one line and is recorded.
 6. A big input, if the release touches a parser or a sync path: an import
    of thousands of objects, and of one series with thousands of
    overrides, must answer in seconds, with the ship answering throughout.

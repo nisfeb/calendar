@@ -981,4 +981,78 @@
   ^-  event:cal
   ?.  ?=(%todo -.e)  e
   e(meta ?:(=(0 n) (~(del by meta.e) 'priority') (~(put by meta.e) 'priority' (numb:enjs:format n))))
+::
+::  outcomes (docs/logging.md): the app's record of what a poke was
+::  refused for, a ring of the last few, and of the faults that stand, a
+::  map by condition. Both bounded: a record is state, and each write an
+::  event.
+++  refusals-max  20
+++  faults-max  50
+::  +refusal-put: outcomes with one more refusal, the oldest dropped
+++  refusal-put
+  |=  [out=json now=@da action=@t id=@t from=@t why=@t]
+  ^-  json
+  =/  o=(map @t json)  ?:(?=([%o *] out) p.out ~)
+  =/  old=(list json)  =/(r (~(get by o) 'refusals') ?:(?=([~ %a *] r) p.u.r ~))
+  =/  row=json
+    %-  pairs:enjs:format
+    :~  ['at_ms' (numb:enjs:format (da-to-ms now))]
+        ['action' s+action]
+        ['id' s+id]
+        ['from' s+from]
+        ['why' s+why]
+    ==
+  =/  all=(list json)  (snoc old row)
+  [%o (~(put by o) 'refusals' [%a (slag (sub (max refusals-max (lent all)) refusals-max) all)])]
+::  +faults-of: the faults map of an outcomes record
+++  faults-of
+  |=  out=json
+  ^-  (map @t json)
+  =/  f=(unit json)  ?.(?=([%o *] out) ~ (~(get by p.out) 'faults'))
+  ?:(?=([~ %o *] f) p.u.f ~)
+::  +fault-said: whether the console has heard of a fault row
+++  fault-said
+  |=  row=json
+  ^-  ?
+  ?.  ?=([%o *] row)  |
+  ?=([~ %b %.y] (~(get by p.row) 'said'))
+::  +fault-put: outcomes with a fault standing under key. tell is & when
+::  the console should hear of it now: a person can act (say) and it has
+::  not been said. A standing fault keeps its since_ms and counts up; a
+::  full map drops its stalest entry for a new one.
+++  fault-put
+  |=  [out=json now=@da key=@t level=@t say=? what=@t remedy=@t]
+  ^-  [tell=? out=json]
+  =/  o=(map @t json)  ?:(?=([%o *] out) p.out ~)
+  =/  fs=(map @t json)  (faults-of out)
+  =/  was=(unit json)  (~(get by fs) key)
+  =/  now-ms=json  (numb:enjs:format (da-to-ms now))
+  =/  said=?  ?~(was | (fault-said u.was))
+  =/  row=json
+    %-  pairs:enjs:format
+    :~  ['since_ms' ?~(was now-ms (numb:enjs:format (fall (gn u.was 'since_ms') 0)))]
+        ['last_ms' now-ms]
+        ['count' (numb:enjs:format +(?~(was 0 (fall (gn u.was 'count') 0))))]
+        ['level' s+level]
+        ['said' b+|(said say)]
+        ['what' s+what]
+        ['remedy' s+remedy]
+    ==
+  =?  fs  &(?=(~ was) (gte ~(wyt by fs) faults-max))
+    =/  l=(list [k=@t v=json])
+      %+  sort  ~(tap by fs)
+      |=  [a=[k=@t v=json] b=[k=@t v=json]]
+      (lth (fall (gn v.a 'last_ms') 0) (fall (gn v.b 'last_ms') 0))
+    ?~(l fs (~(del by fs) k.i.l))
+  [&(say !said) [%o (~(put by o) 'faults' [%o (~(put by fs) key row)])]]
+::  +fault-clear: outcomes without the fault under key. had is & when it
+::  was standing, said when the console had heard of it
+++  fault-clear
+  |=  [out=json key=@t]
+  ^-  [said=? had=? out=json]
+  =/  o=(map @t json)  ?:(?=([%o *] out) p.out ~)
+  =/  fs=(map @t json)  (faults-of out)
+  =/  was=(unit json)  (~(get by fs) key)
+  ?~  was  [| | out]
+  [(fault-said u.was) & [%o (~(put by o) 'faults' [%o (~(del by fs) key)])]]
 --

@@ -291,6 +291,13 @@
           <div class="dav-hint">Browser notifications from this ship: a notice before each timed event (30 minutes by default) and one at each alarm an event carries. One subscription serves every app on the ship, so this browser will also hear furum's, and a browser already on in furum already gets these; on in both, each arrives twice. If the calendar's push road was refused under <a href="/apps/grubbery/permits">Permits</a>, nothing is sent, whatever this button says.</div>
           <div class="feeds-foot"><span id="push-status"></span><button id="push-toggle" class="nav-btn">Turn notifications on</button></div>
         </details>
+        <details class="sect" id="faults-sect">
+          <summary>Faults and refusals</summary>
+          <div class="dav-hint">What is not working now, with what clears it, and the last changes the ship refused, with why. The ship's console says a fault once, when it begins; this is where it stays readable.</div>
+          <div id="faults-list"></div>
+          <label class="f">Last refused changes</label>
+          <div id="refusals-list"></div>
+        </details>
         <details class="sect" id="conflicts-sect">
           <summary>Conflicts</summary>
           <div class="dav-hint">When an event changed here and on Google, a followed calendar or a sharing ship between two syncs, or a push was refused, the other side's copy won. Your copy is kept here to download.</div>

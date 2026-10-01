@@ -58,6 +58,9 @@
           ::  rise.json: per fiber, its crashes in a row and when it tries
           ::  again (+rise-later)
           [%fall %& [/ %'rise.json'] [[/ %json] [%o ~]]]
+          ::  outcomes.json: what a poke was refused for, and the faults
+          ::  that stand (docs/logging.md)
+          [%fall %& [/ %'outcomes.json'] [[/ %json] [%o ~]]]
           [%fall %& [/ %'gcal-feeds.json'] [[/ %json] [%o ~]]]
           :*  %fall  %&  [/ %'reminders.json']
               :-  [/ %json]
@@ -115,7 +118,9 @@
       ?+    rail  stay:m
           ::
           [~ %'main.sig']
-        ;<  ~  bind:m  (rise-later prod "%calendar main: failed")
+        ;<  ~  bind:m  (rise-later prod "calendar: the main fiber")
+        ::  a refused timer or clock road is recorded here (the kernel says it)
+        ;<  ~  bind:m  check-roads
         ;<  ~  bind:m  (bind-http-self:io [~ /apps/calendar])
         ::  any ship may poke our share inbox: the road rides on /public
         ;<  ~  bind:m  lay-inbox-road
@@ -124,7 +129,7 @@
           ::  /calendar.calendar: poke CRUD on events
           ::
           [~ %'calendar.calendar']
-        ;<  ~  bind:m  (rise-later prod "%calendar events: failed")
+        ;<  ~  bind:m  (rise-later prod "calendar: the events fiber")
         ::  events of a retired preset kind become the rrules they phrase,
         ::  once: after the first rise this changes nothing
         ;<  raw0=*  bind:m  (get-state-as:io ,*)
@@ -168,7 +173,7 @@
             |=  [u=@t why=@t ics=@t]
             =/  m  (fiber:fiber:nexus ,~)
             ^-  form:m
-            ~&  >>>  [%calendar-share-poke-refused u.src cid u why]
+            ;<  ~  bind:m  (refuse './' act u (scot %p u.src) (trip why))
             ?:  =('' mode)  (pure:m ~)
             ::  queued for the sync fiber to send (+send-refusals): waiting
             ::  on the peer here would hold every poke to the calendar, and
@@ -265,11 +270,11 @@
           ?.  ?=(?(%timed %allday) -.u.old)  $
           =/  ev=(unit event:cal)  (parse-event jon zone.c)
           ?~  ev
-            ~&  >>>  "%calendar: bad split-event"
+            ;<  ~  bind:m  (refuse './' act (gs jon 'id') '' "the event could not be read: its name, kind, start or rule")
             $
           =/  als=alarms-arg:core  (parse-alarms jon)
           ?:  ?=(%bad -.als)
-            ~&  >>>  "%calendar: refused split-event: {why.als}"
+            ;<  ~  bind:m  (refuse './' act (gs jon 'id') '' why.als)
             $
           ::  the new series takes the alarms the poke names, else the old one's
           =/  old-als=(list alarm:cal)  (fall (bind (locate c home id) |=([* e=entry:cal] alarms.e)) ~)
@@ -353,17 +358,17 @@
           ?~  old  $
           =/  ev=(unit event:cal)  (parse-event jon zone.c)
           ?~  ev
-            ~&  >>>  "%calendar: bad edit-event"
+            ;<  ~  bind:m  (refuse './' act (gs jon 'id') '' "the event could not be read: its name, kind, start or rule")
             $
           ::  alarms: absent keeps the entry's, a list replaces them, and
           ::  one that cannot be read refuses the whole edit
           =/  als=alarms-arg:core  (parse-alarms jon)
           ?:  ?=(%bad -.als)
-            ~&  >>>  "%calendar: refused edit-event: {why.als}"
+            ;<  ~  bind:m  (refuse './' act (gs jon 'id') '' why.als)
             $
           =/  pri=priority-arg:core  (parse-priority jon)
           ?:  ?=(%bad -.pri)
-            ~&  >>>  "%calendar: refused edit-event: {why.pri}"
+            ;<  ~  bind:m  (refuse './' act (gs jon 'id') '' why.pri)
             $
           ::  the shape is replaced but exceptions survive the edit
           =/  merged=event:cal  (carry-skips u.old u.ev)
@@ -405,15 +410,15 @@
         ?.  =('add-event' act)  $
         =/  ev=(unit event:cal)  (parse-event jon zone.c)
         ?~  ev
-          ~&  >>>  "%calendar: bad add-event"
+          ;<  ~  bind:m  (refuse './' act (gs jon 'id') '' "the event could not be read: its name, kind, start or rule")
           $
         =/  als=alarms-arg:core  (parse-alarms jon)
         ?:  ?=(%bad -.als)
-          ~&  >>>  "%calendar: refused add-event: {why.als}"
+          ;<  ~  bind:m  (refuse './' act (gs jon 'id') '' why.als)
           $
         =/  pri=priority-arg:core  (parse-priority jon)
         ?:  ?=(%bad -.pri)
-          ~&  >>>  "%calendar: refused add-event: {why.pri}"
+          ;<  ~  bind:m  (refuse './' act (gs jon 'id') '' why.pri)
           $
         =/  ev1=event:cal  ?:(?=(%set -.pri) (set-pri u.ev n.pri) u.ev)
         ;<  ev2=event:cal  bind:m  (apply-until ev1 (gn jon 'until_ms'))
@@ -421,7 +426,7 @@
         ::  new event's id names it: an id taken or unusable refuses the add
         =/  want=@t  (gs jon 'id')
         ?:  &(!=('' want) !(new-id-ok c want))
-          ~&  >>>  "%calendar: add-event id taken or unusable"
+          ;<  ~  bind:m  (refuse './' act (gs jon 'id') '' "the id is taken, or holds a slash, a hash or a control character")
           $
         =/  id=@ta
           ?.  =('' want)  (crip (trip want))
@@ -434,7 +439,7 @@
           ::  /order.calendar-cache: reinflate on calendar news
           ::
           [~ %'order.calendar-cache']
-        ;<  ~  bind:m  (rise-later prod "%calendar cache: failed")
+        ;<  ~  bind:m  (rise-later prod "calendar: the cache fiber")
         =/  road  (cord-to-road:tarball './calendar.calendar')
         ;<  *  bind:m  (keep:io /cal road ~)
         ::  news that leaves the events and the horizon as they were (a
@@ -470,7 +475,7 @@
           ::  CalDAV calendars, sharing both ways)
           ::
           [~ %'google.sig']
-        ;<  ~  bind:m  (rise-later prod "%calendar google: failed")
+        ;<  ~  bind:m  (rise-later prod "calendar: the sync fiber")
         ::  a pass on every tick and prod (pull then push); on calendar
         ::  news, push only: a pass's own writes wake it, and a push-only
         ::  pass with nothing past the watermark does nothing. The tick is
@@ -505,7 +510,7 @@
           ::  the payload is data. An offer waits until the owner accepts.
           ::
           [~ %'shares.sig']
-        ;<  ~  bind:m  (rise-later prod "%calendar shares inbox: failed")
+        ;<  ~  bind:m  (rise-later prod "calendar: the shares fiber")
         |-
         ;<  [=from:fiber:nexus =sage:tarball]  bind:m  take-poke-from:io
         =/  src=(unit @p)  (get-poke-src:io from)
@@ -540,7 +545,6 @@
             =/  row=json  ?.(?=([%o *] row.u.live) row.u.live [%o (~(put by p.row.u.live) 'mode' s+mode)])
             ;<  ~  bind:m  (write-json-grub './' 'ship-remotes.json' [%o (~(put by rm) id.u.live row)])
             ;<  ~  bind:m  (set-remote './' (crip (trip id.u.live)) `(crip "{(trip key)}#{(trip mode)}"))
-            ~&  >  [%calendar-share-mode key mode]
             $
           ::  ponytail: a full inbox drops new offers; 200 is far past
           ::  anything a person gets
@@ -556,7 +560,6 @@
                 ['at_ms' (numb:enjs:format (da-to-ms now))]
             ==
           ;<  ~  bind:m  (write-json-grub './' 'share-offers.json' [%o (~(put by cur) key row)])
-          ~&  >  [%calendar-share-offered key]
           $
         ::  refused: the host would not take an edit of ours. Our copy is kept
         ::  as a conflict (the next pull brings the host's back), and a
@@ -600,7 +603,6 @@
           ?~  k  $
           =.  props.u.k  props.u.k(kind %local, remote ~)
           ;<  ~  bind:m  (dav-write './' c(cals (~(put by cals.c) id.i.hit u.k)))
-          ~&  >  [%calendar-share-revoked key]
           $
         $
           ::
@@ -609,7 +611,7 @@
           ::  watermark: everything due in (fired, now] goes out once.
           ::
           [~ %'reminders.json']
-        ;<  ~  bind:m  (rise-later prod "%calendar reminders: failed")
+        ;<  ~  bind:m  (rise-later prod "calendar: the reminders fiber")
         |-
         ;<  now=@da  bind:m  get-time:io
         =/  tick=@da  (add (sub now (mod now ~m5)) ~m5)
@@ -947,6 +949,16 @@
                 ['priority' (numb:enjs:format (meta-priority:cal (meta-of:cal event.e)))]
             ==
           (send-json eyre-id rows)
+        ::  /outcomes.json: the last refused pokes with their reasons, and
+        ::  the faults that stand with what clears them (docs/logging.md)
+        ?:  ?=([%'outcomes.json' ~] suffix)
+          ;<  out=json  bind:m  (read-json-grub '../' 'outcomes.json')
+          =/  o=(map @t json)  ?:(?=([%o *] out) p.out ~)
+          %+  send-json  eyre-id
+          %-  pairs:enjs:format
+          :~  ['refusals' (fall (~(get by o) 'refusals') [%a ~])]
+              ['faults' (fall (~(get by o) 'faults') [%o ~])]
+          ==
         ::  /feeds.json: the named external ICS feeds
         ?:  ?=([%'feeds.json' ~] suffix)
           ;<  feeds=json  bind:m  (read-json-grub '../' 'gcal-feeds.json')
@@ -1004,7 +1016,6 @@
             (do-sync feeds (sub now (mul 90 ~d1)) (add now (mul 2 ~d365)) zone.c0)
           ;<  ~  bind:m  (edit-cals '../' (apply-feeds res))
           =/  failed=(list @t)  (murn feeds |=([nm=@t *] ?:((~(has in ok.res) nm) ~ `nm)))
-          ~&  >  "%calendar sync: {(scow %ud ~(wyt by got.res))} synced, {(scow %ud skipped.res)} recurring skipped, {(scow %ud (lent failed))} feeds failed"
           %+  send-json  eyre-id
           %-  pairs:enjs:format
           :~  ['synced' (numb:enjs:format ~(wyt by got.res))]
@@ -1130,7 +1141,8 @@
   =/  crash=?  !=(note u.prod)
   ;<  clock=(unit @da)  bind:m  soft-now
   ?~  clock
-    %-  ?.(crash same (slog [leaf+"{msg}: no clock (weir?); waiting for a poke" u.prod]))
+    ~?  >>  crash  "{msg} crashed, and the clock road /sys/bowl.sig is refused; grant it under Permits, then reload"
+    %-  ?.(crash same (slog u.prod))
     (rise-park note)
   =/  now=@da  u.clock
   ;<  log=json  bind:m  (read-json-grub './' 'rise.json')
@@ -1148,9 +1160,10 @@
   ;<  ~  bind:m
     =/  m  (fiber:fiber:nexus ,~)
     ?.  crash  (pure:m ~)
-    %-  %-  slog
-        ?:  (lte n 2)  [leaf+msg u.prod]
-        ~[leaf+"{msg} again ({(a-co:co n)} times running); next try in {(a-co:co (div (sub until now) ~m1))} min"]
+    ::  the console hears of the first crash of a streak, trace and all;
+    ::  the rest are counted in rise.json (docs/logging.md)
+    ~?  >>  =(1 n)  "{msg} crashed; it tries again by itself in {(a-co:co (div (sub until now) ~m1))} min (count and times in rise.json)"
+    %-  ?.(=(1 n) same (slog u.prod))
     ;<  *  bind:m
       %^  over-as-soft:io  (grub-road './' 'rise.json')
         :-  [/ %json]
@@ -1165,7 +1178,6 @@
     (pure:m ~)
   ;<  set=?  bind:m
     (soft-behn /rise/set [[/ %timer-set] `[wire @da]`[/rise until]])
-  %-  ?:(|(set !crash) same (slog leaf+"{msg}: no timer (weir?); waiting for a poke" ~))
   (rise-park note)
 ::  +take-kick: wait for the null input that starts a fiber; anything
 ::  real before it is held for the steps that follow
@@ -2092,6 +2104,81 @@
   ;<  rem=json  bind:m  (read-json-grub './' 'reminders.json')
   =/  cur=(map @t json)  ?:(?=([%o *] rem) p.rem ~)
   (write-json-grub './' 'reminders.json' [%o (~(put by cur) 'lead_min' (numb:enjs:format (min 10.080 n)))])
+::  outcomes.json (docs/logging.md): the app's own record of what a poke
+::  was refused for and of the faults that stand. A write that is refused
+::  is let go: the record must not be able to take a fiber down.
+++  write-outcomes
+  |=  [pre=@t out=json]
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  ;<  *  bind:m  (over-as-soft:io (grub-road pre 'outcomes.json') [[/ %json] out] [/ %json])
+  (pure:m ~)
+::  +refuse: a poke's refusal, with its reason, into the ring. A poke is
+::  acknowledged before it is read, so the reason has no other way back.
+::  Nothing waits between the read and the write.
+++  refuse
+  |=  [pre=@t action=@t id=@t from=@t why=tape]
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  ;<  clock=(unit @da)  bind:m  soft-now
+  ;<  out=json  bind:m  (read-json-grub pre 'outcomes.json')
+  (write-outcomes pre (refusal-put:core out (fall clock *@da) action id from (crip why)))
+::  +acts: a status a person can act on: the remote answered and refused.
+::  None (0) or a 5xx is the remote's trouble, and a 429 is a rate limit
+::  that passes by itself: recorded and not said.
+++  acts  |=(status=@ud &((gte status 400) (lth status 500) !=(429 status)))
+::  +fault: a condition that stands is recorded under its key. The console
+::  hears of it once, when it begins or first becomes a person's to act
+::  on (say), with what to do; never per pass.
+++  fault
+  |=  [pre=@t key=@t level=?(%error %warning) say=? what=tape remedy=tape]
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  ;<  clock=(unit @da)  bind:m  soft-now
+  ;<  out=json  bind:m  (read-json-grub pre 'outcomes.json')
+  =/  [tell=? nxt=json]  (fault-put:core out (fall clock *@da) key level say (crip what) (crip remedy))
+  ;<  ~  bind:m  (write-outcomes pre nxt)
+  ?.  tell  (pure:m ~)
+  =/  line=tape  "calendar: {what}; {remedy} ({(trip key)} in outcomes.json)"
+  ?:  ?=(%error level)
+    ~&  >>>  line
+    (pure:m ~)
+  ~&  >>  line
+  (pure:m ~)
+::  +unfault: the condition under key has cleared. One notice, if the
+::  console had heard of the fault.
+++  unfault
+  |=  [pre=@t key=@t]
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  ;<  out=json  bind:m  (read-json-grub pre 'outcomes.json')
+  =/  [said=? had=? nxt=json]  (fault-clear:core out key)
+  ?.  had  (pure:m ~)
+  ;<  ~  bind:m  (write-outcomes pre nxt)
+  ?.  said  (pure:m ~)
+  ~&  >  "calendar: {(trip key)} cleared"
+  (pure:m ~)
+::  +check-roads: the timer and the clock, asked softly from the main
+::  fiber, which needs neither and so is still here to say what stopped.
+::  Recorded, not printed: a fiber that waits on the refused road is
+::  parked by the kernel, and the kernel's one line for the app is the
+::  console's. The record adds what stopped, where Settings shows it.
+++  check-roads
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  ;<  timer=?  bind:m  (soft-behn /rise/rest [[/ %timer-rest] `wire`/rise])
+  ;<  ~  bind:m
+    ?:  timer  (unfault './' 'road/behn')
+    %:  fault  './'  'road/behn'  %error  |
+      "the timer road /sys/behn/ is refused, so reminders and syncing are stopped"
+      "grant it under Permits, then reload the calendar"
+    ==
+  ;<  clock=(unit @da)  bind:m  soft-now
+  ?^  clock  (unfault './' 'road/bowl')
+  %:  fault  './'  'road/bowl'  %error  |
+    "the clock road /sys/bowl.sig is refused, so nothing that needs the time runs"
+    "grant it under Permits, then reload the calendar"
+  ==
 ++  google-config  |=(pre=@t (read-json-grub pre 'google.json'))
 ++  google-auth    |=(pre=@t (read-json-grub pre 'google-auth.json'))
 ++  google-sync    |=(pre=@t (read-json-grub pre 'google-sync.json'))
@@ -2183,7 +2270,11 @@
   =/  tok=json  (fall (de:json:html body) *json)
   =/  access=@t  (gs tok 'access_token')
   ?:  |(!=(200 status) =('' access))
-    ~&  >>>  [%calendar-google-refresh-failed status]
+    ;<  ~  bind:m
+      %:  fault  pre  'google-auth'  %error  |((acts status) =(200 status))
+        "Google gave no new sign-in token (status {(a-co:co status)}), so Google calendars are not syncing"
+        "reconnect Google under Settings"
+      ==
     (pure:m ~)
   =/  ttl=@ud  (fall (gn tok 'expires_in') 3.600)
   ::  onto a fresh read, and only for the account we refreshed: a
@@ -2196,6 +2287,7 @@
     :~  ['access_token' s+access]
         ['expires_ms' (numb:enjs:format (add (da-to-ms now) (mul 1.000 ttl)))]
     ==
+  ;<  ~  bind:m  (unfault pre 'google-auth')
   (pure:m `access)
 ::  +google-api: a call against api_base with the bearer token. status
 ::  401 when not connected.
@@ -2424,7 +2516,6 @@
         ['local' s+ics]
         ['remote_updated' s+remote-updated]
     ==
-  ~&  >>  [%calendar-google-conflict uid why]
   ::  one row per calendar and uid, the newest 500: a host or remote that
   ::  makes up refusals cannot grow the log without end
   =/  rest=(list json)  (skip all same)
@@ -2572,10 +2663,13 @@
     ==
   ;<  [status=@ud res=json]  bind:m  (google-api pre %'GET' q ~)
   ?:  &(=(410 status) !retried)
-    ~&  >  [%calendar-google-resync id]
     $(full &, tok '', page '', retried &)
   ?.  =(200 status)
-    ~&  >>>  [%calendar-google-pull-failed id status]
+    ;<  ~  bind:m
+      %:  fault  pre  (cat 3 'google-pull/' id)  %error  (acts status)
+        "Google would not list calendar {(trip id)} (status {(a-co:co status)})"
+        "reconnect Google under Settings, or unlink the calendar"
+      ==
     (pure:m row)
   ::  from the read to the write nothing waits (+edit-cals); the clock is
   ::  read first and the conflicts are logged after
@@ -2696,9 +2790,15 @@
   ::  there is not last, so it deletes nothing
   ?.  last
     ?:  (gte pages 500)
-      ~&  >>>  [%calendar-google-pull-too-many-pages id]
+      ;<  ~  bind:m
+        %:  fault  pre  (cat 3 'google-pages/' id)  %warning  &
+          "the Google listing of calendar {(trip id)} was cut at 500 pages, so nothing was deleted"
+          "make the calendar smaller on Google, or unlink it"
+        ==
       (pure:m row2)
     $(page next-page, row row2, pages +(pages))
+  ;<  ~  bind:m  (unfault pre (cat 3 'google-pull/' id))
+  ;<  ~  bind:m  (unfault pre (cat 3 'google-pages/' id))
   (pure:m row2)
 ++  google-stop  google-stop:core
 ::  +google-push: the calendar's log past the watermark, out. A parent
@@ -2734,7 +2834,11 @@
       ;<  [status=@ud res=json]  bind:m
         (google-api pre %'DELETE' "{base}/{(enc-seg:dav (trip known))}" ~)
       ?:  (google-stop status res)
-        ~&  >>>  [%calendar-google-push-stopped u status]
+        ;<  ~  bind:m
+          %:  fault  pre  (cat 3 'google-push/' id)  %error  (acts status)
+            "Google stopped taking changes for calendar {(trip id)} (status {(a-co:co status)})"
+            "check the Google sign-in and quota under Settings; the changes stay queued"
+          ==
         $(changes ~, stopped &)
       ::  already gone (404, 410) is done; a refusal is logged, not retried
       ;<  ~  bind:m
@@ -2765,7 +2869,11 @@
       ?.  &(=(404 status) !=('' have))  (pure:(fiber:fiber:nexus ,[@ud json]) [status res])
       (google-api pre %'POST' base `body)
     ?:  (google-stop status res)
-      ~&  >>>  [%calendar-google-push-stopped u status]
+      ;<  ~  bind:m
+        %:  fault  pre  (cat 3 'google-push/' id)  %error  (acts status)
+          "Google stopped taking changes for calendar {(trip id)} (status {(a-co:co status)})"
+          "check the Google sign-in and quota under Settings; the changes stay queued"
+        ==
       $(changes ~, stopped &)
     ?.  =(200 status)
       ;<  ~  bind:m
@@ -2803,6 +2911,7 @@
   ;<  ~  bind:m
     ?~  results  (pure:(fiber:fiber:nexus ,~) ~)
     (dav-write pre c(cals (~(put by cals.c) id kk)))
+  ;<  ~  bind:m  ?:(stopped (pure:(fiber:fiber:nexus ,~) ~) (unfault pre (cat 3 'google-push/' id)))
   =/  mark=@ud  ?:(stopped since seq-before)
   %-  pure:m
   %+  row-put  row
@@ -2891,7 +3000,7 @@
 ::  No answer at all is a failure, not a reason to ask again: a late
 ::  answer would be taken for the next request's.
 ++  caldav-changes
-  |=  row=json
+  |=  [pre=@t id=@ta row=json]
   =/  m  (fiber:fiber:nexus ,(unit [changes=(list [href=tape etag=@t gone=?]) token=@t]))
   ^-  form:m
   =/  url=@t  (gs row 'url')
@@ -2938,7 +3047,11 @@
         ~[['content-type' 'application/xml; charset=utf-8'] ['depth' '1']]
     ==
   ?.  =(207 status2)
-    ~&  >>>  [%calendar-caldav-list-failed status status2]
+    ;<  ~  bind:m
+      %:  fault  pre  (cat 3 'caldav-list/' id)  %error  |((acts status) (acts status2))
+        "the remote would not list calendar {(trip id)} (status {(a-co:co status2)})"
+        "check its address, username and password under Settings, Following"
+      ==
     (pure:m ~)
   =/  root=(unit manx)  (parse:dav res2)
   ?~  root  (pure:m ~)
@@ -2963,7 +3076,11 @@
     ?~  hp  |
     =(coll (with-slash u.hp))
   ?.  coll-here
-    ~&  >>>  [%calendar-caldav-listing-incomplete url]
+    ;<  ~  bind:m
+      %:  fault  pre  (cat 3 'caldav-list/' id)  %warning  &
+        "the remote's listing of calendar {(trip id)} left out the calendar itself, so nothing was deleted"
+        "check its address under Settings, Following"
+      ==
     (pure:m ~)
   =/  seen=(set tape)  (~(gas in *(set tape)) (turn listed |=([h=tape *] h)))
   =/  changed=(list [href=tape etag=@t gone=?])
@@ -2995,7 +3112,7 @@
   ?.  (kind-is c0 id %caldav)  (pure:m row)
   =/  url=@t  (gs row 'url')
   =/  origin=tape  (dav-origin url)
-  ;<  got=(unit [changes=(list [href=tape etag=@t gone=?]) token=@t])  bind:m  (caldav-changes row)
+  ;<  got=(unit [changes=(list [href=tape etag=@t gone=?]) token=@t])  bind:m  (caldav-changes pre id row)
   ?~  got
     ::  the row remembers that the remote could not be listed, for the UI
     %-  pure:m
@@ -3015,11 +3132,9 @@
     ;<  [status=@ud hs=(list [@t @t]) body=@t]  bind:m
       (dav-fetch row %'GET' (crip (weld origin href.i.todo)) ~ ~)
     ?:  =(0 status)
-      ~&  >>>  [%calendar-caldav-get-timeout href.i.todo]
       $(todo ~, failed &)
     ?.  =(200 status)
       ::  a miss keeps the old token, so the next pass asks again
-      ~&  >>>  [%calendar-caldav-get-failed href.i.todo status]
       $(todo t.todo, failed &)
     =/  et=@t  ?:(=('' etag.i.todo) (dav-unquote (hdr-of hs 'etag')) etag.i.todo)
     $(todo t.todo, fetched [[href.i.todo et | body] fetched])
@@ -3074,6 +3189,15 @@
     (dav-write pre c(cals (~(put by cals.c) id k.res)))
   ;<  ~  bind:m  (log-clashes pre id clashes.res 'changed on both sides; the remote kept')
   ;<  ~  bind:m  (save-row pre 'caldav-remotes.json' id row2)
+  ::  the listing answered; objects it could not fetch stand as a fault,
+  ::  counted, never one line each
+  ;<  ~  bind:m  (unfault pre (cat 3 'caldav-list/' id))
+  ;<  ~  bind:m
+    ?.  failed  (unfault pre (cat 3 'caldav-get/' id))
+    %:  fault  pre  (cat 3 'caldav-get/' id)  %warning  |
+      "some objects of calendar {(trip id)} could not be fetched"
+      "the next pass asks for them again"
+    ==
   (pure:m row2)
 ::  +caldav-push: the log past the watermark, out as PUT and DELETE. No
 ::  answer, a server error or refused credentials stop the pass and keep
@@ -3111,7 +3235,11 @@
       ?:  =('' (gs known 'href'))  $(changes t.changes)
       ;<  [status=@ud * *]  bind:m  (dav-fetch row %'DELETE' (crip (weld origin href)) ~ ~)
       ?:  |(=(0 status) (gte status 500) =(401 status))
-        ~&  >>>  [%calendar-caldav-push-stopped u status]
+        ;<  ~  bind:m
+          %:  fault  pre  (cat 3 'caldav-push/' id)  %error  =(401 status)
+            "the remote did not take changes for calendar {(trip id)} (status {(a-co:co status)})"
+            "check its username and password under Settings, Following; the changes stay queued"
+          ==
         $(changes ~, stopped &)
       ;<  ~  bind:m
         ?:  |((lth status 300) =(404 status) =(410 status))  (pure:(fiber:fiber:nexus ,~) ~)
@@ -3126,7 +3254,11 @@
           ?:(=('' etag) ~ ~[['if-match' (crip "\"{(trip etag)}\"")]])
       ==
     ?:  |(=(0 status) (gte status 500) =(401 status))
-      ~&  >>>  [%calendar-caldav-push-stopped u status]
+      ;<  ~  bind:m
+        %:  fault  pre  (cat 3 'caldav-push/' id)  %error  =(401 status)
+          "the remote did not take changes for calendar {(trip id)} (status {(a-co:co status)})"
+          "check its username and password under Settings, Following; the changes stay queued"
+        ==
       $(changes ~, stopped &)
     ?:  (gte status 400)
       ;<  ~  bind:m
@@ -3137,6 +3269,7 @@
       changes  t.changes
       ids      (~(put by ids) u (pairs:enjs:format ~[['href' s+(crip href)] ['etag' s+new-etag]]))
     ==
+  ;<  ~  bind:m  ?:(stopped (pure:(fiber:fiber:nexus ,~) ~) (unfault pre (cat 3 'caldav-push/' id)))
   =/  mark=@ud  ?:(stopped since seq.u.k)
   %-  pure:m
   %+  row-put  row
@@ -3179,15 +3312,23 @@
   ?~  base  (pure:m ~)
   ;<  old=weir:nexus  bind:m  (ug-read-weir public-grp)
   =/  road=road:tarball  [%& %& u.base %'shares.sig']
-  ?:  (~(has in poke.old) road)  (pure:m ~)
+  ?:  (~(has in poke.old) road)  (unfault './' 'road/inbox')
   ;<  reg=(unit tang)  bind:m  (reg-register-at-soft:io [u.base %'shares.sig'])
-  ?^  reg  ~&(>> %calendar-no-registry-road (pure:m ~))
+  ?^  reg
+    %:  fault  './'  'road/inbox'  %warning  &
+      "the registry road is refused, so other ships cannot send edits to calendars shared with them"
+      "grant /sys/ames/registry under Permits, then reload the calendar"
+    ==
   ::  the registry names a group by its short name and takes only OUR
   ::  roads: a %how replaces every road under our prefix in that group
   ::  and leaves the other apps' roads alone
   ;<  err=(unit tang)  bind:m  (reg-how-soft:io /public [~ (sy road ~) ~])
-  ~?  >>  ?=(^ err)  %calendar-inbox-road-not-laid
-  (pure:m ~)
+  ?^  err
+    %:  fault  './'  'road/inbox'  %warning  &
+      "the share inbox road could not be laid in the public group, so other ships cannot send edits"
+      "grant /sys/ames/usergroups under Permits, then reload the calendar"
+    ==
+  (unfault './' 'road/inbox')
 ++  ship-read-only  ship-read-only:core
 ::  +build-share-json: what a peer sees of one calendar
 ++  build-share-json
@@ -3236,7 +3377,6 @@
     ;<  *  bind:m  (cull-soft:io (cord-to-road:tarball (crip "./shares/{(trip id)}/")))
     ;<  cur=json  bind:m  (read-json-grub './' 'shares.json')
     ;<  ~  bind:m  (write-json-grub './' 'shares.json' [%o (~(del by (omap cur)) i.ids)])
-    ~&  >  [%calendar-share-dropped id]
     $(ids t.ids)
   ;<  cur=(unit view:nexus)  bind:m  (peek-soft:io road ~)
   =/  have=json
@@ -3541,7 +3681,6 @@
       ?.  =([/ %poke-ack] p.sage.u.in)  [%skip ~]
       =/  [aw=wire err=(unit tang)]  !<([wire (unit tang)] q.sage.u.in)
       ?.  =(w aw)  [%skip ~]
-      ~?  >>>  ?=(^ err)  [%calendar-remote-nack u.err]
       [%done ?=(~ err)]
     ==
   ;<  ~  bind:m  (cancel-timer:io /remote)
@@ -3774,13 +3913,18 @@
     ?:  =([%o ~] body)  $(changes t.changes)
     ;<  ok=?  bind:m  (remote-poke-wait u.host cal-lane body)
     ?.  ok
-      ~&  >>>  [%calendar-share-push-stopped u]
+      ;<  ~  bind:m
+        %:  fault  pre  (cat 3 'share-push/' id)  %warning  |
+          "the host ship did not take changes for calendar {(trip id)}"
+          "they are sent again on the next pass"
+        ==
       $(changes ~, stopped &)
     =.  etags
       ?:  =(%del what)  (~(del by etags) u)
       =/  e=(unit entry:cal)  (~(get by entries.u.k) u)
       ?~(e etags (~(put by etags) u s+etag.u.e))
     $(changes t.changes)
+  ;<  ~  bind:m  ?:(stopped (pure:(fiber:fiber:nexus ,~) ~) (unfault pre (cat 3 'share-push/' id)))
   =/  mark=@ud  ?:(stopped since seq.u.k)
   %-  pure:m
   %+  row-put  row
@@ -3839,13 +3983,11 @@
   =|  out=feed-sync
   |-
   ?~  feeds  (pure:m out)
-  ~&  >  "%calendar sync: fetching {(trip nm.i.feeds)}"
   ;<  [status=@ud body=@t]  bind:m  (fetch-full [%'GET' url.i.feeds ~ ~])
   =/  evs=(unit (list vevent:ics))
     ?.  &(=(200 status) !=('' body))  ~
     (mole |.((events:ics body)))
   ?~  evs
-    ~&  >>>  "%calendar sync: {(trip nm.i.feeds)} failed (status {(scow %ud status)}); its events stay"
     $(feeds t.feeds)
   =.  ok.out  (~(put in ok.out) nm.i.feeds)
   =.  out

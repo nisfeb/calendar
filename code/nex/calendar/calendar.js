@@ -1351,8 +1351,34 @@ function openSettings() {
   document.getElementById('dav-url').textContent = location.origin + CAL + '/dav/';
   document.getElementById('dav-new').classList.add('hidden');
   document.getElementById('google-redirect').textContent = location.origin + CAL + '/google/callback';
-  loadCalsList(); loadShares(); loadDav(); loadCdav(); loadGoogle(); loadFeeds(); loadConflicts();
+  loadCalsList(); loadShares(); loadDav(); loadCdav(); loadGoogle(); loadFeeds(); loadConflicts(); loadOutcomes();
   settingsBack.classList.add('open');
+}
+// the faults that stand, with what clears each, and the last changes the
+// ship refused, with why (docs/logging.md): the record the console's one
+// line points at
+function loadOutcomes() {
+  getJSON('/outcomes.json').then(function(o) {
+    var fl = document.getElementById('faults-list'), rl = document.getElementById('refusals-list');
+    var when = function(ms) { return ms ? fmtDate(parts(ms)) + ', ' + fmtTime(parts(ms)) : ''; };
+    var line = function(box, text, cls) {
+      var row = document.createElement('div'); row.className = cls || 'alarm-row';
+      var t = document.createElement('span'); t.textContent = text; row.appendChild(t); box.appendChild(row);
+    };
+    fl.innerHTML = ''; rl.innerHTML = '';
+    var faults = o.faults || {}, keys = Object.keys(faults).sort();
+    if (!keys.length) line(fl, 'No faults.', 'dav-hint');
+    keys.forEach(function(k) {
+      var f = faults[k];
+      line(fl, f.what + '. To clear it: ' + f.remedy + '.' + (f.since_ms ? ' Since ' + when(f.since_ms) + (f.count > 1 ? ', seen ' + f.count + ' times' : '') + '.' : ''));
+    });
+    var rs = (o.refusals || []).slice().reverse();
+    if (!rs.length) line(rl, 'None.', 'dav-hint');
+    rs.forEach(function(r) {
+      line(rl, r.action + (r.from ? ' from ' + r.from : '') + ': ' + r.why + (r.at_ms ? ' (' + when(r.at_ms) + ')' : ''));
+    });
+    document.getElementById('faults-sect').open = keys.length > 0;
+  }).catch(function() {});
 }
 function closeSettings() {
   // a field still focused has not fired its change yet

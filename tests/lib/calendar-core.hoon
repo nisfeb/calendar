@@ -690,4 +690,57 @@
     (expect-eq !>(0) !>((meta-priority:cal (malt ~[['priority' s+'high']]))))
     (expect-eq !>(0) !>((meta-priority:cal (malt ~[['priority' (numb:enjs:format 12)]]))))
   ==
+::
+::  ==  outcomes (docs/logging.md): the refusals ring and the faults map
+::
+++  test-refusal-ring
+  =/  one=json  (refusal-put:core *json at 'edit-event' 'e@test' '' 'unknown alarm kind snooze')
+  =/  many=json
+    =/  i=@ud  0
+    =/  out=json  *json
+    |-
+    ?:  =(i 25)  out
+    $(i +(i), out (refusal-put:core out (add at (mul i ~s1)) 'add-event' (scot %ud i) '' 'x'))
+  =/  rows=(list json)  =/(r (~(get by ?>(?=([%o *] many) p.many)) 'refusals') ?>(?=([~ %a *] r) p.u.r))
+  ;:  weld
+    %+  expect-eq  !>((obj ~[['refusals' a+~[(obj ~[['at_ms' (numb:enjs:format ms)] ['action' s+'edit-event'] ['id' s+'e@test'] ['from' s+''] ['why' s+'unknown alarm kind snooze']])]]]))
+    !>(one)
+    ::  the ring holds the last twenty, newest last
+    (expect-eq !>(20) !>((lent rows)))
+    (expect-eq !>('5') !>((gs:core (snag 0 rows) 'id')))
+    (expect-eq !>('24') !>((gs:core (snag 19 rows) 'id')))
+  ==
+++  test-faults
+  =/  a  (fault-put:core *json at 'google-push/work' 'error' & 'stopped' 'reconnect')
+  =/  b  (fault-put:core out.a (add at ~m5) 'google-push/work' 'error' & 'stopped' 'reconnect')
+  =/  row=json  (~(got by (faults-of:core out.b)) 'google-push/work')
+  ::  a fault nobody can act on is recorded and not said; said once it can be acted on
+  =/  q  (fault-put:core *json at 'caldav-get/x' 'warning' | 'unreachable' 'wait')
+  =/  r  (fault-put:core out.q (add at ~m5) 'caldav-get/x' 'error' & 'refused' 'check the password')
+  =/  s  (fault-put:core out.r (add at ~m9) 'caldav-get/x' 'error' & 'refused' 'check the password')
+  =/  c  (fault-clear:core out.b 'google-push/work')
+  ::  a full map drops its stalest entry
+  =/  full=json
+    =/  i=@ud  0
+    =/  out=json  *json
+    |-
+    ?:  =(i 51)  out
+    $(i +(i), out out:(fault-put:core out (add at (mul i ~s1)) (scot %ud i) 'warning' | 'w' 'r'))
+  ;:  weld
+    ::  told when it begins, not while it stands; since kept, count up
+    (expect !>(tell.a))
+    (expect !>(!tell.b))
+    (expect-eq !>(`(unit @ud)``ms) !>((gn:core row 'since_ms')))
+    (expect-eq !>(`(unit @ud)``2) !>((gn:core row 'count')))
+    (expect !>(!tell.q))
+    (expect !>(tell.r))
+    (expect !>(!tell.s))
+    ::  cleared: gone, and it had been said
+    (expect !>(&(said.c had.c)))
+    (expect-eq !>(~) !>((faults-of:core out.c)))
+    (expect !>(!had:(fault-clear:core out.c 'google-push/work')))
+    (expect-eq !>(50) !>(~(wyt by (faults-of:core full))))
+    (expect !>(!(~(has by (faults-of:core full)) '0')))
+    (expect !>((~(has by (faults-of:core full)) '50')))
+  ==
 --

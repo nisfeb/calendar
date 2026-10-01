@@ -8,7 +8,8 @@ Configures the nexus to the fake, connects, links the fake's primary
 calendar, then: remote add (timed, all-day, weekly with a moved instance,
 alarmed) appears on the ship; remote delete and rename; local add / edit /
 delete reach the fake exactly once; nothing pulled is pushed back; a forced
-410 resyncs; a forced conflict is logged with Google winning. Cleans up.
+410 resyncs; a forced conflict is logged with Google winning; a push Google
+does not take stands as a fault in outcomes.json and clears. Cleans up.
 Every check runs; exits non-zero if any failed. It rewires the ship's
 Google client to the fake and unlinks every Google calendar, so it
 refuses a ship that has a real client set up.
@@ -100,7 +101,15 @@ check('410 resync keeps everything', gnames() == ['G timed renamed', 'G weekly',
 ship_post('/google/conflicts/clear', {})
 ctl({'op': 'fail', 'on': True})
 poke({'action': 'edit-event', 'id': 'g-timed@google.com', 'cat': 'timed', 'kind': 'once', 'start_ms': 1790863200000, 'fin': 'dur', 'dur_min': 60, 'meta': {'name': 'edited here'}}); time.sleep(8)
+# the push Google would not take stands as a fault: recorded, and not said, since a 503 is nobody's to act on (docs/logging.md)
+def push_faults(): return {k: v for k, v in (ship_get('/outcomes.json').get('faults') or {}).items() if k.startswith('google-push/')}
+for _ in range(6):
+    if push_faults(): break
+    time.sleep(3)
+gf = push_faults()
+check('a push Google does not take is a fault, recorded and not said', len(gf) == 1 and list(gf.values())[0]['said'] is False and list(gf.values())[0]['level'] == 'error', gf)
 ctl({'op': 'put', 'event': {'id': 'g-timed', 'summary': 'edited on google', 'start': {'dateTime': '2026-10-01T14:00:00Z'}, 'end': {'dateTime': '2026-10-01T15:00:00Z'}}}); ctl({'op': 'fail', 'on': False}); prod()
+check('the fault clears when a push pass goes through', not push_faults(), push_faults())
 cs = ship_get('/google/conflicts.json')
 check('conflict logged, google kept', len(cs) == 1 and 'edited on google' in gnames() and 'SUMMARY:edited here' in cs[0]['local'], (len(cs), gnames()))
 # a Google edit the ship has not pulled yet: the push names the old etag
