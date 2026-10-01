@@ -267,6 +267,12 @@
           ?~  ev
             ~&  >>>  "%calendar: bad split-event"
             $
+          =/  als=alarms-arg:core  (parse-alarms jon)
+          ?:  ?=(%bad -.als)
+            ~&  >>>  "%calendar: refused split-event: {why.als}"
+            $
+          ::  the new series takes the alarms the poke names, else the old one's
+          =/  old-als=(list alarm:cal)  (fall (bind (locate c home id) |=([* e=entry:cal] alarms.e)) ~)
           ;<  new=event:cal  bind:m  (apply-until (carry-skips u.old u.ev) (gn jon 'until_ms'))
           =/  nid=@ta  (crip "{(scow %uv (end [3 8] eny))}@{(scow %p our)}")
           =/  capped=event:cal
@@ -274,7 +280,9 @@
               %timed   u.old(dom.bound `u.cap)
               %allday  u.old(dom.bound `u.cap)
             ==
-          ;<  ~  bind:m  (replace:io (put-ev-in (put-ev c home id capped) (cal-arg jon) '' nid new))
+          =.  c  (put-ev-in (put-ev c home id capped) (cal-arg jon) '' nid new)
+          =.  c  (set-alarms c '' nid ?:(?=(%set -.als) l.als old-als))
+          ;<  ~  bind:m  (replace:io c)
           $
         ?:  =('add-calendar' act)
           =/  id=@ta  (crip (trip (gs jon 'id')))
@@ -918,6 +926,7 @@
             ^-  (list [@t json])
             ?.  ?=(%todo -.event.e)  ~
             :~  ['due_ms' ?~(due.event.e ~ (numb:enjs:format (da-to-ms u.due.event.e)))]
+                ['done_ms' ?~(done.event.e ~ (numb:enjs:format (da-to-ms u.done.event.e)))]
                 ['done' b+?=(^ done.event.e)]
             ==
           (send-json eyre-id rows)

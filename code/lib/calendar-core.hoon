@@ -704,7 +704,10 @@
     ::  from midnight where the calendar is, not in UTC
     =/  local  |=(d=@da (fall (fall (mole |.((place:rules zone d))) ~) d))
     =/  [at=@da end=@da]
-      ?:  ?=(%todo -.event.u.en)  =/(d (fall due.event.u.en l.span.r) [d d])
+      ?:  ?=(%todo -.event.u.en)
+        ::  a due date with no clock is that day where the calendar is
+        =/  d=@da  (fall due.event.u.en l.span.r)
+        ?:(=(0 (mod d ~d1)) [(local d) (local d)] [d d])
       ?.  (all-day:cal event.u.en)  [l.span.r r.span.r]
       [(local l.span.r) (local r.span.r)]
     =/  mins=@ud  (div ?:((gth at now) (sub at now) 0) ~m1)

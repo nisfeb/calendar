@@ -147,6 +147,7 @@ function fetchWindow(fromMs, toMs, cb) {
         r.note = m.note || '';
         r.color = safeColor(m.color) || calColor(r.cal) || '';
         r.tags = m.tags || [];
+        r.alarms = r.alarms || [];
       });
       cb(rows);
     })
@@ -282,6 +283,8 @@ function showPop(ev, x, y) {
     text = fmtDate(s) + ' ' + fmtTimeLong(s) + ' – ' + fmtDate(e) + ' ' + fmtTimeLong(e);
   }
   document.getElementById('pop-time').textContent = text;
+  document.getElementById('pop-alarms').textContent =
+    (ev.alarms || []).length ? 'Reminders: ' + ev.alarms.map(function(a) { return alarmText(a, ev.cat); }).join(', ') : '';
   var note = document.getElementById('pop-note');
   note.textContent = ev.note || '';
   note.style.display = ev.note ? '' : 'none';
@@ -753,7 +756,7 @@ function loadTasks(cb) {
       cb((rows || []).filter(function(r) { return r.cat === 'todo'; }).map(function(r) {
         var m = r.meta || {};
         return { id: r.id, cal: r.cal, name: m.name || '', note: m.note || '', tags: m.tags || [],
-                 color: safeColor(m.color) || calColor(r.cal) || '', due_ms: r.due_ms || 0, done: !!r.done, cat: 'todo' };
+                 color: safeColor(m.color) || calColor(r.cal) || '', due_ms: r.due_ms || 0, done_ms: r.done_ms || 0, done: !!r.done, cat: 'todo' };
       }));
     })
     .catch(function(e) { loadFailed(e); cb(null); });
@@ -783,33 +786,128 @@ function taskRow(t) {
   return pressable(row);
 }
 
+// the open tasks by when they are due, in the calendar's zone
+var TASK_GROUPS = ['Overdue', 'Today', 'Tomorrow', 'This week', 'Later', 'Undated'];
+function taskGroups(tasks, today) {
+  var g = TASK_GROUPS.map(function(n) { return { name: n, rows: [] }; });
+  tasks.forEach(function(t) {
+    var i = 5;
+    if (t.due_ms) { var d = pserial(dueParts(t.due_ms)) - today; i = d < 0 ? 0 : d === 0 ? 1 : d === 1 ? 2 : d < 7 ? 3 : 4; }
+    g[i].rows.push(t);
+  });
+  return g;
+}
+
+var DONE_KEEP = 7 * MS_DAY;
+var showAllDone = false;
+var doneOld = [];
 function renderTasks(tasks) {
   var open = document.getElementById('task-open'), done = document.getElementById('task-done');
   open.innerHTML = ''; done.innerHTML = '';
   var byDue = function(a, b) { return (a.due_ms || 9e15) - (b.due_ms || 9e15) || a.name.localeCompare(b.name); };
   var o = tasks.filter(function(t) { return !t.done; }).sort(byDue);
-  var d = tasks.filter(function(t) { return t.done; }).sort(byDue);
+  var d = tasks.filter(function(t) { return t.done; }).sort(function(a, b) { return (b.done_ms || 0) - (a.done_ms || 0) || byDue(a, b); });
   if (!o.length) open.innerHTML = '<div class="task-row" style="border:none;color:#666;cursor:default">Nothing to do.</div>';
-  o.forEach(function(t) { open.appendChild(taskRow(t)); });
-  d.forEach(function(t) { done.appendChild(taskRow(t)); });
+  taskGroups(o, pserial(parts(Date.now()))).forEach(function(g) {
+    if (!g.rows.length) return;
+    var det = document.createElement('details');
+    det.className = 'tg'; det.dataset.g = g.name;
+    var key = 'cal-tg-' + g.name, closed = false;
+    try { closed = localStorage.getItem(key) === '0'; } catch (e) {}
+    det.open = !closed;
+    det.addEventListener('toggle', function() { try { localStorage.setItem(key, det.open ? '1' : '0'); } catch (e) {} });
+    var sum = document.createElement('summary');
+    sum.textContent = g.name;
+    var n = document.createElement('span'); n.className = 'tg-n'; n.textContent = g.rows.length;
+    sum.appendChild(n); det.appendChild(sum);
+    g.rows.forEach(function(t) { det.appendChild(taskRow(t)); });
+    open.appendChild(det);
+  });
+  // done: the last week by default; older ones on request, or deleted
+  var cut = Date.now() - DONE_KEEP;
+  doneOld = d.filter(function(t) { return t.done_ms && t.done_ms < cut; });
+  var shown = showAllDone ? d : d.filter(function(t) { return doneOld.indexOf(t) < 0; });
+  shown.forEach(function(t) { done.appendChild(taskRow(t)); });
   document.getElementById('task-done-sum').textContent = 'Done (' + d.length + ')';
   document.getElementById('task-done-wrap').style.display = d.length ? '' : 'none';
+  document.getElementById('task-done-note').textContent =
+    !doneOld.length ? '' : showAllDone ? 'all ' + d.length + ' shown' : doneOld.length + ' older than a week hidden';
+  document.getElementById('task-done-all').style.display = doneOld.length ? '' : 'none';
+  document.getElementById('task-done-all').textContent = showAllDone ? 'Last week only' : 'Show all';
+  document.getElementById('task-done-clear').style.display = doneOld.length ? '' : 'none';
 }
+document.getElementById('task-done-all').onclick = function() { showAllDone = !showAllDone; load(); };
+document.getElementById('task-done-clear').onclick = function() {
+  var old = doneOld.filter(function(t) { return !calReadonly(t.cal); });
+  if (!old.length) return;
+  if (!confirm('Delete ' + old.length + ' done task' + (old.length > 1 ? 's' : '') + ' finished more than a week ago? CalDAV clients and shared calendars lose them too.')) return;
+  var btn = this; btn.disabled = true;
+  (function next(i) {
+    if (i >= old.length) { btn.disabled = false; setTimeout(refresh, 400); return; }
+    poke({ action: 'del-event', id: old[i].id, home: old[i].cal }, function() { next(i + 1); });
+  })(0);
+};
+
+// quick-add: the trailing words of what was typed can be #tags and a
+// date (today, tomorrow, a weekday, "in 3 days", "next week", "oct 12",
+// 2026-10-12); the rest is the name. today is a day serial in the
+// calendar's zone. Nothing parsed = the whole text is the name.
+var WDL = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+function parseQuickTask(text, today) {
+  var words = text.trim().split(/\s+/).filter(Boolean), tags = [], due = null;
+  var dow = function(s) { return (s + 3) % 7; };   // serial 0 (1970-01-01) was a Thursday
+  var wd = function(w) { return w.length < 3 ? -1 : WDL.findIndex(function(n) { return n.indexOf(w) === 0; }); };
+  var mon = function(w) { return w.length < 3 ? -1 : MN.findIndex(function(n) { return n.toLowerCase().indexOf(w) === 0; }); };
+  var monthDay = function(a, b) {
+    var m = mon(a), dm = /^(\d{1,2})(st|nd|rd|th)?$/.exec(b);
+    if (m < 0 || !dm || +dm[1] < 1 || +dm[1] > 31) return null;
+    var y = unserial(today).y, s = serial(y, m + 1, +dm[1]);
+    return s < today ? serial(y + 1, m + 1, +dm[1]) : s;
+  };
+  while (words.length > 1) {
+    var w = words[words.length - 1].toLowerCase();
+    if (w[0] === '#' && w.length > 1) { tags.unshift(w.slice(1)); words.pop(); continue; }
+    if (due !== null) break;
+    var d = null, take = 1, v = words.length > 2 ? words[words.length - 2].toLowerCase() : '';
+    if (w === 'today' || w === 'tod') d = today;
+    else if (w === 'tomorrow' || w === 'tmr' || w === 'tom') d = today + 1;
+    else if (/^\d{4}-\d{2}-\d{2}$/.test(w)) { var p = w.split('-'); d = serial(+p[0], +p[1], +p[2]); }
+    else if (wd(w) >= 0) d = today + ((wd(w) - dow(today) + 7) % 7 || 7);
+    else if (v === 'next' && w === 'week') { d = today + 7; take = 2; }
+    else if (words.length > 3 && words[words.length - 3].toLowerCase() === 'in' && /^\d+$/.test(v) && /^(d|day|days|w|wk|week|weeks)$/.test(w)) { d = today + (+v) * (w[0] === 'w' ? 7 : 1); take = 3; }
+    else if (v) { d = monthDay(v, w) || monthDay(w, v); if (d !== null) take = 2; }
+    if (d === null) break;
+    due = d; words.length -= take;
+  }
+  return { name: words.join(' '), due: due, tags: tags };
+}
+window.parseQuickTask = parseQuickTask;
+var taskName = document.getElementById('task-name');
+taskName.addEventListener('input', function() {
+  var q = parseQuickTask(taskName.value, pserial(parts(Date.now())));
+  var bits = [];
+  if (q.due !== null) bits.push('Due ' + fmtDate(unserial(q.due)));
+  if (q.tags.length) bits.push(q.tags.map(function(t) { return '#' + t; }).join(' '));
+  document.getElementById('task-hint').textContent = bits.join(' · ');
+});
 
 var taskSave = document.getElementById('task-save');
 taskSave.onclick = function() {
-  var name = document.getElementById('task-name').value.trim();
-  if (!name || taskSave.disabled) return;
-  var body = { action: 'add-event', cat: 'todo', meta: { name: name } };
+  var q = parseQuickTask(document.getElementById('task-name').value, pserial(parts(Date.now())));
+  if (!q.name || taskSave.disabled) return;
+  var body = { action: 'add-event', cat: 'todo', meta: { name: q.name } };
   var dv = document.getElementById('task-due').value;
-  if (dv) { var p = dv.split('-'); body.due_ms = Date.UTC(+p[0], +p[1] - 1, +p[2]); }
+  if (q.due !== null) body.due_ms = q.due * MS_DAY;
+  else if (dv) { var p = dv.split('-'); body.due_ms = Date.UTC(+p[0], +p[1] - 1, +p[2]); }
   var cs = document.getElementById('task-cal').value;
   if (cs) body.cal = cs;
-  if (state.tag) body.meta.tags = [state.tag];
+  var tags = q.tags.slice();
+  if (state.tag && tags.indexOf(state.tag) < 0) tags.push(state.tag);
+  if (tags.length) body.meta.tags = tags;
   taskSave.disabled = true;
   poke(body, function(ok) {
     taskSave.disabled = false;
-    if (ok) document.getElementById('task-name').value = '';
+    if (ok) { document.getElementById('task-name').value = ''; document.getElementById('task-hint').textContent = ''; }
     setTimeout(refresh, 400);
   });
 };
@@ -828,6 +926,16 @@ document.addEventListener('keydown', function(e) {
   if (back.classList.contains('open') || settingsBack.classList.contains('open')) return;
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' ||
       e.target.tagName === 'TEXTAREA') return;
+  if (state.view === 'tasks') {
+    // j/k or the arrows move along the rows, x ticks the one in focus, n goes to the quick-add
+    var rows = Array.prototype.slice.call(document.querySelectorAll('#tasks-view .task-row[tabindex]'))
+      .filter(function(r) { return r.offsetParent !== null; });
+    var at = rows.indexOf(document.activeElement);
+    if (e.key === 'j' || e.key === 'ArrowDown') { e.preventDefault(); if (rows.length) rows[Math.min(at + 1, rows.length - 1)].focus(); return; }
+    if (e.key === 'k' || e.key === 'ArrowUp') { e.preventDefault(); if (rows.length) rows[Math.max(at - 1, 0)].focus(); return; }
+    if (e.key === 'x' && at >= 0) { var cb = rows[at].querySelector('input[type=checkbox]'); if (cb && !cb.disabled) cb.click(); return; }
+    if (e.key === 'n') { e.preventDefault(); document.getElementById('task-name').focus(); return; }
+  }
   if (e.key === 'm') { state.view = 'month'; load(); }
   if (e.key === 'w') { state.view = 'week'; load(); }
   if (e.key === 'd') { state.view = 'day'; load(); }
@@ -913,7 +1021,78 @@ function setCat(c) {
     b.classList.toggle('on', b.dataset.cat === c);
   });
   syncFields();
+  renderAlarms();
 }
+
+// ---- reminders in the form ------------------------------------------
+// fAlarms is the whole list the form holds, in the ship's JSON shape; a
+// save sends it entire (absent would keep, [] clears)
+var fAlarms = [];
+function spanText(s) {
+  if (s && s % 86400 === 0) return (s / 86400) + (s === 86400 ? ' day' : ' days');
+  if (s && s % 3600 === 0) return (s / 3600) + (s === 3600 ? ' hour' : ' hours');
+  if (s % 60 === 0) return (s / 60) + ' min';
+  return s + ' s';
+}
+function alarmText(a, c) {
+  if (a.kind === 'before') return a.s ? spanText(a.s) + ' before' : 'At the time';
+  if (a.kind === 'at') { var p = parts(a.at_ms); return 'At ' + fmtDate(p) + ', ' + fmtTime(p); }
+  if (a.kind === 'offset') {
+    if (a.from === 'start' && a.after && c !== 'timed' && a.s % 3600 === 0 && a.s < 86400) return (a.s / 3600) + ':00 the day of';
+    return spanText(a.s) + (a.after ? ' after the ' : ' before the ') + (a.from === 'end' ? 'end' : 'start');
+  }
+  return a.kind;
+}
+function renderAlarms() {
+  var box = document.getElementById('f-alarms');
+  var l = fAlarms || [];
+  box.innerHTML = '';
+  if (!l.length) {
+    var e = document.createElement('div'); e.className = 'dav-hint';
+    e.textContent = 'None' + (cat === 'timed' ? ' (the ship still sends its heads-up before timed events)' : '');
+    box.appendChild(e);
+  }
+  l.forEach(function(a, i) {
+    var row = document.createElement('div'); row.className = 'alarm-row'; row.setAttribute('role', 'listitem');
+    var t = document.createElement('span'); t.textContent = alarmText(a, cat) + (a.desc ? ' · ' + a.desc : '');
+    var x = document.createElement('button'); x.type = 'button'; x.className = 'nav-btn'; x.textContent = '×';
+    x.title = 'Remove'; x.setAttribute('aria-label', 'Remove reminder: ' + alarmText(a, cat));
+    x.onclick = function() { fAlarms.splice(i, 1); renderAlarms(); };
+    row.appendChild(t); row.appendChild(x); box.appendChild(row);
+  });
+  var morning = document.querySelector('#f-alarm-add option[value="morning"]');
+  if (morning) morning.hidden = cat === 'timed';
+}
+// a wall clock in the calendar's zone, as a moment
+function fromWall(y, m, d, hh, mm) {
+  var want = Date.UTC(y, m - 1, d, hh, mm), guess = want;
+  for (var i = 0; i < 2; i++) { var p = parts(guess); guess += want - Date.UTC(p.y, p.m - 1, p.d, p.hh, p.mm); }
+  return guess;
+}
+var alarmSel = document.getElementById('f-alarm-add');
+function alarmInputs(mode) {
+  document.getElementById('f-alarm-custom').classList.toggle('hidden', mode !== 'custom');
+  document.getElementById('f-alarm-when').classList.toggle('hidden', mode !== 'at');
+  document.getElementById('f-alarm-go').classList.toggle('hidden', mode !== 'custom' && mode !== 'at');
+}
+function addAlarm(a) { fAlarms.push(a); renderAlarms(); alarmSel.value = ''; alarmInputs(''); }
+alarmSel.onchange = function() {
+  var v = alarmSel.value;
+  if (!v) { alarmInputs(''); return; }
+  if (v === 'custom' || v === 'at') { alarmInputs(v); return; }
+  if (v === 'morning') { addAlarm({ kind: 'offset', from: 'start', after: true, s: 9 * 3600, desc: '' }); return; }
+  addAlarm({ kind: 'before', s: +v.split(':')[1], desc: '' });
+};
+document.getElementById('f-alarm-ok').onclick = function() {
+  if (alarmSel.value === 'custom') {
+    var n = whole('f-alarm-min');
+    if (n !== null) addAlarm({ kind: 'before', s: n * 60, desc: '' });
+  } else if (alarmSel.value === 'at') {
+    var m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(document.getElementById('f-alarm-at').value || '');
+    if (!m) { document.getElementById('f-status').textContent = 'When: pick a date and time'; return; }
+    addAlarm({ kind: 'at', at_ms: fromWall(+m[1], +m[2], +m[3], +m[4], +m[5]), desc: '' });
+  }
+};
 seg.querySelectorAll('.seg-btn').forEach(function(b) {
   b.onclick = function() { setCat(b.dataset.cat); };
 });
@@ -1507,6 +1686,7 @@ fCal.addEventListener('change', function() {
 function openModal(opts) {
   opts = opts || {};
   editCtx = null;
+  fAlarms = [];
   keptKindOption('');
   document.getElementById('modal-title').textContent = 'New Event';
   document.getElementById('edit-scope').classList.remove('on');
@@ -1555,6 +1735,7 @@ function openEdit(d, target) {
   editCtx = { id: d.id, home: d.cal, idx: target.idx, l: target.l, series: isSeries(d), meta: dm,
               args: d.args || {}, count: d.count || 0, before: d.before || 0,
               due_ms: d.due_ms || 0, done_ms: d.done_ms || 0 };
+  fAlarms = (d.alarms || []).map(function(a) { return Object.assign({}, a); });
   // the occurrence's wall clock in the event's own frame: all-day in
   // date space, timed in its zone (UTC when it has none)
   editCtx.occ = d.cat === 'allday' ? msToUTC(target.l)
@@ -1781,6 +1962,7 @@ fSave.onclick = function() {
     setTimeout(refresh, 400);
   };
 
+  body.alarms = fAlarms.map(function(a) { return Object.assign({}, a); });
   if (!editCtx) { poke(body, finish); return; }
 
   var scopeEl = document.querySelector('input[name="scope"]:checked');
@@ -1810,7 +1992,7 @@ fSave.onclick = function() {
   } else {
     // only this one: a one-off on this occurrence's day, at the form's
     // time, then the occurrence skipped by its start
-    var only = { action: 'add-event', cat: cat, meta: body.meta, kind: 'once' };
+    var only = { action: 'add-event', cat: cat, meta: body.meta, kind: 'once', alarms: body.alarms };
     if (body.cal) only.cal = body.cal;
     if (cat === 'timed') {
       only.start_ms = Date.UTC(o.y, o.m - 1, o.d, +tv[0], +tv[1]);

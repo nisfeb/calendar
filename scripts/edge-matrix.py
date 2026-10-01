@@ -233,10 +233,19 @@ poke({'action': 'unskip-at', 'id': su, 'home': 'edge-two', 'start_ms': 179530000
 check('unskip-at puts it back', wait(lambda: curl('/event.json?id=' + urllib.request.quote(su) + '&cal=edge-two')['except'] == []))
 poke({'action': 'skip-at', 'id': su, 'home': 'edge-two', 'start_ms': 1795300000000 + 3 * day})
 wait(lambda: curl('/event.json?id=' + urllib.request.quote(su) + '&cal=edge-two')['except'] == [3])
+poke({'action': 'edit-event', 'id': su, 'home': 'edge-two', 'cal': 'edge-two', 'cat': 'timed', 'kind': 'rrule', 'args': {'rrule': 'FREQ=DAILY'}, 'start_ms': 1795300000000,
+      'fin': 'dur', 'dur_min': 30, 'count': 5, 'meta': {'name': 'edge split'}, 'alarms': [{'kind': 'before', 's': 600, 'desc': ''}]})
+wait(lambda: curl('/event.json?id=' + urllib.request.quote(su) + '&cal=edge-two').get('alarms') == [{'kind': 'before', 's': 600, 'desc': ''}])
 poke({'action': 'split-event', 'id': su, 'home': 'edge-two', 'idx': 2, 'cal': 'edge-two', 'cat': 'timed', 'kind': 'rrule', 'args': {'rrule': 'FREQ=DAILY'},
       'start_ms': 1795300000000 + 2 * day + 3600000, 'fin': 'dur', 'dur_min': 30, 'count': 3, 'meta': {'name': 'edge split b'}})
 check('split: the old series ends before it', wait(lambda: occ('edge split', 1795000000000, 1796000000000) == [1795300000000, 1795300000000 + day]), occ('edge split', 1795000000000, 1796000000000))
 check('split: the new one starts there and keeps the skip', wait(lambda: occ('edge split b', 1795000000000, 1796000000000) == [1795300000000 + 2 * day + 3600000, 1795300000000 + 4 * day + 3600000]), occ('edge split b', 1795000000000, 1796000000000))
+sb = [e for e in events() if e['meta']['name'] == 'edge split b']
+check('split: the new series inherits the alarms when the poke names none', bool(sb) and sb[0].get('alarms') == [{'kind': 'before', 's': 600, 'desc': ''}], sb and sb[0].get('alarms'))
+if sb:
+    poke({'action': 'split-event', 'id': sb[0]['id'], 'home': 'edge-two', 'idx': 1, 'cal': 'edge-two', 'cat': 'timed', 'kind': 'rrule', 'args': {'rrule': 'FREQ=DAILY'},
+          'start_ms': 1795300000000 + 4 * day + 3600000, 'fin': 'dur', 'dur_min': 30, 'count': 1, 'meta': {'name': 'edge split c'}, 'alarms': []})
+    check('split: alarms the poke names replace them on the new series', wait(lambda: [e.get('alarms') for e in events() if e['meta']['name'] == 'edge split c'] == [[]]), [e.get('alarms') for e in events() if e['meta']['name'] == 'edge split c'])
 
 # ---- fifth round: events.json filtered on the ship
 poke({'action': 'add-event', 'cal': 'edge-two', 'cat': 'timed', 'kind': 'once', 'start_ms': 1796119200000, 'fin': 'dur', 'dur_min': 30, 'meta': {'name': 'edge in'}})

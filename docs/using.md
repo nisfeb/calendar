@@ -28,11 +28,34 @@ where each comes from:
   browser already on in furum already gets these. Nothing is sent if the
   calendar's push road was refused under Permits.
 
+## Reminders
+
+Every event or task's form has a **Reminders** list: presets before the
+start (or a task's due), **The morning of (9:00)** for all-day events,
+birthdays and tasks, **Minutes before…** and **At a date and time…** (a wall
+clock in the calendar's zone). A task due on a date with no clock counts
+from midnight where the calendar is, so the morning preset is 9:00 there
+(since version 24; before, such a task's reminders counted from UTC midnight).
+The popup shows an occurrence's reminders. They fire on the ship (see
+Notifications under Settings) and travel over CalDAV, to Google as its
+reminders, and to Talon. A series split with "this and following" carries
+its reminders to the new series. Timed events also get the ship's heads-up
+before every start, with or without reminders (`lead_min` in the API).
+
 ## Tasks
 
-The **Tasks** view (or `k`) lists what is to do, soonest due first and undated
-last, with the done ones folded underneath. Tick a task there or in its popup;
-type a name at the top to add one, with an optional due date and calendar.
+The **Tasks** view (or `k`) lists what is to do in groups: Overdue, Today,
+Tomorrow, This week, Later and Undated, each with its count and folding
+(the fold is remembered in this browser). Done tasks sit underneath, the
+last week's by default; **Show all** brings the older ones back, and
+**Delete done older than a week** removes them, after a confirmation, from
+the ship and so from every CalDAV client and share. Tick a task there or in
+its popup; type at the top to add one. The last words typed can be `#tags`
+and a date: `today`, `tomorrow`, a weekday (`fri` is the coming Friday),
+`in 3 days`, `next week`, `oct 12`, `2026-10-12`; the line under the box
+shows what was read, and the date picker still works when nothing is typed.
+Keys in the view: `j`/`k` or the arrows move along the rows, `x` ticks the
+one in focus, `n` goes to the box.
 A task with a due date also sits on that day in the month, week and day views,
 with a box that shows whether it is done. The event form has a **Task** kind
 with the same two fields, so a task can carry a note, tags and a color like

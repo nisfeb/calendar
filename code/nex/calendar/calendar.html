@@ -59,8 +59,11 @@
         <select id="task-cal" aria-label="Calendar"></select>
         <button id="task-save" class="nav-btn">Add</button>
       </div>
+      <div id="task-hint" class="dav-hint"></div>
       <div id="task-open"></div>
-      <details id="task-done-wrap"><summary id="task-done-sum">Done</summary><div id="task-done"></div></details>
+      <details id="task-done-wrap"><summary id="task-done-sum">Done</summary><div id="task-done"></div>
+        <div class="feeds-foot"><span id="task-done-note"></span><span><button id="task-done-all" class="nav-btn">Show all</button> <button id="task-done-clear" class="nav-btn danger">Delete done older than a week</button></span></div>
+      </details>
     </div>
 
     <div id="time-view">
@@ -80,6 +83,7 @@
         <span id="pop-name"></span>
       </div>
       <div id="pop-time"></div>
+      <div id="pop-alarms"></div>
       <div id="pop-note"></div>
       <div id="pop-tags"></div>
       <div id="pop-actions">
@@ -209,6 +213,31 @@
         <input id="f-dur" type="number" min="0" value="60" class="tf">
         <label class="f tf" for="f-zone">Timezone</label>
         <select id="f-zone" class="tf"></select>
+        <label class="f" id="lbl-alarms">Reminders</label>
+        <div id="f-alarms" role="list" aria-labelledby="lbl-alarms"></div>
+        <div class="nth-row">
+          <div>
+            <select id="f-alarm-add" aria-label="Add a reminder">
+              <option value="">Add a reminder…</option>
+              <option value="before:0">At the time</option>
+              <option value="before:300">5 minutes before</option>
+              <option value="before:600">10 minutes before</option>
+              <option value="before:900">15 minutes before</option>
+              <option value="before:1800">30 minutes before</option>
+              <option value="before:3600">1 hour before</option>
+              <option value="before:7200">2 hours before</option>
+              <option value="before:86400">1 day before</option>
+              <option value="before:172800">2 days before</option>
+              <option value="before:604800">1 week before</option>
+              <option value="morning">The morning of (9:00)</option>
+              <option value="custom">Minutes before…</option>
+              <option value="at">At a date and time…</option>
+            </select>
+          </div>
+          <div id="f-alarm-custom" class="hidden"><label class="f" for="f-alarm-min">Minutes before</label><input id="f-alarm-min" type="number" min="0" step="1" value="45"></div>
+          <div id="f-alarm-when" class="hidden"><label class="f" for="f-alarm-at">When</label><input id="f-alarm-at" type="datetime-local"></div>
+          <div id="f-alarm-go" class="hidden"><label class="f">&nbsp;</label><button type="button" id="f-alarm-ok" class="nav-btn">Add</button></div>
+        </div>
         <label class="f" for="f-note">Note</label>
         <textarea id="f-note" rows="3"></textarea>
         <label class="f" for="f-cal">Calendar</label>

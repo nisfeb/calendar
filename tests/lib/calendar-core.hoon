@@ -653,4 +653,23 @@
     (expect-eq !>(0) !>((fires ~2026.11.2..09.29.59 ~2026.11.2..09.30.00)))
     (expect-eq !>(4) !>((fires ~2026.11.2..09.00.00 ~2026.11.2..11.00.00)))
   ==
+++  test-alarm-task-date-is-local
+  ::  a task due on a date, no clock, has its alarms counted from midnight
+  ::  where the calendar is (so "9:00 the day of" is 9:00 there); one due
+  ::  at a moment keeps that moment
+  =/  dated=event:cal  [%todo `~2026.11.3 ~ (malt ~[['name' s+'taxes']])]
+  =/  r=ref:cal  [%e 0 [~2026.11.3 ~2026.11.3]]
+  =/  ens  (malt ~[[%e [dated 'e' '' 0 ~[[[%off | & ~h9] '']] ~]]])
+  =/  ny  `(unit @t)``'America/New_York'
+  =/  timed=event:cal  [%todo `~2026.11.3..15.00.00 ~ (malt ~[['name' s+'call']])]
+  =/  ens2  (malt ~[[%e [timed 'e' '' 0 ~[[[%rel ~h1] '']] ~]]])
+  ;:  weld
+    ::  9:00 in New York on Nov 3 is 14:00 UTC
+    (expect-eq !>(1) !>((lent (alarm-pushes:core ~[r] ens ~2026.11.3..13.59.59 ~2026.11.3..14.00.00 ny))))
+    (expect-eq !>(0) !>((lent (alarm-pushes:core ~[r] ens ~2026.11.3..08.59.59 ~2026.11.3..09.00.00 ny))))
+    ::  with no zone, UTC midnight
+    (expect-eq !>(1) !>((lent (alarm-pushes:core ~[r] ens ~2026.11.3..08.59.59 ~2026.11.3..09.00.00 ~))))
+    ::  a due moment is not moved
+    (expect-eq !>(1) !>((lent (alarm-pushes:core ~[r] ens2 ~2026.11.3..13.59.59 ~2026.11.3..14.00.00 ny))))
+  ==
 --
