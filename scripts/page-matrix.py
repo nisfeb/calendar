@@ -6,7 +6,10 @@ Today, Tomorrow, This week, Later, Undated) hold the right tasks; done
 tasks older than a week hide until Show all; the quick-add parser reads
 dates and #tags, and a quick-add lands with the due and tag it read; the
 form's reminders editor sets presets that read back from event.json, and
-removes them; j and x move along the rows and tick one. Cleans up.
+removes them; j and x move along the rows and tick one. And that nothing
+waits on the ship before it shows: a click opens the form, a save closes
+it with a toast, a tick moves the row and a quick-add shows its row, all
+in the same turn of the page; a save the ship refuses says why. Cleans up.
 
     usage: page-matrix.py SHIP_URL COOKIE_JAR      (e.g. http://localhost:8085 nec.jar)
 """
@@ -62,6 +65,10 @@ today_d = datetime.datetime.now(zoneinfo.ZoneInfo(zone)).date()
 today = (today_d - datetime.date(1970, 1, 1)).days
 now_ms = int(time.time() * 1000)
 
+# leftovers from a run that crashed would be counted with the seeds
+if 'page-two' in {c['id'] for c in curl('/calendars.json')}:
+    poke({'action': 'del-calendar', 'id': 'page-two'})
+    wait(lambda: 'page-two' not in {c['id'] for c in curl('/calendars.json')})
 poke({'action': 'add-calendar', 'id': 'page-two', 'name': 'page gate', 'color': '#336699'})
 seed = {'page overdue': today - 1, 'page today': today, 'page tomorrow': today + 1, 'page week': today + 3, 'page later': today + 30, 'page undated': None}
 for name, d in seed.items():
@@ -78,6 +85,12 @@ with Firefox() as ff:
     ff.login(SHIP, JAR)
     ff.goto(CAL + '?view=tasks')
     check('tasks view shows the seeds', ff.wait("return document.querySelector('#task-open') && document.querySelector('#task-open').textContent.indexOf('page today') >= 0 ? 1 : 0"))
+    # the browser's own parts follow the dark page: scrollbars, checkboxes, pickers
+    ff.wait("return document.querySelector('#task-open input[type=checkbox]') ? 1 : 0")
+    scheme = ff.js("""var cb = document.querySelector('#task-open input[type=checkbox]');
+        return [getComputedStyle(document.documentElement).colorScheme, getComputedStyle(cb).colorScheme, getComputedStyle(cb).accentColor,
+                (document.querySelector('meta[name=color-scheme]') || {}).content || ''];""")
+    check('the page declares the dark scheme for native controls', scheme[0] == 'dark' and scheme[1] == 'dark' and scheme[2] == 'rgb(37, 99, 235)' and scheme[3] == 'dark', scheme)
     groups = ff.js("""var out = {}; document.querySelectorAll('#task-open details.tg').forEach(function(d) {
         d.querySelectorAll('.task-row .t-name').forEach(function(n) { if (n.textContent.indexOf('page ') === 0) out[n.textContent] = d.dataset.g; }); }); return out;""")
     want = {'page overdue': 'Overdue', 'page today': 'Today', 'page urgent': 'Today', 'page tomorrow': 'Tomorrow', 'page week': 'This week', 'page later': 'Later', 'page undated': 'Undated'}
@@ -111,7 +124,10 @@ with Firefox() as ff:
         document.getElementById('task-cal').value = 'page-two';""")
     hint = ff.js("return document.getElementById('task-hint').textContent")
     check('the hint shows what was read', 'Due' in hint and '#gate' in hint, hint)
-    ff.js("document.getElementById('task-save').click()")
+    at_once = ff.js("""document.getElementById('task-save').click();
+        return [document.getElementById('task-name').value,
+                Array.prototype.some.call(document.querySelectorAll('#task-open .task-row.pending .t-name'), function(x) { return x.textContent === 'page quick'; })];""")
+    check('a quick-add shows its row and clears the box at once', at_once == ['', True], at_once)
     q = wait(lambda: task('page quick'))
     check('the quick-add landed with its due and tag', q and q.get('due_ms') == (today + 1) * DAY and q['meta'].get('tags') == ['gate'], q)
     # reminders in the form: open 'page today', add the morning preset and 45 minutes, save
@@ -119,12 +135,20 @@ with Firefox() as ff:
         ff.js("""var want = arguments[0]; var n = Array.prototype.find.call(document.querySelectorAll('#task-open .t-name'), function(x) { return x.textContent === want; });
             if (n) n.parentNode.click();""", name)
         return ff.wait("return document.getElementById('modal-back').classList.contains('open') && document.getElementById('f-name').value === arguments[0] ? 1 : 0", 20, name)
+    at_once = ff.js("""var n = Array.prototype.find.call(document.querySelectorAll('#task-open .t-name'), function(x) { return x.textContent === 'page tomorrow'; });
+        n.parentNode.click();
+        var open = document.getElementById('modal-back').classList.contains('open') && document.getElementById('f-name').value === 'page tomorrow';
+        document.getElementById('modal-close').click(); return open;""")
+    check('a click opens the task form at once, without asking the ship', at_once is True, at_once)
     check('the row opens its form', open_row('page today'))
     ff.js("""var s = document.getElementById('f-alarm-add'); s.value = 'morning'; s.dispatchEvent(new Event('change'));
         s.value = 'custom'; s.dispatchEvent(new Event('change')); document.getElementById('f-alarm-min').value = '45'; document.getElementById('f-alarm-ok').click();""")
     rows = ff.js("return Array.prototype.map.call(document.querySelectorAll('#f-alarms .alarm-row span'), function(x) { return x.textContent; })")
     check('the editor lists what was added', rows == ['9:00 the day of', '45 min before'], rows)
-    ff.js("document.getElementById('f-save').click()")
+    at_once = ff.js("""document.getElementById('f-save').click();
+        return [document.getElementById('modal-back').classList.contains('open'), document.getElementById('toast-text').textContent,
+                !document.getElementById('toast').classList.contains('hidden')];""")
+    check('a save closes the form and says Saving at once', at_once[0] is False and at_once[1].startswith('Saving "page today"') and at_once[2] is True, at_once)
     want_al = [{'kind': 'offset', 'from': 'start', 'after': True, 's': 32400, 'desc': ''}, {'kind': 'before', 's': 2700, 'desc': ''}]
     check('saved reminders read back from event.json', wait(lambda: curl('/event.json?id=page-today%40page&cal=page-two').get('alarms') == want_al), curl('/event.json?id=page-today%40page&cal=page-two').get('alarms'))
     check('the popover text knows them', ff.js("return alarmText({kind:'offset',from:'start',after:true,s:32400,desc:''}, 'todo') + ' / ' + alarmText({kind:'before',s:86400,desc:''}, 'timed')") == '9:00 the day of / 1 day before')
@@ -146,12 +170,21 @@ with Firefox() as ff:
     check('None clears it', wait(lambda: (task('page urgent') or {}).get('priority') == 0), task('page urgent'))
     ff.wait("return !document.getElementById('modal-back').classList.contains('open') ? 1 : 0")
     time.sleep(1.5)
+    # a save the ship refuses says why, from the ship's own record
+    check('the task opens for a save the ship will refuse', open_row('page urgent'))
+    ff.js("""var s = document.getElementById('f-pri'), o = document.createElement('option'); o.value = '12'; o.textContent = '12'; s.appendChild(o); s.value = '12';
+        document.getElementById('f-save').click();""")
+    said = ff.wait("var t = document.getElementById('toast-text').textContent; return t.indexOf('Not saved') === 0 ? t : ''", 30)
+    check('a refused save says why', said == 'Not saved: priority is 0 to 9', said)
+    time.sleep(1.5)
     # keys: focus the overdue row, j moves to the next, x ticks it
     ff.js("""var n = Array.prototype.find.call(document.querySelectorAll('#task-open .t-name'), function(x) { return x.textContent === 'page overdue'; }); n.parentNode.focus();
         document.dispatchEvent(new KeyboardEvent('keydown', {key: 'j', bubbles: true}));""")
     focused = ff.js("return document.activeElement && document.activeElement.querySelector('.t-name') ? document.activeElement.querySelector('.t-name').textContent : ''")
     check('j moves to the next row', focused == 'page today', focused)
-    ff.js("document.dispatchEvent(new KeyboardEvent('keydown', {key: 'x', bubbles: true}))")
+    at_once = ff.js("""document.dispatchEvent(new KeyboardEvent('keydown', {key: 'x', bubbles: true}));
+        return Array.prototype.some.call(document.querySelectorAll('#task-done .t-name'), function(x) { return x.textContent === 'page today'; });""")
+    check('a tick moves the row to Done at once', at_once is True, at_once)
     check('x ticks the row in focus', wait(lambda: (task('page today') or {}).get('done') is True), task('page today'))
 
 poke({'action': 'del-calendar', 'id': 'page-two'})

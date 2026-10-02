@@ -1,4 +1,7 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
+/* the page is dark, so the browser's own parts are too: scrollbars,
+   checkboxes, date and color pickers, select menus */
+:root { color-scheme: dark; accent-color: #2563eb; scrollbar-color: #3a3a3a transparent; }
 body { font-family: -apple-system, system-ui, sans-serif; background: #111; color: #eee; }
 #app { max-width: 1100px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
 #header { display: flex; align-items: center; gap: 10px; padding-bottom: 12px; flex-wrap: wrap; }
@@ -170,6 +173,7 @@ label.f { display: block; font-size: 11px; color: #888; margin: 10px 0 3px; lett
 .task-row .t-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
 .task-row .t-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-row.done .t-name { text-decoration: line-through; opacity: 0.55; }
+.task-row.pending { opacity: 0.55; cursor: default; }
 .task-row .t-due { font-size: 12px; color: #9aa3b2; white-space: nowrap; }
 .task-row .t-due.late { color: #f87171; }
 .task-row .t-tags { font-size: 11px; color: #9aa3b2; }

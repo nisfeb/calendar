@@ -362,10 +362,13 @@ document.getElementById('pop-del').onclick = function() {
 };
 document.getElementById('pop-edit').onclick = function() {
   if (!popTarget) return;
-  var t = popTarget;
-  getJSON('/event.json?id=' + encodeURIComponent(t.id) + '&cal=' + encodeURIComponent(t.cal || '') + '&idx=' + (t.idx || 0))
-    .then(function(d) { hidePop(); openEdit(d, t); })
-    .catch(loadFailed);
+  var t = popTarget, btn = this;
+  // an event's form needs its rule from the ship; the button says it is
+  // on its way
+  btn.textContent = 'Opening…';
+  busy(btn, getJSON('/event.json?id=' + encodeURIComponent(t.id) + '&cal=' + encodeURIComponent(t.cal || '') + '&idx=' + (t.idx || 0)))
+    .then(function(d) { btn.textContent = 'Edit'; hidePop(); openEdit(d, t); },
+          function(e) { btn.textContent = 'Edit'; loadFailed(e); });
 };
 document.addEventListener('click', function(e) {
   if (!pop.classList.contains('hidden') &&
@@ -758,7 +761,7 @@ function loadTasks(cb) {
         var m = r.meta || {};
         return { id: r.id, cal: r.cal, name: m.name || '', note: m.note || '', tags: m.tags || [],
                  color: safeColor(m.color) || calColor(r.cal) || '', due_ms: r.due_ms || 0, done_ms: r.done_ms || 0, done: !!r.done,
-                 priority: r.priority || 0, cat: 'todo' };
+                 priority: r.priority || 0, meta: m, alarms: r.alarms || [], cat: 'todo' };
       }));
     })
     .catch(function(e) { loadFailed(e); cb(null); });
@@ -766,10 +769,20 @@ function loadTasks(cb) {
 
 function taskRow(t) {
   var row = document.createElement('div');
-  row.className = 'task-row' + (t.done ? ' done' : '');
+  row.className = 'task-row' + (t.done ? ' done' : '') + (t.pending ? ' pending' : '');
   var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = t.done;
   cb.disabled = calReadonly(t.cal);
-  cb.onclick = function(e) { e.stopPropagation(); poke({ action: 'done-event', id: t.id, home: t.cal, done: cb.checked }); setTimeout(load, 400); };
+  cb.disabled = cb.disabled || !!t.pending;
+  cb.onclick = function(e) {
+    e.stopPropagation();
+    // it moves at once; the ship is told behind it
+    t.done = cb.checked; t.done_ms = cb.checked ? Date.now() : 0;
+    renderTasks(lastTasks);
+    poke({ action: 'done-event', id: t.id, home: t.cal, done: t.done }, function(ok) {
+      if (!ok) toast('The ship did not answer: "' + t.name + '" is unchanged there');
+      setTimeout(load, 400);
+    });
+  };
   var dot = document.createElement('span'); dot.className = 't-dot'; dot.style.background = t.color || '#4a6a8a';
   var nm = document.createElement('span'); nm.className = 't-name'; nm.textContent = t.name; nm.title = t.note || t.name;
   var pr = null;
@@ -785,10 +798,11 @@ function taskRow(t) {
   var tg = document.createElement('span'); tg.className = 't-tags'; tg.textContent = t.tags.map(function(x) { return '#' + x; }).join(' ');
   row.appendChild(cb); row.appendChild(dot); if (pr) row.appendChild(pr); row.appendChild(nm); row.appendChild(due); row.appendChild(tg);
   row.onclick = function() {
-    if (calReadonly(t.cal)) return;
-    getJSON('/event.json?id=' + encodeURIComponent(t.id) + '&cal=' + encodeURIComponent(t.cal || ''))
-      .then(function(d) { openEdit(d, { idx: 0, l: t.due_ms || Date.now() }); })
-      .catch(loadFailed);
+    if (calReadonly(t.cal) || t.pending) return;
+    // the row holds everything the task form shows, so the form opens at
+    // once, with no round trip to the ship first
+    openEdit({ id: t.id, cal: t.cal, cat: 'todo', meta: t.meta || { name: t.name }, due_ms: t.due_ms, done_ms: t.done_ms,
+               done: t.done, priority: t.priority, alarms: t.alarms || [] }, { idx: 0, l: t.due_ms || Date.now() });
   };
   return pressable(row);
 }
@@ -811,7 +825,11 @@ function taskGroups(tasks, today) {
 var DONE_KEEP = 7 * MS_DAY;
 var showAllDone = false;
 var doneOld = [];
+// the list as last drawn: a tick, a save or a quick-add changes it here
+// and redraws at once, and the ship's answer replaces it when it comes
+var lastTasks = [];
 function renderTasks(tasks) {
+  lastTasks = tasks;
   var open = document.getElementById('task-open'), done = document.getElementById('task-done');
   open.innerHTML = ''; done.innerHTML = '';
   var byDue = function(a, b) { return (a.due_ms || 9e15) - (b.due_ms || 9e15) || a.name.localeCompare(b.name); };
@@ -922,10 +940,19 @@ taskSave.onclick = function() {
   if (state.tag && tags.indexOf(state.tag) < 0) tags.push(state.tag);
   if (tags.length) body.meta.tags = tags;
   if (q.priority) body.priority = q.priority;
-  taskSave.disabled = true;
+  // the row appears and the box clears at once; the ship is told behind it
+  var typed = document.getElementById('task-name').value;
+  var mine = { id: '', cal: cs || '', name: q.name, note: '', tags: tags, color: calColor(cs) || '', due_ms: body.due_ms || 0, done_ms: 0,
+               done: false, priority: q.priority || 0, meta: body.meta, alarms: [], cat: 'todo', pending: true };
+  renderTasks(lastTasks.concat([mine]));
+  document.getElementById('task-name').value = ''; document.getElementById('task-hint').textContent = '';
   poke(body, function(ok) {
-    taskSave.disabled = false;
-    if (ok) { document.getElementById('task-name').value = ''; document.getElementById('task-hint').textContent = ''; }
+    if (!ok) {
+      renderTasks(lastTasks.filter(function(t) { return t !== mine; }));
+      document.getElementById('task-name').value = typed;
+      toast('The ship did not answer: "' + q.name + '" was not added');
+      return;
+    }
     setTimeout(refresh, 400);
   });
 };
@@ -1354,6 +1381,21 @@ function openSettings() {
   loadCalsList(); loadShares(); loadDav(); loadCdav(); loadGoogle(); loadFeeds(); loadConflicts(); loadOutcomes();
   settingsBack.classList.add('open');
 }
+// after a save: had the ship refused it, say why. The record's times are
+// the ship's clock, so a minute's slack, and a refusal is said once.
+var saidRefusalAt = 0;
+function sayRefusal(id, since) {
+  getJSON('/outcomes.json').then(function(o) {
+    var r = (o.refusals || []).filter(function(x) {
+      return x.at_ms > saidRefusalAt && x.at_ms >= since - 60000 && (!id || x.id === id);
+    }).pop();
+    if (!r) return;
+    saidRefusalAt = r.at_ms;
+    toast('Not saved: ' + r.why);
+    refresh();
+  }).catch(function() {});
+}
+
 // the faults that stand, with what clears each, and the last changes the
 // ship refused, with why (docs/logging.md): the record the console's one
 // line points at
@@ -2012,14 +2054,40 @@ fSave.onclick = function() {
     }
   }
 
-  fSave.disabled = true;
+  var savedId = editCtx ? editCtx.id : '', savedAt = Date.now();
   var finish = function(ok) {
-    fSave.disabled = false;
-    if (!ok) { st.textContent = 'save failed'; return; }
+    if (!ok) {
+      // the ship did not take it. The form comes back as it was left,
+      // unless another edit has been opened since
+      toast('Could not save "' + name + '": the ship did not answer');
+      if (!back.classList.contains('open')) {
+        st.textContent = 'not saved: the ship did not answer';
+        back.classList.add('open');
+      }
+      refresh();
+      return;
+    }
     st.textContent = '';
-    back.classList.remove('open');
+    toast('Saved "' + name + '"');
     setTimeout(refresh, 400);
+    // a poke is acknowledged before it is read; had the ship refused it,
+    // the reason is in its record
+    setTimeout(function() { sayRefusal(savedId, savedAt); }, 1500);
   };
+  // the form closes and says so at once; the ship is told behind it
+  back.classList.remove('open');
+  toast('Saving "' + name + '"…');
+  if (cat === 'todo' && state.view === 'tasks') {
+    var cur = editCtx && lastTasks.filter(function(t) { return t.id === editCtx.id && t.cal === editCtx.home; })[0];
+    // everything the form holds, reminders too: the row is what the form
+    // opens from next, and a field left out here would be saved away
+    var patch = { name: name, note: meta.note || '', tags: meta.tags || [], meta: meta, due_ms: body.due_ms || 0,
+                  done: !!body.done_ms, done_ms: body.done_ms || 0, priority: body.priority || 0,
+                  alarms: fAlarms.map(function(a) { return Object.assign({}, a); }) };
+    if (meta.color) patch.color = safeColor(meta.color);
+    if (cur) Object.assign(cur, patch);
+    renderTasks(cur ? lastTasks : lastTasks.concat([Object.assign({ id: '', cal: body.cal || '', color: '', alarms: [], cat: 'todo', pending: true }, patch)]));
+  }
 
   body.alarms = fAlarms.map(function(a) { return Object.assign({}, a); });
   if (!editCtx) { poke(body, finish); return; }
