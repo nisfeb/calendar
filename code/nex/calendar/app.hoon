@@ -1374,7 +1374,7 @@
 ++  del-object  del-object:core
 ::  +self-base: where this instance lives, from the shell's link registry
 ::  (/sys/link/calendar/dest.lanes: every instance claiming the name,
-::  newest first, ours among them). ~ when the road is refused or the
+::  ours among them). ~ when the road is refused or the
 ::  registry has no row yet.
 ++  self-base
   =/  m  (fiber:fiber:nexus ,(unit path))
@@ -1382,11 +1382,17 @@
   ;<  vw=(unit view:nexus)  bind:m
     (peek-soft:io [%& %& /sys/link/calendar %'dest.lanes'] ~)
   ?.  ?=([~ %file *] vw)  (pure:m ~)
-  =/  ls=(unit (set lane:tarball))
-    (mole |.(!<((set lane:tarball) (need-vase:tarball sang.u.vw))))
+  ::  an ordered list (earliest claimant first) on a kernel from
+  ::  develop's line, a set on the older one: read either, so this
+  ::  instance finds itself on both
+  =/  ls=(unit (list lane:tarball))
+    =/  l  (mole |.(!<((list lane:tarball) (need-vase:tarball sang.u.vw))))
+    ?^  l  l
+    %+  bind  (mole |.(!<((set lane:tarball) (need-vase:tarball sang.u.vw))))
+    |=(s=(set lane:tarball) ~(tap in s))
   ?~  ls  (pure:m ~)
   =/  dirs=(list path)
-    %+  murn  ~(tap in u.ls)
+    %+  murn  u.ls
     |=(=lane:tarball ?:(?=(%| -.lane) `p.lane ~))
   ?~  dirs  (pure:m ~)
   (pure:m `i.dirs)
