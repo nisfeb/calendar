@@ -35,7 +35,7 @@
         %-  pairs:enjs:format
         :~  title+s+'Calendar'
             info+s+'Events and schedules'
-            color+s+'#101541'
+            color+s+'#1E1B4B'
             image+s+'/grubbery/tiles/icon/calendar'
             href+s+'/apps/calendar'
         ==
