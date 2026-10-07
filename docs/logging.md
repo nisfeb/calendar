@@ -53,7 +53,16 @@ kernel's parked line covers the app and `road/eyre` is recorded only.
 Fault keys: `google-auth`, `google-pull/<cal>`, `google-pages/<cal>`,
 `google-push/<cal>`, `caldav-list/<cal>`, `caldav-get/<cal>`,
 `caldav-push/<cal>`, `share-push/<cal>`, `road/behn`, `road/bowl`,
-`road/eyre`, `road/inbox`.
+`road/eyre`, `road/inbox`, `road/scry`, `road/gall`, `road/code`,
+`trunk-marc`, `trunk-notice`.
+
+The trunk keys are the phone side of a reminder (`+trunk-ready` and
+`+trunk-notice`): the scry road, the gall road and the peek road to the
+kernel's marks asked softly, the kernel's mark for trunk missing, and a
+notice trunk nacked. Each is a warning, said once by the calendar (the
+kernel parks nothing, since no dart is hard), and cleared when the next
+reminder goes through. A ship with no trunk, or one older than wire 12,
+records nothing: that is not a fault.
 
 A fault a person can do nothing about is recorded and not printed: a remote
 that does not answer or answers 5xx, a rate limit (429), a host ship that

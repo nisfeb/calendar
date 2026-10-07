@@ -22,11 +22,17 @@ where each comes from:
 - **Google Calendar** — your own OAuth client, connect, link calendars, both
   ways. See `docs/google.md`.
 - **ICS feeds** — read-only subscriptions to any `.ics` address.
-- **Notifications** — browser notifications from this ship: a notice before
-  each timed event (30 minutes by default) and one at each alarm an event
-  carries. One subscription serves every app on the ship (furum's too), and a
-  browser already on in furum already gets these. Nothing is sent if the
-  calendar's push road was refused under Permits.
+- **Notifications** — notifications from this ship: a notice before each
+  timed event (30 minutes by default) and one at each alarm an event carries.
+  Browsers get them through the kernel's web push: one subscription serves
+  every app on the ship (furum's too), and a browser already on in furum
+  already gets these. Phones get them through trunk: when `%trunk` on this
+  ship speaks wire 12 or later, each reminder also goes to every phone the
+  owner's Talon registered there, under the same tag, so a phone that gets
+  both shows one. Nothing is sent if the calendar's push road was refused
+  under Permits; nothing reaches phones if its scry, gall or `/code/mar/clay/trunk/`
+  road was, or the kernel has no mark for trunk (recorded under
+  `road/scry`, `road/gall`, `road/code` or `trunk-marc` in `outcomes.json`).
 
 ## Reminders
 

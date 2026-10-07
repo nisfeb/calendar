@@ -4018,14 +4018,138 @@
   (send-simple:srv eyre-id [[200 ['content-type' 'application/json'] ~] `bod])
 ++  lead-pushes  lead-pushes:core
 ++  alarm-pushes  alarm-pushes:core
+::  +send-pushes: each reminder to the browsers subscribed through the
+::  kernel (web push) and, when %trunk here takes notices, to the owner's
+::  phones. Both carry the same tag, so a phone that gets both shows one.
 ++  send-pushes
   |=  pushes=(list [name=@t body=@t tag=@t])
   =/  m  (fiber:fiber:nexus ,~)
   ^-  form:m
   ?~  pushes  (pure:m ~)
+  ;<  phones=?  bind:m  trunk-ready
+  =/  todo=(list [name=@t body=@t tag=@t])  pushes
+  |-  ^-  form:m
+  ?~  todo  (pure:m ~)
   ;<  ~  bind:m
-    (send-push:io [~ ~ ~ [name.i.pushes body.i.pushes `'/apps/calendar/icon.svg' `'/apps/calendar' `tag.i.pushes]])
-  $(pushes t.pushes)
+    (send-push:io [~ ~ ~ [name.i.todo body.i.todo `'/apps/calendar/icon.svg' `'/apps/calendar' `tag.i.todo]])
+  ;<  ~  bind:m
+    ?.  phones  (pure:m ~)
+    (trunk-notice tag.i.todo name.i.todo body.i.todo)
+  $(todo t.todo)
+::  +soft-scry: a typed scry through the kernel's /sys/scry service, as
+::  +typed-scry:io, with the refusal swallowed: ~ when the weir refuses
+::  /sys/scry/. The wire is fixed: a nonce would ask /sys/bowl.sig.
+++  soft-scry
+  |*  [=mold mark=@tas =path]
+  =/  m  (fiber:fiber:nexus ,(unit mold))
+  ^-  form:m
+  ;<  ~  bind:m
+    (send-dart:io %node /trunk-scry &+&+[/sys/scry %'main.sig'] %poke [[/ %scry-request] [mark `^path`path]])
+  |=  input:fiber:nexus
+  :+  ~  q.state
+  ?+  in  [%skip ~]
+      ~  [%wait ~]
+      [~ %veto *]  [%done ~]
+      [~ %pack * *]
+    ?.  =(/trunk-scry wire.u.in)  [%skip ~]
+    ?~(err.u.in [%wait ~] [%done ~])
+      [~ %poke * *]
+    ?.  =([/ mark] p.sage.u.in)  [%skip ~]
+    [%done `!<(mold q.sage.u.in)]
+  ==
+::  +trunk-ready: whether reminders can reach the owner's phones: %trunk
+::  runs here and speaks wire 12 (push-notice), and the kernel carries
+::  the marc that types the poke. Each asked softly, so a refused road is
+::  a recorded fault and not a parked fiber. %gu first, with gall's own
+::  trailing $: in the kernel's event a scry of an agent that is not
+::  running fails past mole, and an empty path blocks.
+++  trunk-ready
+  =/  m  (fiber:fiber:nexus ,?)
+  ^-  form:m
+  ;<  up=(unit ?)  bind:m  (soft-scry ? %loob /gu/trunk/$)
+  ?~  up
+    ;<  ~  bind:m
+      %:  fault  './'  'road/scry'  %warning  &
+        "the scry road /sys/scry/ is refused, so reminders reach browsers only, not phones"
+        "grant it at /apps/grubbery/permits"
+      ==
+    (pure:m |)
+  ;<  ~  bind:m  (unfault './' 'road/scry')
+  ?.  u.up  (pure:m |)
+  ;<  ver=(unit json)  bind:m  (soft-scry json %json /gx/trunk/version/json)
+  ?~  ver  (pure:m |)
+  ?.  (gte (fall (gn u.ver 'wire') 0) 12)  (pure:m |)
+  ::  the marc, in either of the kernel's spellings
+  ;<  a=(unit view:nexus)  bind:m
+    (peek-soft:io [%& %& /code/mar/clay/trunk/trunk %'action.hoon'] ~)
+  ;<  b=(unit view:nexus)  bind:m
+    (peek-soft:io [%& %& /code/mar/clay/trunk %'trunk-action.hoon'] ~)
+  ?:  &(?=(~ a) ?=(~ b))
+    ;<  ~  bind:m
+      %:  fault  './'  'road/code'  %warning  &
+        "the peek road /code/mar/clay/trunk/ is refused, so reminders reach browsers only, not phones"
+        "grant it at /apps/grubbery/permits"
+      ==
+    (pure:m |)
+  ;<  ~  bind:m  (unfault './' 'road/code')
+  ?.  |(?=([~ %file *] a) ?=([~ %file *] b))
+    ;<  ~  bind:m
+      %:  fault  './'  'trunk-marc'  %warning  &
+        "this ship's grubbery has no mark for poking trunk, so reminders reach browsers only, not phones"
+        "update grubbery"
+      ==
+    (pure:m |)
+  ;<  ~  bind:m  (unfault './' 'trunk-marc')
+  (pure:m &)
+::  +trunk-notice: one reminder to the phones: a push-notice poke to
+::  %trunk on this ship through the kernel's /sys/gall service, as
+::  +remote-poke-wait. The service takes the request (%pack on our wire)
+::  and trunk's ack comes back as a [/ %poke-ack] poke on the same wire.
+::  A refusal or a nack is a recorded fault. The wire is fixed: a nonce
+::  would ask /sys/bowl.sig, and a local agent always answers.
+++  trunk-notice
+  |=  [tag=@t title=@t body=@t]
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  ::  trunk takes tag, title, body and open together up to 4 KiB.
+  ::  ponytail: a name that long is skipped, not cut
+  ?:  (gth :(add (met 3 tag) (met 3 title) (met 3 body)) 3.800)  (pure:m ~)
+  ;<  our=@p  bind:m  get-our:io
+  =/  w=wire  /trunk-notice
+  ;<  ~  bind:m
+    %-  send-dart:io
+    [%node w &+&+[/sys/gall %'main.sig'] %poke [[/ %gall-poke] [[our %trunk] trunk-action+[%push-notice tag title body ~]]]]
+  ;<  res=?(%sent %refused %nacked)  bind:m
+    |=  input:fiber:nexus
+    :+  ~  q.state
+    ?+  in  [%skip ~]
+        ~  [%wait ~]
+        [~ %veto %node * * *]
+      ?.(=(w wire.dart.u.in) [%skip ~] [%done %refused])
+        [~ %pack * *]
+      ?.  =(w wire.u.in)  [%skip ~]
+      ?~(err.u.in [%wait ~] [%done %nacked])
+        [~ %poke * *]
+      ?.  =([/ %poke-ack] p.sage.u.in)  [%skip ~]
+      =/  [aw=wire err=(unit tang)]  !<([wire (unit tang)] q.sage.u.in)
+      ?.  =(w aw)  [%skip ~]
+      [%done ?~(err %sent %nacked)]
+    ==
+  ?-    res
+      %sent
+    ;<  ~  bind:m  (unfault './' 'road/gall')
+    (unfault './' 'trunk-notice')
+      %refused
+    %:  fault  './'  'road/gall'  %warning  &
+      "the gall road /sys/gall/ is refused, so reminders reach browsers only, not phones"
+      "grant it at /apps/grubbery/permits"
+    ==
+      %nacked
+    %:  fault  './'  'trunk-notice'  %warning  &
+      "trunk refused a reminder notice, so it did not reach your phones"
+      "look at trunk's log at /apps/trunk"
+    ==
+  ==
 +$  feed-sync  feed-sync:core
 ++  feed-id  feed-id:core
 ++  do-sync
@@ -4066,14 +4190,16 @@
           (line '/sys/eyre/' 'bind its HTTP route and send page responses')
           (line '/sys/behn/' 'the reminders fiber ticks on 5-minute marks to fire due reminders')
           (line '/sys/push/' 'send a reminder as a notification when an event is about to start. Refuse this and the calendar still works; reminders just do not fire')
+          (line '/sys/scry/' 'ask whether trunk on this ship takes reminders for your phones. Refuse this and reminders reach browsers only')
           (line '/sys/iris/' 'fetch the Google calendar feeds you add, by their secret address. Refuse this and feeds are unavailable; your own events are unaffected')
-          (line '/sys/gall/' 'tell another ship you shared a calendar with it, and send it your edits to a calendar it shared with you. Refuse this and sharing with ships is unavailable; everything else works')
+          (line '/sys/gall/' 'send a reminder to your phones through trunk, tell another ship you shared a calendar with it, and send it your edits to a calendar it shared with you. Refuse this and sharing with ships is unavailable; everything else works')
           (line '/sys/ames/registry' 'let the ships you share a calendar with read it. Refuse this and sharing with ships is unavailable')
           (line '/sys/ames/usergroups/' 'keep one group per shared calendar: the ships that may read it, and whether they may edit it')
       ==
       :-  'peek'
       :-  %a
       :~  (line '/sys/link/' 'look up where this app is installed, so the page can address its own writer. Refuse this and the page cannot save events')
+          (line '/code/mar/clay/trunk/' 'see whether this ship can hand trunk a reminder for your phones. Refuse this and reminders reach browsers only')
           (line '/sys/ames/usergroups/' 'see which ships a calendar is shared with')
           (line '/sys/ames/ships/' 'read a calendar another ship shared with you, and keep it current. Refuse this and calendars shared with you are unavailable')
       ==

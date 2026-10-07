@@ -263,6 +263,10 @@ and each would have been caught by one of these (lattice
 6. A big input, if the release touches a parser or a sync path: an import
    of thousands of objects, and of one series with thousands of
    overrides, must answer in seconds, with the ship answering throughout.
+7. When the release touches reminders: `scripts/push-matrix.py` (a browser
+   gets one) and `scripts/trunk-matrix.py` (a phone does, through trunk's
+   push-notice; the test ship needs `%trunk` at wire 12 and the kernel's
+   mark for it).
 
 Test the upgrade, not just the new code. Put the previous release on the test
 ship, give it the data real ships have (including what the old code accepted
