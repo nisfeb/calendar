@@ -20,7 +20,8 @@ D=/grubbery/ball/apps/shell.shell/desks/calendar.desk/desk
 I=$D/data/calendar.calendar_app
 serf=$(pgrep -f "work --snap-dir $pier( |$)" | head -1)
 ticks() { awk '{print $14+$15}' /proc/$serf/stat; }
-get() { curl -s -m 60 -b "$JAR" "$B$1"; }
+# -L: a raw read answers with a redirect to the kernel's file route
+get() { curl -sL -m 60 -b "$JAR" "$B$1"; }
 snap() {
   mkdir -p "$1"
   for r in calendars.json events.json feeds.json config.json share/shares.json google.json \
@@ -36,7 +37,7 @@ t0=$(date +%s)
 for f in "$@"; do
   # create-file on a path that exists never answers (it waits out the
   # timeout), so only a file the ship lacks is created
-  if [[ "$(curl -s -o /dev/null -w '%{http_code}' -m 30 -b "$JAR" "$B$D/code/$f?raw=1")" != 200 ]]; then
+  if [[ "$(curl -sL -o /dev/null -w '%{http_code}' -m 30 -b "$JAR" "$B$D/code/$f?raw=1")" != 200 ]]; then
     curl -s -o /dev/null -m 120 -b "$JAR" --data-urlencode action=create-file \
       --data-urlencode filename="$(basename "$f")" "$B$D/code/$(dirname "$f")" || true
   fi
