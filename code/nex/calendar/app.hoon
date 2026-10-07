@@ -2376,10 +2376,21 @@
   =/  jon=json
     (fall (de:json:html ?~(body.request.req '' q.u.body.request.req)) *json)
   =/  post=?  =('POST' method.request.req)
+  ::  the origin as the ship sees it; behind a TLS proxy that is http
+  ::  unless the proxy says otherwise, so the page records the origin it
+  ::  was opened at when the client is saved (redirect_uri in google.json)
+  ::  and that is what Google is told, at sign-in and at the token exchange
   =/  origin=tape
     =/  host=@t  (fall (get-header:http 'host' header-list.request.req) 'localhost')
-    "{?:(secure.req "https" "http")}://{(trip host)}"
-  =/  redirect=tape  "{origin}/apps/calendar/google/callback"
+    =/  proto=@t
+      %+  fall  (get-header:http 'x-forwarded-proto' header-list.request.req)
+      ?:(secure.req 'https' 'http')
+    "{(trip proto)}://{(trip host)}"
+  =/  redirect-of
+    |=  cfg=json
+    ^-  tape
+    =/  r=@t  (gs cfg 'redirect_uri')
+    ?:(=('' r) "{origin}/apps/calendar/google/callback" (trip r))
   =/  redirect-to
     |=  where=tape
     =/  m  (fiber:fiber:nexus ,~)
@@ -2396,6 +2407,11 @@
       ?:(=('' v) acc (~(put by acc) k s+v))
     =/  tick=(unit @ud)  (gn jon 'tick_min')
     =?  new  ?=(^ tick)  (~(put by new) 'tick_min' (numb:enjs:format (max 1 u.tick)))
+    ::  the page's origin, as the browser has it: the redirect URI is the
+    ::  one the panel showed and the one registered with Google
+    =/  o=@t  (gs jon 'origin')
+    =?  new  &(!=('' o) |(=('https://' (end [3 8] o)) =('http://' (end [3 7] o))))
+      (~(put by new) 'redirect_uri' s+(crip "{(trip o)}/apps/calendar/google/callback"))
     ;<  ~  bind:m  (write-json-grub '../' 'google.json' [%o new])
     (send-json eyre-id (pairs:enjs:format ~[['ok' b+&]]))
   ::  connect: off to the consent screen
@@ -2411,7 +2427,7 @@
       [%o (~(put by ?:(?=([%o *] auth) p.auth ~)) 'state' s+state)]
     =/  q=(list [tape tape])
       :~  ["client_id" (trip cid)]
-          ["redirect_uri" redirect]
+          ["redirect_uri" (redirect-of cfg)]
           ["response_type" "code"]
           ["scope" "https://www.googleapis.com/auth/calendar"]
           ["access_type" "offline"]
@@ -2440,7 +2456,7 @@
           ["code" (trip code)]
           ["client_id" (trip (gs cfg 'client_id'))]
           ["client_secret" (trip (gs cfg 'client_secret'))]
-          ["redirect_uri" redirect]
+          ["redirect_uri" (redirect-of cfg)]
       ==
     =/  tok=json  (fall (de:json:html body) *json)
     =/  refresh=@t  (gs tok 'refresh_token')

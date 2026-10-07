@@ -55,6 +55,12 @@ if g0.get('client_id') not in ('', None, 'fake-client'):
 # setup
 ctl({'op': 'reset'})
 ship_post('/google/config', {'client_id': 'fake-client', 'client_secret': 'fake-secret', 'auth_url': FAKE + '/o/oauth2/v2/auth', 'token_url': FAKE + '/token', 'api_base': FAKE})
+# the redirect URI Google is told is the page's origin, recorded when the
+# client is saved: a ship behind a TLS proxy sees itself as http
+ship_post('/google/config', {'origin': 'https://example.test'})
+loc = subprocess.run(['curl', '-s', '-m', '60', '-b', JAR, '-o', '/dev/null', '-w', '%{redirect_url}', CAL + '/google/connect'], capture_output=True, text=True).stdout
+check('connect sends the recorded origin as the redirect URI', 'redirect_uri=https%3A%2F%2Fexample.test%2Fapps%2Fcalendar%2Fgoogle%2Fcallback' in loc, loc)
+ship_post('/google/config', {'origin': SHIP})
 subprocess.run(['curl', '-s', '-m', '60', '-b', JAR, '-L', '-o', '/dev/null', CAL + '/google/connect'])
 g = ship_get('/google.json'); check('connected', g.get('connected') is True, g)
 for c in ship_get('/calendars.json'):

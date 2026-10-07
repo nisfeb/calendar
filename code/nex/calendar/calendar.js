@@ -1349,7 +1349,9 @@ function loadGoogleCalendars(linked) {
 }
 
 document.getElementById('google-save').onclick = function() {
-  var body = { client_id: document.getElementById('google-cid').value.trim(), client_secret: document.getElementById('google-csec').value.trim() };
+  // the origin goes along: the ship behind a TLS proxy sees http, and the
+  // redirect URI Google is told must be the one shown here and registered
+  var body = { client_id: document.getElementById('google-cid').value.trim(), client_secret: document.getElementById('google-csec').value.trim(), origin: location.origin };
   busy(this, postJSON('/google/config', body))
     .then(function(r) { document.getElementById('google-msg').textContent = r.ok ? 'saved' : 'not saved (' + r.status + ')'; loadGoogle(); });
 };
@@ -1360,7 +1362,7 @@ document.getElementById('google-connect').onclick = function() {
   var cid = document.getElementById('google-cid').value.trim();
   var sec = document.getElementById('google-csec').value.trim();
   if (!cid) { msg.textContent = 'paste the client id and secret first'; return; }
-  busy(this, postJSON('/google/config', { client_id: cid, client_secret: sec }))
+  busy(this, postJSON('/google/config', { client_id: cid, client_secret: sec, origin: location.origin }))
     .then(function(r) { if (!r.ok) throw new Error(r.status); location.href = CAL + '/google/connect'; })
     .catch(function(e) { msg.textContent = 'could not save the client (' + e.message + ')'; });
 };

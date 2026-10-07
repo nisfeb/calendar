@@ -22,6 +22,14 @@ app has no shared credential.
    Google asks for consent, then sends you back; the panel lists your
    calendars. **Link** the ones you want on the ship.
 
+The redirect URI the ship tells Google is the one the panel showed when you
+saved: the page records the address it was opened at (`redirect_uri` in
+`google.json`). A ship behind a TLS proxy sees its own requests as plain
+http, and Google refuses an http redirect for anything but localhost, so
+save the client from the address you want registered, `https://<your-host>`.
+A `redirect_uri_mismatch` error from Google means the two differ: save again
+from the right address, or change the URI registered for the client.
+
 The refresh token lives in `google-auth.json` inside the calendar's own tree
 and nowhere else. **Disconnect** forgets it.
 
