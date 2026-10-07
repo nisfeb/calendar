@@ -583,8 +583,10 @@
         ~[(line (weld "DUE" params.wt) value.wt)]
         ^-  (list tape)
         ?~  done.ev
-          ::  an open task keeps the STATUS it came with
-          ?^((get-prop props.e 'STATUS') ~ ~[(line "STATUS" "NEEDS-ACTION")])
+          ::  an open task keeps the STATUS it came with, written here so
+          ::  an export is the same whether the task was typed or imported
+          =/  st=(unit prop)  (get-prop props.e 'STATUS')
+          ~[?~(st (line "STATUS" "NEEDS-ACTION") (line (trip k.u.st) (trip v.u.st)))]
         ::  ~1970.1.1 marks STATUS:COMPLETED read without a COMPLETED stamp
         :-  (line "STATUS" "COMPLETED")
         :-  (line "PERCENT-COMPLETE" "100")
@@ -659,8 +661,10 @@
           =('X-GRUBBERY-UID' k.p)
           ::  the Google ids are this ship's bookkeeping, not the event's
           =("X-GOOGLE-" (scag 9 (trip k.p)))
+          ::  a task's STATUS is written in its place above, done or not
+          &(?=(%todo -.ev) =('STATUS' (base-key k.p)))
           ?&  ?=(%todo -.ev)  ?=(^ done.ev)
-              ?=(^ (find ~[(base-key k.p)] ~['STATUS' 'PERCENT-COMPLETE' 'COMPLETED']))
+              ?=(^ (find ~[(base-key k.p)] ~['PERCENT-COMPLETE' 'COMPLETED']))
       ==  ==
     |=(p=prop (line (trip k.p) (trip v.p)))
     ~[(weld "END:" (weld comp crlf))]

@@ -158,4 +158,25 @@
     (expect !>((meta-prop:ics ['PRIORITY' '5'])))
     (expect !>(!(meta-prop:ics ['X-KEEP' 'k'])))
   ==
+::
+::  an open task's STATUS, typed or kept from a file, is written before
+::  its alarms either way, so an export is the same through an import
+++  test-open-task-status-in-place
+  =/  task=event:cal  [%todo `~2026.11.2 ~ (malt ~[['name' s+'t']])]
+  =/  typed=entry:cal  [task 't@test' '' 0 ~[[[%rel ~h1] 'an hour']] ~]
+  =/  kept=entry:cal  [task 't@test' '' 0 ~[[[%rel ~h1] 'an hour']] ~[['STATUS' 'NEEDS-ACTION']]]
+  =/  a=tape  (write-entry:ics typed ~ ~2026.11.1)
+  =/  b=tape  (write-entry:ics kept ~ ~2026.11.1)
+  =/  before
+    |=  t=tape
+    ^-  ?
+    =/  s=(unit @ud)  (find "STATUS:NEEDS-ACTION" t)
+    =/  v=(unit @ud)  (find "BEGIN:VALARM" t)
+    &(?=(^ s) ?=(^ v) (lth u.s u.v))
+  ;:  weld
+    (expect !>((before a)))
+    (expect !>((before b)))
+    (expect-eq !>(1) !>((lent (fand "STATUS:" b))))
+    (expect-eq !>(a) !>(b))
+  ==
 --
