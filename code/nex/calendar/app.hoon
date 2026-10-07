@@ -4026,15 +4026,15 @@
   =/  m  (fiber:fiber:nexus ,~)
   ^-  form:m
   ?~  pushes  (pure:m ~)
-  ;<  phones=?  bind:m  trunk-ready
+  ;<  wire=@ud  bind:m  trunk-wire
   =/  todo=(list [name=@t body=@t tag=@t])  pushes
   |-  ^-  form:m
   ?~  todo  (pure:m ~)
   ;<  ~  bind:m
     (send-push:io [~ ~ ~ [name.i.todo body.i.todo `'/apps/calendar/icon.svg' `'/apps/calendar' `tag.i.todo]])
   ;<  ~  bind:m
-    ?.  phones  (pure:m ~)
-    (trunk-notice tag.i.todo name.i.todo body.i.todo)
+    ?:  =(0 wire)  (pure:m ~)
+    (trunk-notice wire tag.i.todo name.i.todo body.i.todo)
   $(todo t.todo)
 ::  +soft-scry: a typed scry through the kernel's /sys/scry service, as
 ::  +typed-scry:io, with the refusal swallowed: ~ when the weir refuses
@@ -4057,14 +4057,15 @@
     ?.  =([/ mark] p.sage.u.in)  [%skip ~]
     [%done `!<(mold q.sage.u.in)]
   ==
-::  +trunk-ready: whether reminders can reach the owner's phones: %trunk
-::  runs here and speaks wire 12 (push-notice), and the kernel carries
-::  the marc that types the poke. Each asked softly, so a refused road is
-::  a recorded fault and not a parked fiber. %gu first, with gall's own
-::  trailing $: in the kernel's event a scry of an agent that is not
-::  running fails past mole, and an empty path blocks.
-++  trunk-ready
-  =/  m  (fiber:fiber:nexus ,?)
+::  +trunk-wire: the wire %trunk here speaks, when reminders can reach the
+::  owner's phones through it: it runs, speaks wire 12 (push-notice) or
+::  later, and the kernel carries the marc that types the poke. 0 when
+::  not. Each asked softly, so a refused road is a recorded fault and not
+::  a parked fiber. %gu first, with gall's own trailing $: in the kernel's
+::  event a scry of an agent that is not running fails past mole, and an
+::  empty path blocks.
+++  trunk-wire
+  =/  m  (fiber:fiber:nexus ,@ud)
   ^-  form:m
   ;<  up=(unit ?)  bind:m  (soft-scry ? %loob /gu/trunk/$)
   ?~  up
@@ -4073,12 +4074,13 @@
         "the scry road /sys/scry/ is refused, so reminders reach browsers only, not phones"
         "grant it at /apps/grubbery/permits"
       ==
-    (pure:m |)
+    (pure:m 0)
   ;<  ~  bind:m  (unfault './' 'road/scry')
-  ?.  u.up  (pure:m |)
+  ?.  u.up  (pure:m 0)
   ;<  ver=(unit json)  bind:m  (soft-scry json %json /gx/trunk/version/json)
-  ?~  ver  (pure:m |)
-  ?.  (gte (fall (gn u.ver 'wire') 0) 12)  (pure:m |)
+  ?~  ver  (pure:m 0)
+  =/  wire=@ud  (fall (gn u.ver 'wire') 0)
+  ?.  (gte wire 12)  (pure:m 0)
   ::  the marc, in either of the kernel's spellings
   ;<  a=(unit view:nexus)  bind:m
     (peek-soft:io [%& %& /code/mar/clay/trunk/trunk %'action.hoon'] ~)
@@ -4090,7 +4092,7 @@
         "the peek road /code/mar/clay/trunk/ is refused, so reminders reach browsers only, not phones"
         "grant it at /apps/grubbery/permits"
       ==
-    (pure:m |)
+    (pure:m 0)
   ;<  ~  bind:m  (unfault './' 'road/code')
   ?.  |(?=([~ %file *] a) ?=([~ %file *] b))
     ;<  ~  bind:m
@@ -4098,43 +4100,60 @@
         "this ship's grubbery has no mark for poking trunk, so reminders reach browsers only, not phones"
         "update grubbery"
       ==
-    (pure:m |)
+    (pure:m 0)
   ;<  ~  bind:m  (unfault './' 'trunk-marc')
-  (pure:m &)
-::  +trunk-notice: one reminder to the phones: a push-notice poke to
-::  %trunk on this ship through the kernel's /sys/gall service, as
-::  +remote-poke-wait. The service takes the request (%pack on our wire)
-::  and trunk's ack comes back as a [/ %poke-ack] poke on the same wire.
-::  A refusal or a nack is a recorded fault. The wire is fixed: a nonce
-::  would ask /sys/bowl.sig, and a local agent always answers.
+  (pure:m wire)
+::  +trunk-poke: one trunk-action poke to %trunk on this ship through the
+::  kernel's /sys/gall service, as +remote-poke-wait. The service takes
+::  the request (%pack on our wire) and trunk's ack comes back as a
+::  [/ %poke-ack] poke on the same wire. The wire is fixed: a nonce would
+::  ask /sys/bowl.sig, and a local agent always answers.
+++  trunk-poke
+  |=  act=*
+  =/  m  (fiber:fiber:nexus ,?(%sent %refused %nacked))
+  ^-  form:m
+  ;<  our=@p  bind:m  get-our:io
+  =/  w=wire  /trunk-notice
+  ;<  ~  bind:m
+    %-  send-dart:io
+    [%node w &+&+[/sys/gall %'main.sig'] %poke [[/ %gall-poke] [[our %trunk] trunk-action+act]]]
+  |=  input:fiber:nexus
+  :+  ~  q.state
+  ?+  in  [%skip ~]
+      ~  [%wait ~]
+      [~ %veto %node * * *]
+    ?.(=(w wire.dart.u.in) [%skip ~] [%done %refused])
+      [~ %pack * *]
+    ?.  =(w wire.u.in)  [%skip ~]
+    ?~(err.u.in [%wait ~] [%done %nacked])
+      [~ %poke * *]
+    ?.  =([/ %poke-ack] p.sage.u.in)  [%skip ~]
+    =/  [aw=wire err=(unit tang)]  !<([wire (unit tang)] q.sage.u.in)
+    ?.  =(w aw)  [%skip ~]
+    [%done ?~(err %sent %nacked)]
+  ==
+::  +trunk-notice: one reminder to the phones. A refusal or a nack of the
+::  poke trunk should take is a recorded fault.
 ++  trunk-notice
-  |=  [tag=@t title=@t body=@t]
+  |=  [wire=@ud tag=@t title=@t body=@t]
   =/  m  (fiber:fiber:nexus ,~)
   ^-  form:m
   ::  trunk takes tag, title, body and open together up to 4 KiB.
   ::  ponytail: a name that long is skipped, not cut
   ?:  (gth :(add (met 3 tag) (met 3 title) (met 3 body)) 3.800)  (pure:m ~)
-  ;<  our=@p  bind:m  get-our:io
-  =/  w=wire  /trunk-notice
-  ;<  ~  bind:m
-    %-  send-dart:io
-    [%node w &+&+[/sys/gall %'main.sig'] %poke [[/ %gall-poke] [[our %trunk] trunk-action+[%push-notice tag title body ~]]]]
+  ::  trunk refuses an empty title; the phone still gets the reminder
+  =/  title=@t  ?:(=('' title) 'Reminder' title)
+  ::  wire 14 names the sender, so the calendar is its own app on the
+  ::  phone and the trunk page, with its own switch and its own pace,
+  ::  rather than one "grubbery" with every other grubbery app. A kernel
+  ::  whose marc knows only the plain poke nacks the named one: send the
+  ::  plain one then, as wire 12 and 13 take.
   ;<  res=?(%sent %refused %nacked)  bind:m
-    |=  input:fiber:nexus
-    :+  ~  q.state
-    ?+  in  [%skip ~]
-        ~  [%wait ~]
-        [~ %veto %node * * *]
-      ?.(=(w wire.dart.u.in) [%skip ~] [%done %refused])
-        [~ %pack * *]
-      ?.  =(w wire.u.in)  [%skip ~]
-      ?~(err.u.in [%wait ~] [%done %nacked])
-        [~ %poke * *]
-      ?.  =([/ %poke-ack] p.sage.u.in)  [%skip ~]
-      =/  [aw=wire err=(unit tang)]  !<([wire (unit tang)] q.sage.u.in)
-      ?.  =(w aw)  [%skip ~]
-      [%done ?~(err %sent %nacked)]
-    ==
+    ?.  (gte wire 14)  (trunk-poke [%push-notice tag title body ~])
+    ;<  named=?(%sent %refused %nacked)  bind:(fiber:fiber:nexus ,?(%sent %refused %nacked))
+      (trunk-poke [%push-notice-as 'calendar' tag title body ~])
+    ?.  ?=(%nacked named)  (pure:(fiber:fiber:nexus ,?(%sent %refused %nacked)) named)
+    (trunk-poke [%push-notice tag title body ~])
   ?-    res
       %sent
     ;<  ~  bind:m  (unfault './' 'road/gall')

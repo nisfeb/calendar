@@ -29,7 +29,10 @@ where each comes from:
   already gets these. Phones get them through trunk: when `%trunk` on this
   ship speaks wire 12 or later, each reminder also goes to every phone the
   owner's Talon registered there, under the same tag, so a phone that gets
-  both shows one. Nothing is sent if the calendar's push road was refused
+  both shows one. From trunk wire 14 the calendar sends them as its own
+  named app, so the trunk page has a switch for it and trunk paces it on
+  its own: one push every five seconds, later ones batched as "N alerts
+  from calendar", thirty an hour. Nothing is sent if the calendar's push road was refused
   under Permits; nothing reaches phones if its scry, gall or `/code/mar/clay/trunk/`
   road was, or the kernel has no mark for trunk (recorded under
   `road/scry`, `road/gall`, `road/code` or `trunk-marc` in `outcomes.json`).
