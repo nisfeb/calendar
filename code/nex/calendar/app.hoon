@@ -54,9 +54,6 @@
           ::  (+cache-ver).
           [%fall %& [/ %'order.calendar-cache'] [[/ %calendar-cache] *cache:cal]]
           [%fall %& [/ %'index.calendar-cache'] [[/ %calendar-cache] *cache:cal]]
-          ::  spans.calendar-cache: what the cache holds per event, so a
-          ::  change moves only that event's refs (+spans-index:core)
-          [%fall %& [/ %'spans.calendar-cache'] [[/ %noun] *spans-index:core]]
           [%fall %& [/ %'order-ver.json'] [[/ %json] [%o ~]]]
           ::  rise.json: per fiber, its crashes in a row and when it tries
           ::  again (+rise-later)
@@ -449,7 +446,11 @@
         ::  rename, a sync stamping remote ids) inflates nothing: the
         ::  cache is only marked current. One window.json already built
         ::  for this calendar is left as it is.
+        ::  the spans index (+spans-index:core) is kept here, in memory:
+        ::  a grub of it would cost a write per change, and after a
+        ::  restart one build whole brings it back
         =|  last=(unit [(map eid:cal event:cal) @dr (unit @t)])
+        =|  ix=spans-index:core
         |-
         ;<  =view:nexus  bind:m  (peek:io road ~)
         ?.  ?=([%file *] view)
@@ -468,18 +469,21 @@
           $
         ;<  now=@da  bind:m  get-time:io
         ;<  ca=cache:cal  bind:m  (read-cache './')
-        ;<  ix=spans-index:core  bind:m  (read-spans './')
         ::  the reach moves on, and everything is built again, when under
         ::  half the horizon is left; else only the events that changed
         =/  reach=@dr  (min horizon.c max-reach)
         =/  thru=@da  ?:((lth thru.ca (add now (div reach 2))) (add now reach) thru.ca)
         =/  [new=cache:cal nix=spans-index:core]  (refresh-cache:core ca ix c kind-for thru)
-        ;<  ~  bind:m  (replace:io (by-uid new))
+        ::  each write of a noun this size costs the kernel most of a
+        ::  second, so the copy other apps read moves only when the
+        ::  occurrences did (a rename leaves them)
+        ;<  ~  bind:m
+          ?:  =(order.new order.ca)  (pure:(fiber:fiber:nexus ,~) ~)
+          (replace:io (by-uid new))
         ;<  ~  bind:m  (over:io (grub-road './' 'index.calendar-cache') [[/ %calendar-cache] new])
-        ;<  ~  bind:m  (write-spans './' nix)
         ;<  ~  bind:m  (write-cache-ver './' ver)
         ;<  *  bind:m  (take-news:io /cal)
-        $(last key)
+        $(last key, ix nix)
           ::
           ::  /google.sig: the sync fiber, every backend (Google, followed
           ::  CalDAV calendars, sharing both ways)
@@ -1092,6 +1096,7 @@
             %-  pairs:enjs:format
             :~  ['title' s+title.c]
                 ['zone' ?~(zone.c ~ s+u.zone.c)]
+                ['horizon_days' (numb:enjs:format (div horizon.c ~d1))]
                 ['ball' s+(crip ball)]
                 ['ship' s+(scot %p our)]
                 ['lead_min' (numb:enjs:format (fall (gn rem 'lead_min') 30))]
@@ -1324,20 +1329,6 @@
   |=  [c=calendar:cal thru=@da]
   ^-  cache:cal
   (inflate-all:core c kind-for thru)
-::  +read-spans, +write-spans: spans.calendar-cache, what the cache holds
-::  per event (+spans-index:core). Unreadable is empty, which builds whole.
-++  read-spans
-  |=  pre=@t
-  =/  m  (fiber:fiber:nexus ,spans-index:core)
-  ^-  form:m
-  ;<  vw=view:nexus  bind:m  (peek:io (grub-road pre 'spans.calendar-cache') ~)
-  ?.  ?=([%file *] vw)  (pure:m *spans-index:core)
-  (pure:m (fall (mole |.(;;(spans-index:core (sang-noun:tarball sang.vw)))) *spans-index:core))
-++  write-spans
-  |=  [pre=@t ix=spans-index:core]
-  =/  m  (fiber:fiber:nexus ,~)
-  ^-  form:m
-  (over:io (grub-road pre 'spans.calendar-cache') [[/ %noun] ix])
 ::  +fresh-cache: the cache, rebuilt and kept first when it is behind: built
 ::  from an older calendar (a write its fiber has not caught up with),
 ::  short of to, or with under half the horizon left
@@ -1357,17 +1348,14 @@
           (lth thru.ca (add now (div horizon.c 2)))
       ==
     (pure:m ca)
-  ;<  ix=spans-index:core  bind:m  (read-spans pre)
-  ::  a reach that falls short moves on, and everything is built again;
-  ::  else only the events that changed
-  =/  far=?  |((gth to thru.ca) (lth thru.ca (add now (div horizon.c 2))))
-  =/  thru=@da  ?:(far (max (add now horizon.c) to) thru.ca)
-  =/  [new=cache:cal nix=spans-index:core]  (refresh-cache:core ca ix c kind-for thru)
+  ::  built whole: the fiber keeps the per-event index that would let
+  ::  this move only the changed events, and it is almost always ahead
+  ::  of a request (its refresh runs in the write's own event)
+  =/  new=cache:cal  (inflate-all c (max (add now horizon.c) to))
   ::  the cache first, then what it is current for: a reload between the
   ::  two leaves a version that says stale, never one that says current
   ;<  ~  bind:m  (over:io (grub-road pre 'index.calendar-cache') [[/ %calendar-cache] new])
   ;<  ~  bind:m  (over:io (grub-road pre 'order.calendar-cache') [[/ %calendar-cache] (by-uid new)])
-  ;<  ~  bind:m  (write-spans pre nix)
   ;<  ~  bind:m  (write-cache-ver pre (cache-ver:cal c))
   (pure:m new)
 ++  max-reach  max-reach:core

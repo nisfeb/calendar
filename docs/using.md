@@ -149,6 +149,8 @@ API: `GET /apps/calendar/tags.json` lists tags with counts;
 
 A big calendar need not be read whole. `GET /apps/calendar/window.json?from=<ms>&to=<ms>` answers the occurrences in a window, one row each (`id`, `cal`, `idx`, `l`, `r`, `meta`). `events.json` answers entries, one row per event, and takes the same window: `?from=<ms>&to=<ms>` keeps the events with an occurrence in it (a series that began earlier included, a task due in it included, an undated task not). It also takes `?cat=` (`timed`, `allday`, `date`, `todo`) and `?tag=`, together or alone; `?cat=todo` is the task list. A window is at most 800 days, and a window needs both ends.
 
+The occurrence index is kept up event by event: a change re-inflates only the events it touched, and the index is built whole only when its reach moves on (a year ahead for a new calendar, `horizon_days` in `config.json`, settable with the `config` poke) or the zone changes. On a big calendar each change still costs the kernel a write of the index, so a ship with thousands of occurrences feels an edit as a short pause, not as minutes.
+
 Another app on the ship can read the occurrence index itself: `order.calendar-cache` in the calendar's instance, `[thru stops order]` with each occurrence under its event's UID. That shape and those keys stay as they are for such readers; the calendar keeps its own index, keyed `<calendar>/<uid>`, in `index.calendar-cache`.
 
 ## Repeats

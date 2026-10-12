@@ -124,7 +124,9 @@
 ++  fresh-cal  `cal`[['Calendar' '#1e3a5f' %local ~] ~ ~ 0]
 ++  fresh-calendar
   ^-  calendar
-  [%2 'Calendar' ~ (mul 3 ~d365) (~(put by *(map @ta cal)) %default fresh-cal)]
+  ::  a year ahead: the cache holds every occurrence out to the horizon,
+  ::  and each change writes it; a view past the horizon builds further
+  [%2 'Calendar' ~ ~d365 (~(put by *(map @ta cal)) %default fresh-cal)]
 ::  +make-etag: what a client would get back, hashed. The uid and seq are
 ::  identity, not content, so they are left out.
 ++  make-etag
