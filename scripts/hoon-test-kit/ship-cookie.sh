@@ -15,7 +15,7 @@ pier=$(cd "${1:?usage: ship-cookie.sh <pier> <base-url> <cookie-jar>}" && pwd)
 url=${2:?base url, e.g. http://localhost:8080}; url=${url%/}
 jar=${3:?cookie jar path}
 # next to the pier, else ~/software (where fleet piers' vere lives)
-VERE=${VERE:-$(ls -d "$(dirname "$pier")"/vere-*-linux-x86_64 "$HOME"/software/vere-*-linux-x86_64 2>/dev/null | sort -V | tail -1)}
+VERE=${VERE:-$({ ls -d "$(dirname "$pier")"/vere-*-linux-x86_64 "$HOME"/software/vere-*-linux-x86_64 2>/dev/null || true; } | sort -V | tail -1)}
 [[ -x "$VERE" ]] || { echo "no vere binary: set VERE" >&2; exit 2; }
 
 # one cord, "~ship code": the ship renders both, nothing here parses @p

@@ -37,7 +37,7 @@ sock="$pier/.urb/conn.sock"
 # the runtime is only used for its jam/cue framing: $VERE, or the newest
 # vere-* sitting beside the pier
 # next to the pier, else ~/software (where fleet piers' vere lives)
-VERE=${VERE:-$(ls -d "$(dirname "$pier")"/vere-*-linux-x86_64 "$HOME"/software/vere-*-linux-x86_64 2>/dev/null | sort -V | tail -1)}
+VERE=${VERE:-$({ ls -d "$(dirname "$pier")"/vere-*-linux-x86_64 "$HOME"/software/vere-*-linux-x86_64 2>/dev/null || true; } | sort -V | tail -1)}
 [[ -x "$VERE" ]] || { echo "no vere binary: set VERE" >&2; exit 2; }
 
 # A LIBS entry is src or src=dest. With no dest it lands at lib/<name>.hoon,
