@@ -4,7 +4,9 @@ The pure libs (`lib/rrule`, `lib/rules`, `lib/ics`, `lib/calendar`,
 `lib/calendar-core`, the rule kinds, and `lib/pytz` under them) have unit
 suites in `tests/lib/`,
 run with [hoon-test-kit](https://github.com/nisfeb/hoon-test-kit) on a
-fake ship in about 10 seconds.
+fake ship in about 10 seconds, or with no ship through `vere eval`
+(`scripts/offline-tests.sh`). The test ship is `~rux` in
+hoon-development's fleet set `calendar`: see `TESTING.md`.
 
 ## Reaching the nexus
 
