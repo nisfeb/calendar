@@ -245,6 +245,21 @@
   ^-  order
   =/  cur=(set ref)  (fall (get:on-order o at) ~)
   (put:on-order o at (~(put in cur) r))
+::  +del-ref: a ref out of the set at a moment; a moment left empty goes
+++  del-ref
+  |=  [o=order at=@da r=ref]
+  ^-  order
+  =/  cur=(set ref)  (fall (get:on-order o at) ~)
+  =/  nxt=(set ref)  (~(del in cur) r)
+  ?~  nxt  +:(del:on-order o at)
+  (put:on-order o at nxt)
+::  +del-spans: a ref out of both edges +add-spans entered it at
+++  del-spans
+  |=  [o=order r=ref]
+  ^-  order
+  =.  o  (del-ref o l.span.r r)
+  ?:  =(l.span.r r.span.r)  o
+  (del-ref o r.span.r r)
 ::  +add-spans: index every realization of one occurrence, both edges
 ::
 ++  add-spans

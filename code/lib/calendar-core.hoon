@@ -1055,4 +1055,89 @@
   =/  was=(unit json)  (~(get by fs) key)
   ?~  was  [| | out]
   [(fault-said u.was) & [%o (~(put by o) 'faults' [%o (~(del by fs) key)])]]
+::  +spans-index: what the cache holds for each event, so a change to
+::  one event moves only its refs: the refs per eid with the etag they
+::  were built from, and the reach and zone of the build. Kept beside
+::  the cache; a build for another reach or zone starts over.
++$  spans-index
+  [thru=@da zone=(unit @t) rows=(map eid:cal [=etag:cal refs=(list ref:cal)])]
+::  +inflate-all: every event's occurrences through thru, as the cache.
+::  The walk goes a day further: its wall is a naive moment, and a zone
+::  ahead of UTC places one past thru before it.
+++  inflate-all
+  |=  [c=calendar:cal kind-for=$-(rail:tarball (unit kind:rules)) thru=@da]
+  ^-  cache:cal
+  =/  [stops=(map eid:cal @da) o=order:cal]
+    (inflate:cal (keyed-events c) kind-for (add thru ~d1) zone.c)
+  [thru stops o]
+::  +refs-in: every ref an order holds, once each (a span is entered at
+::  both its edges)
+++  refs-in
+  |=  o=order:cal
+  ^-  (set ref:cal)
+  %+  roll  (tap:on-order:cal o)
+  |=  [[@da rs=(set ref:cal)] acc=(set ref:cal)]
+  (~(uni in acc) rs)
+::  +index-of: the spans index of a cache just built from these entries
+++  index-of
+  |=  [ca=cache:cal zone=(unit @t) ens=(map eid:cal entry:cal)]
+  ^-  spans-index
+  =/  by-eid=(map eid:cal (list ref:cal))
+    %+  roll  ~(tap in (refs-in order.ca))
+    |=  [r=ref:cal acc=(map eid:cal (list ref:cal))]
+    (~(put by acc) eid.r [r (fall (~(get by acc) eid.r) ~)])
+  :+  thru.ca  zone
+  %-  ~(urn by ens)
+  |=  [k=eid:cal e=entry:cal]
+  [etag.e (fall (~(get by by-eid) k) ~)]
+::  +refresh-cache: the cache brought up to the calendar. Every event
+::  again when the reach or the zone is not the index's, or the index is
+::  not the cache's; else only the events whose etag moved or that went:
+::  their refs out of the order, the new ones in. The same cache a full
+::  build gives, at the cost of the events that changed.
+++  refresh-cache
+  |=  $:  ca=cache:cal  ix=spans-index  c=calendar:cal
+          kind-for=$-(rail:tarball (unit kind:rules))  thru=@da
+      ==
+  ^-  [cache:cal spans-index]
+  =/  ens=(map eid:cal entry:cal)  (keyed c)
+  ?.  &(=(thru thru.ix) =(zone.c zone.ix) =(thru thru.ca))
+    =/  new=cache:cal  (inflate-all c kind-for thru)
+    [new (index-of new zone.c ens)]
+  =/  o=order:cal  order.ca
+  =/  stops=(map eid:cal @da)  stops.ca
+  =/  rows=(map eid:cal [=etag:cal refs=(list ref:cal)])  rows.ix
+  ::  gone, or changed: out
+  =/  old=(list [id=eid:cal et=etag:cal refs=(list ref:cal)])  ~(tap by rows.ix)
+  |-
+  ?^  old
+    =/  cur=(unit entry:cal)  (~(get by ens) id.i.old)
+    ?:  &(?=(^ cur) =(etag.u.cur et.i.old))  $(old t.old)
+    %=  $
+      old    t.old
+      o      (roll refs.i.old |=([r=ref:cal acc=_o] (del-spans:cal acc r)))
+      stops  (~(del by stops) id.i.old)
+      rows   (~(del by rows) id.i.old)
+    ==
+  ::  new, or changed: in
+  =/  now=(list [id=eid:cal e=entry:cal])  ~(tap by ens)
+  |-
+  ?^  now
+    =/  had=(unit [=etag:cal refs=(list ref:cal)])  (~(get by rows.ix) id.i.now)
+    ?:  &(?=(^ had) =(etag.u.had etag.e.i.now))  $(now t.now)
+    =/  one=[stops=(map eid:cal @da) =order:cal]
+      %-  inflate:cal
+      :^    (~(put by *(map eid:cal event:cal)) id.i.now event.e.i.now)
+          kind-for
+        (add thru ~d1)
+      zone.c
+    =/  refs=(list ref:cal)  ~(tap in (refs-in order.one))
+    =/  stop=(unit @da)  (~(get by stops.one) id.i.now)
+    %=  $
+      now    t.now
+      o      (roll refs |=([r=ref:cal acc=_o] (add-spans:cal acc eid.r idx.r ~[span.r])))
+      stops  ?~(stop (~(del by stops) id.i.now) (~(put by stops) id.i.now u.stop))
+      rows   (~(put by rows) id.i.now [etag.e.i.now refs])
+    ==
+  [[thru stops o] [thru zone.c rows]]
 --

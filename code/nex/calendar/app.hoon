@@ -54,6 +54,9 @@
           ::  (+cache-ver).
           [%fall %& [/ %'order.calendar-cache'] [[/ %calendar-cache] *cache:cal]]
           [%fall %& [/ %'index.calendar-cache'] [[/ %calendar-cache] *cache:cal]]
+          ::  spans.calendar-cache: what the cache holds per event, so a
+          ::  change moves only that event's refs (+spans-index:core)
+          [%fall %& [/ %'spans.calendar-cache'] [[/ %noun] *spans-index:core]]
           [%fall %& [/ %'order-ver.json'] [[/ %json] [%o ~]]]
           ::  rise.json: per fiber, its crashes in a row and when it tries
           ::  again (+rise-later)
@@ -464,9 +467,16 @@
           ;<  *  bind:m  (take-news:io /cal)
           $
         ;<  now=@da  bind:m  get-time:io
-        =/  new=cache:cal  (inflate-all c (add now (min horizon.c max-reach)))
+        ;<  ca=cache:cal  bind:m  (read-cache './')
+        ;<  ix=spans-index:core  bind:m  (read-spans './')
+        ::  the reach moves on, and everything is built again, when under
+        ::  half the horizon is left; else only the events that changed
+        =/  reach=@dr  (min horizon.c max-reach)
+        =/  thru=@da  ?:((lth thru.ca (add now (div reach 2))) (add now reach) thru.ca)
+        =/  [new=cache:cal nix=spans-index:core]  (refresh-cache:core ca ix c kind-for thru)
         ;<  ~  bind:m  (replace:io (by-uid new))
         ;<  ~  bind:m  (over:io (grub-road './' 'index.calendar-cache') [[/ %calendar-cache] new])
+        ;<  ~  bind:m  (write-spans './' nix)
         ;<  ~  bind:m  (write-cache-ver './' ver)
         ;<  *  bind:m  (take-news:io /cal)
         $(last key)
@@ -1309,15 +1319,25 @@
   ;<  vw=view:nexus  bind:m  (peek:io (grub-road pre 'index.calendar-cache') ~)
   ?.  ?=([%file *] vw)  (pure:m *cache:cal)
   (pure:m (fall (mole |.(!<(cache:cal (need-vase:tarball sang.vw)))) *cache:cal))
-::  +inflate-all: every event's occurrences through thru, as the cache.
-::  The walk goes a day further: its wall is a naive moment, and a zone
-::  ahead of UTC places one past thru before it.
+::  +inflate-all: every event's occurrences through thru, as the cache
 ++  inflate-all
   |=  [c=calendar:cal thru=@da]
   ^-  cache:cal
-  =/  [stops=(map eid:cal @da) o=order:cal]
-    (inflate:cal (keyed-events c) kind-for (add thru ~d1) zone.c)
-  [thru stops o]
+  (inflate-all:core c kind-for thru)
+::  +read-spans, +write-spans: spans.calendar-cache, what the cache holds
+::  per event (+spans-index:core). Unreadable is empty, which builds whole.
+++  read-spans
+  |=  pre=@t
+  =/  m  (fiber:fiber:nexus ,spans-index:core)
+  ^-  form:m
+  ;<  vw=view:nexus  bind:m  (peek:io (grub-road pre 'spans.calendar-cache') ~)
+  ?.  ?=([%file *] vw)  (pure:m *spans-index:core)
+  (pure:m (fall (mole |.(;;(spans-index:core (sang-noun:tarball sang.vw)))) *spans-index:core))
+++  write-spans
+  |=  [pre=@t ix=spans-index:core]
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  (over:io (grub-road pre 'spans.calendar-cache') [[/ %noun] ix])
 ::  +fresh-cache: the cache, rebuilt and kept first when it is behind: built
 ::  from an older calendar (a write its fiber has not caught up with),
 ::  short of to, or with under half the horizon left
@@ -1337,11 +1357,17 @@
           (lth thru.ca (add now (div horizon.c 2)))
       ==
     (pure:m ca)
-  =/  new=cache:cal  (inflate-all c (max (add now horizon.c) to))
+  ;<  ix=spans-index:core  bind:m  (read-spans pre)
+  ::  a reach that falls short moves on, and everything is built again;
+  ::  else only the events that changed
+  =/  far=?  |((gth to thru.ca) (lth thru.ca (add now (div horizon.c 2))))
+  =/  thru=@da  ?:(far (max (add now horizon.c) to) thru.ca)
+  =/  [new=cache:cal nix=spans-index:core]  (refresh-cache:core ca ix c kind-for thru)
   ::  the cache first, then what it is current for: a reload between the
   ::  two leaves a version that says stale, never one that says current
   ;<  ~  bind:m  (over:io (grub-road pre 'index.calendar-cache') [[/ %calendar-cache] new])
   ;<  ~  bind:m  (over:io (grub-road pre 'order.calendar-cache') [[/ %calendar-cache] (by-uid new)])
+  ;<  ~  bind:m  (write-spans pre nix)
   ;<  ~  bind:m  (write-cache-ver pre (cache-ver:cal c))
   (pure:m new)
 ++  max-reach  max-reach:core

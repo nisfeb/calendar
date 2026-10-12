@@ -4,7 +4,7 @@
 ::  pushes and suppresses, CalDAV paths, and which feed events a sync
 ::  deletes.
 ::
-/+  *test, core=calendar-core, cal=calendar, ics, dav, tarball
+/+  *test, core=calendar-core, cal=calendar, ics, dav, tarball, once=rules-once
 |%
 ++  at  ~2026.11.2..10.00.00
 ++  ms  (da-to-ms:cal at)
@@ -742,5 +742,37 @@
     (expect-eq !>(50) !>(~(wyt by (faults-of:core full))))
     (expect !>(!(~(has by (faults-of:core full)) '0')))
     (expect !>((~(has by (faults-of:core full)) '50')))
+  ==
+::
+::  the cache kept up event by event is the cache built whole: after an
+::  edit, a delete and an add, and again after the zone moves
+++  test-refresh-cache-is-a-full-build
+  =/  kf  |=(r=rail:tarball ^-((unit kind:rules:cal) ?:(=(%once name.r) `once ~)))
+  =/  thru=@da  (add at ~d30)
+  =/  c0=calendar:cal
+    =/  k=cal:cal  fresh-cal:cal
+    =.  k  (put-entry:cal k (ent 'a' 'a@t'))
+    =.  k  (put-entry:cal k (ent 'b' 'b@t'))
+    =.  k  (put-entry:cal k (ent 'c' 'c@t'))
+    =/  base=calendar:cal  fresh-calendar:cal
+    base(cals (~(put by *(map @ta cal:cal)) %default k))
+  =/  r0  (refresh-cache:core *cache:cal *spans-index:core c0 kf thru)
+  =/  moved=event:cal
+    [%timed [[/lib/rules %once] ~ (add at ~d2)] ~ [%dur ~h1] [~ ~] (malt ~[['name' s+'b']])]
+  =/  c1=calendar:cal
+    =/  k=cal:cal  (~(got by cals.c0) %default)
+    =.  k  (put-entry:cal k [moved 'b@t' '' 0 ~ ~])
+    =.  k  (del-entry:cal k 'c@t')
+    =.  k  (put-entry:cal k (ent 'd' 'd@t'))
+    c0(cals (~(put by cals.c0) %default k))
+  =/  r1  (refresh-cache:core -.r0 +.r0 c1 kf thru)
+  =/  ix1=spans-index:core  +.r1
+  =/  c2=calendar:cal  c1(zone `'Europe/Berlin')
+  =/  r2  (refresh-cache:core -.r1 +.r1 c2 kf thru)
+  ;:  weld
+    (expect-eq !>((inflate-all:core c0 kf thru)) !>(-.r0))
+    (expect-eq !>((inflate-all:core c1 kf thru)) !>(-.r1))
+    (expect-eq !>(3) !>(~(wyt by rows.ix1)))
+    (expect-eq !>((inflate-all:core c2 kf thru)) !>(-.r2))
   ==
 --
