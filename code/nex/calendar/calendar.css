@@ -46,6 +46,11 @@ body { font-family: -apple-system, system-ui, sans-serif; background: #111; colo
 .feed-row.empty { border: none; color: #888; }
 .feed-row.err { color: #f87171; }
 #google-msg { font-size: 12px; color: #9aa3b2; }
+#google-sect .feeds-foot { flex-wrap: wrap; gap: 8px; }
+#google-sect .feeds-foot > span:last-child { display: flex; flex-wrap: wrap; gap: 6px; }
+#google-msg { flex: 1 1 220px; overflow-wrap: anywhere; }
+#google-redirect { overflow-wrap: anywhere; }
+#google-list .fu.err { white-space: normal; color: #f87171; }
 #load-err { font-size: 12px; color: #f87171; }
 #modal textarea { font-family: inherit; resize: vertical; }
 #modal input[type=checkbox] { width: auto; }

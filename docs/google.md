@@ -1,26 +1,56 @@
 # Google Calendar, two-way
 
-Press **Google** on the calendar page. You bring your own OAuth client; the
-app has no shared credential.
+Open **Settings → Google Calendar** in your system browser (or open the
+Calendar page with `#google`). You bring your own OAuth client; the app has no
+shared credential. Google rejects sign-in inside embedded app webviews.
 
-## Making the client (once, about five minutes)
+**One account, several calendars:** Calendar currently keeps one Google
+authorization. Link any calendars that account can access. Reconnecting with
+another account replaces the authorization for every existing Google link;
+it does not add an independent account. Do not connect three accounts in
+sequence expecting three simultaneous authorizations. Native multi-account
+support needs a backend change, not three Cloud projects.
+
+## Making the client (once)
 
 1. console.cloud.google.com → make a project (any name).
 2. **APIs & Services → Library** → enable **Google Calendar API**.
-3. **APIs & Services → OAuth consent screen** → External → app name and your
+3. **Google Auth Platform → Branding / Audience** (previously **APIs & Services
+   → OAuth consent screen**) → External → app name and your
    email. Then **Publish app** so its status is *In production*. Left in
    *Testing*, Google lets the sign-in last only 7 days for Calendar access,
    and you would press Connect again every week. Published and unverified is
    fine for your own use: Google shows an "unverified app" warning at
-   Connect, which you click through (Advanced → go to the app). A project
+   Connect; continue only if you recognize your own project and requested
+   Calendar permissions. If staying in Testing, add the connecting account to
+   Test users. Publishing does not verify the app or override Workspace
+   policy. A project
    inside a company's Google Workspace can choose *Internal* instead: no
-   warning, no test users, and the sign-in lasts.
-4. **Credentials → Create credentials → OAuth client ID → Web application**.
+   warning or test-user allowlist, but only that organization's users can
+   connect. Use External for personal Gmail or different organizations.
+4. **Google Auth Platform → Clients → Create client → Web application**
+   (or **Credentials → Create credentials → OAuth client ID**).
    Under *Authorized redirect URIs* add exactly the URI the Google panel shows:
    `https://<your-host>/apps/calendar/google/callback`.
-5. Paste the client id and secret into the panel, **Save**, then **Connect**.
+   Use **Copy redirect URI** in the panel. Include the whole path, HTTPS and
+   no trailing slash; Authorized JavaScript origins is a different field.
+5. Import the Web client's downloaded JSON, or paste its matching client ID
+   and secret. Import validates the exact redirect URI and ignores endpoint
+   URLs in the file. The file is read in the browser; only the client ID and
+   secret are submitted to your ship when you save. Keep the file private.
+   Press **Save and connect**.
    Google asks for consent, then sends you back; the panel lists your
    calendars. **Link** the ones you want on the ship.
+6. Press **Sync now** and check each linked calendar's last successful sync
+   and error. Compare an existing Google event with the ship. Authorization
+   saved, a link created, and a sync requested are different stages;
+   none alone proves that events have arrived.
+
+Google's [web-server OAuth guide](https://developers.google.com/identity/protocols/oauth2/web-server),
+[audience settings](https://support.google.com/cloud/answer/15549945) and
+[personal-use exceptions](https://support.google.com/cloud/answer/13464323)
+explain these requirements. Tokens can still expire or be revoked in
+production; reconnect when necessary.
 
 The redirect URI the ship tells Google is the one the panel showed when you
 saved: the page records the address it was opened at (`redirect_uri` in
@@ -29,9 +59,14 @@ http, and Google refuses an http redirect for anything but localhost, so
 save the client from the address you want registered, `https://<your-host>`.
 A `redirect_uri_mismatch` error from Google means the two differ: save again
 from the right address, or change the URI registered for the client.
+Calendar 31 fixed the proxy-related callback mismatch; update older installs
+and save again. The preflight checks cannot verify Google's live configuration
+or Workspace policy, so a locally valid client can still be refused by Google.
 
 The refresh token lives in `google-auth.json` inside the calendar's own tree
-and nowhere else. **Disconnect** forgets it.
+and is never returned by the Calendar HTTP API. **Disconnect** forgets it on
+the ship; revoke the grant in your Google account too to withdraw access at
+Google. The ship and its backups remain part of the credential trust boundary.
 
 ## A work account (Google Workspace)
 
@@ -45,8 +80,10 @@ allows.
   Google answers "Access blocked … by your admin". The admin can trust the
   client id in the admin console.
 - **Through a personal account.** Share the work calendar with your
-  personal Google address (full event details, or edit rights for your
-  changes to go back), then link it from the personal account; the panel
+  personal Google address only with its owner's permission and within the
+  organization's policy. This discloses the calendar to that account. Use
+  full event details, or edit rights for your
+  changes to go back, then link it from the personal account; the panel
   lists every calendar an account can see. Companies often allow only
   free/busy outside the organization, and then there is nothing to read.
 - **Not these.** The calendar's secret iCal address is often turned off in

@@ -34,6 +34,21 @@ should start from: `$F snap calendar compiled`. For a throwaway point,
 
 ## Offline tests (no ship)
 
+The browser's Google setup validation and save/connect handlers can be tested
+with Node.js, without credentials or a ship:
+
+```sh
+node tests/js/google-setup.test.cjs
+node --check code/nex/calendar/calendar.js
+```
+
+These cover Web-client import, callback matching, endpoint exclusion, secret
+reuse, failed saves, save-before-navigation and account-replacement cancellation.
+They do not establish that Google's live consent or the Hoon sync backend works.
+For the UI, open `/apps/calendar#google` in a browser, verify setup expands,
+copy the callback, and check import failures and a refused save. Run the fake
+Google gate and the normal release gates before shipping.
+
 ```sh
 scripts/offline-tests.sh            # all five suites at once, ~90 s
 scripts/offline-tests.sh ics rrule  # by name

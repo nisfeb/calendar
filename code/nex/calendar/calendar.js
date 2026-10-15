@@ -1242,21 +1242,86 @@ document.getElementById('feed-add').onclick = function() {
 
 // Google: the user's own OAuth client, connect, link calendars
 
+// Pure setup checks, also exercised by tests/js/google-setup.test.cjs.
+var GoogleSetup = (function() {
+  function redirect(origin) {
+    var u;
+    try { u = new URL(origin); } catch (e) { throw new Error('Open Calendar at its public HTTPS address first.'); }
+    var local = ['localhost', '127.0.0.1', '[::1]'].indexOf(u.hostname) !== -1;
+    if (u.username || u.password || u.origin !== origin || (u.protocol !== 'https:' && !(local && u.protocol === 'http:'))) {
+      throw new Error('Open Calendar at its public HTTPS address (HTTP is only for localhost).');
+    }
+    return origin + '/apps/calendar/google/callback';
+  }
+  function validate(clientId, secret, saved) {
+    if (!/^[a-zA-Z0-9_-]+\.apps\.googleusercontent\.com$/.test(clientId)) {
+      throw new Error('Paste the Web application client ID ending in .apps.googleusercontent.com.');
+    }
+    if (!secret && !(saved && saved.client_id === clientId && saved.client_secret)) {
+      throw new Error('Paste this client’s secret too. A saved secret can only be reused with the same client ID.');
+    }
+  }
+  function importClient(text, origin) {
+    var data;
+    try { data = JSON.parse(text); } catch (e) { throw new Error('This file is not valid JSON. Download the OAuth client JSON from Google Cloud.'); }
+    var web = data && data.web;
+    if (!web || typeof web !== 'object' || Array.isArray(web)) {
+      throw new Error('Choose a Web application OAuth client JSON, not a Desktop client or service account key.');
+    }
+    if (typeof web.client_id !== 'string' || typeof web.client_secret !== 'string') {
+      throw new Error('The client JSON must contain a client ID and secret.');
+    }
+    var id = web.client_id.trim(), secret = web.client_secret.trim();
+    validate(id, secret, null);
+    var uri = redirect(origin);
+    if (!Array.isArray(web.redirect_uris) || web.redirect_uris.indexOf(uri) === -1) {
+      throw new Error('This JSON does not list the exact redirect URI shown above. Add it to this client in Google Cloud, then import updated JSON or enter the credentials manually.');
+    }
+    // Never import auth_uri/token_uri or other endpoints from a file.
+    return { client_id: id, client_secret: secret };
+  }
+  function httpHelp(status) {
+    if (status === 401) return 'Sign into your ship again, then reconnect Google if needed.';
+    if (status === 403) return 'Check the ship login and permits, Google Calendar API, and Workspace app policy.';
+    if (status === 429) return 'Google or the ship is rate limiting requests. Try again later.';
+    return 'Check the connection and try again. No success has been confirmed.';
+  }
+  return { redirect: redirect, validate: validate, importClient: importClient, httpHelp: httpHelp };
+})();
+// End pure setup checks.
+
+var googleSettings = null;
+function googleResponse(r) {
+  if (!r.ok) throw new Error('HTTP ' + r.status + '. ' + GoogleSetup.httpHelp(r.status));
+  return r;
+}
+function googleBody() {
+  if (!googleSettings) throw new Error('Google settings have not loaded. Reopen Settings before saving.');
+  GoogleSetup.redirect(location.origin);
+  var cid = document.getElementById('google-cid').value.trim();
+  var sec = document.getElementById('google-csec').value.trim();
+  GoogleSetup.validate(cid, sec, googleSettings);
+  return { client_id: cid, client_secret: sec, origin: location.origin };
+}
+
 function loadGoogle() {
   var st = document.getElementById('google-status');
   getJSON('/google.json')
     .then(function(g) {
+      googleSettings = g;
       document.getElementById('google-cid').value = g.client_id || '';
       document.getElementById('google-csec').value = '';
       document.getElementById('google-csec').placeholder = g.client_secret ? g.client_secret + ' (saved)' : 'GOCSPX-…';
       var linked = g.linked || {};
       var n = Object.keys(linked).length;
-      st.textContent = g.connected ? ('Connected. ' + n + ' calendar' + (n === 1 ? '' : 's') + ' linked.') : 'Not connected.';
+      st.textContent = g.connected ? (n ? 'Google authorization saved. ' + n + ' calendar' + (n === 1 ? '' : 's') + ' linked; check each last sync below.' : 'Google authorization saved. Link a calendar below to start syncing.') : (g.client_id ? 'Client saved. Connect to Google, then link your calendars.' : 'Start with the setup steps below.');
+      document.getElementById('google-connect').textContent = g.connected ? 'Reconnect Google' : 'Save and connect';
+      document.getElementById('google-disconnect').disabled = !g.connected;
       document.getElementById('google-setup').open = !g.client_id;
       if (g.connected) loadGoogleCalendars(linked);
       else document.getElementById('google-list').innerHTML = '';
     })
-    .catch(function() { st.textContent = 'could not read the Google settings'; });
+    .catch(function() { googleSettings = null; st.textContent = 'Could not read Google settings. Check your ship login and Calendar permits, then reopen Settings.'; });
 }
 
 // the conflict log (every backend writes it): what the other side won
@@ -1327,6 +1392,10 @@ function loadGoogleCalendars(linked) {
         var u = document.createElement('span'); u.className = 'fu';
         var linkedId = c.linked;
         u.textContent = linkedId ? ('linked' + (linked[linkedId] && linked[linkedId].last_ms ? ', synced ' + new Date(linked[linkedId].last_ms).toLocaleString() : ', not synced yet')) : '';
+        if (linkedId && linked[linkedId] && linked[linkedId].error) {
+          u.textContent += ' · ' + linked[linkedId].error;
+          u.classList.add('err');
+        }
         var b = document.createElement('button'); b.className = 'fx'; b.style.fontSize = '12px';
         b.textContent = linkedId ? 'Unlink' : 'Link';
         b.onclick = function() {
@@ -1334,8 +1403,10 @@ function loadGoogleCalendars(linked) {
           // with it; Make local is the way to keep them
           if (linkedId && !confirm('Unlink "' + c.name + '"? Its copy on this ship is deleted, including tasks, which Google does not keep. Use Make local under Calendars to keep them.')) return;
           var body = linkedId ? { id: linkedId } : { google_id: c.id, name: c.name, color: safeColor(c.color) };
-          postJSON('/google/' + (linkedId ? 'unlink' : 'link'), body)
-            .then(function() { loadGoogle(); loadCals(); });
+          busy(b, postJSON('/google/' + (linkedId ? 'unlink' : 'link'), body)
+            .then(googleResponse)
+            .then(function() { loadGoogle(); loadCals(); })
+            .catch(function(e) { document.getElementById('google-msg').textContent = 'Could not ' + (linkedId ? 'unlink' : 'link') + ': ' + e.message; }));
         };
         row.appendChild(dot); row.appendChild(nm); row.appendChild(u); row.appendChild(b);
         list.appendChild(row);
@@ -1344,35 +1415,63 @@ function loadGoogleCalendars(linked) {
     })
     .catch(function(e) {
       list.innerHTML = '<div class="feed-row empty err"></div>';
-      list.firstChild.textContent = 'Google answered ' + e.message;
+      list.firstChild.textContent = 'Could not list calendars (' + e.message + '). Check that Google Calendar API is enabled, this account is allowed, and its authorization has not expired. Then reconnect if needed.';
     });
 }
 
 document.getElementById('google-save').onclick = function() {
   // the origin goes along: the ship behind a TLS proxy sees http, and the
   // redirect URI Google is told must be the one shown here and registered
-  var body = { client_id: document.getElementById('google-cid').value.trim(), client_secret: document.getElementById('google-csec').value.trim(), origin: location.origin };
+  var msg = document.getElementById('google-msg'), body;
+  try { body = googleBody(); } catch (e) { msg.textContent = e.message; return; }
   busy(this, postJSON('/google/config', body))
-    .then(function(r) { document.getElementById('google-msg').textContent = r.ok ? 'saved' : 'not saved (' + r.status + ')'; loadGoogle(); });
+    .then(googleResponse)
+    .then(function() { msg.textContent = 'Client saved. Connect to Google, then link calendars.'; loadGoogle(); })
+    .catch(function(e) { msg.textContent = 'Could not save: ' + e.message; });
 };
 // connect saves a client id typed and not saved yet, so the consent
 // screen is asked for the client on the page
 document.getElementById('google-connect').onclick = function() {
   var msg = document.getElementById('google-msg');
-  var cid = document.getElementById('google-cid').value.trim();
-  var sec = document.getElementById('google-csec').value.trim();
-  if (!cid) { msg.textContent = 'paste the client id and secret first'; return; }
-  busy(this, postJSON('/google/config', { client_id: cid, client_secret: sec, origin: location.origin }))
-    .then(function(r) { if (!r.ok) throw new Error(r.status); location.href = CAL + '/google/connect'; })
-    .catch(function(e) { msg.textContent = 'could not save the client (' + e.message + ')'; });
+  var body;
+  try { body = googleBody(); } catch (e) { msg.textContent = e.message; return; }
+  if (googleSettings.connected && !confirm('Reconnect Google? This replaces the authorization for every linked Google calendar. Choose the same account to keep its calendars syncing. This does not add a second account.')) return;
+  busy(this, postJSON('/google/config', body)
+    .then(googleResponse)
+    .then(function() { document.getElementById('google-csec').value = ''; location.href = CAL + '/google/connect'; })
+    .catch(function(e) { msg.textContent = 'Could not save the client: ' + e.message; }));
 };
 document.getElementById('google-disconnect').onclick = function() {
-  postJSON('/google/disconnect').then(function() { loadGoogle(); });
+  if (!confirm('Disconnect Google? All linked Google calendars will stop syncing. This forgets the ship’s tokens; revoke the app in your Google account too if you want to withdraw its grant.')) return;
+  busy(this, postJSON('/google/disconnect').then(googleResponse).then(function() { loadGoogle(); })
+    .catch(function(e) { document.getElementById('google-msg').textContent = 'Could not disconnect: ' + e.message; }));
 };
 document.getElementById('google-sync-now').onclick = function() {
-  postJSON('/google/sync').then(function() { setTimeout(function() { loadGoogle(); refresh(); }, 3000); });
+  busy(this, postJSON('/google/sync').then(googleResponse).then(function() {
+    document.getElementById('google-msg').textContent = 'Sync requested. Check each calendar’s last sync time and any error below.';
+    setTimeout(function() { loadGoogle(); refresh(); }, 3000);
+  }).catch(function(e) { document.getElementById('google-msg').textContent = 'Could not request sync: ' + e.message; }));
 };
-if (new URLSearchParams(location.search).get('google') === 'connected') { setTimeout(function() { openSettings(); document.getElementById('google-sect').open = true; }, 500); }
+document.getElementById('google-client-file').onchange = function() {
+  var input = this, f = input.files[0], msg = document.getElementById('google-msg');
+  if (!f) return;
+  if (f.size > 65536) { msg.textContent = 'Choose the small OAuth client JSON file (at most 64 KB).'; input.value = ''; return; }
+  f.text().then(function(text) {
+    var client = GoogleSetup.importClient(text, location.origin);
+    document.getElementById('google-cid').value = client.client_id;
+    document.getElementById('google-csec').value = client.client_secret;
+    msg.textContent = 'Client imported locally. Press Save and connect to send it to your ship.';
+  }).catch(function(e) { msg.textContent = e.message; }).finally(function() { input.value = ''; });
+};
+document.getElementById('google-copy-redirect').onclick = function() {
+  var msg = document.getElementById('google-msg');
+  Promise.resolve().then(function() { return navigator.clipboard.writeText(GoogleSetup.redirect(location.origin)); })
+    .then(function() { msg.textContent = 'Redirect URI copied. Paste it under Authorized redirect URIs in Google Cloud.'; })
+    .catch(function() { msg.textContent = 'Clipboard unavailable. Select and copy the redirect URI shown above.'; });
+};
+function openGoogleSettings() { openSettings(); document.getElementById('google-sect').open = true; document.getElementById('google-sect').scrollIntoView(); }
+if (new URLSearchParams(location.search).get('google') === 'connected' || location.hash === '#google') { setTimeout(openGoogleSettings, 500); }
+window.addEventListener('hashchange', function() { if (location.hash === '#google') openGoogleSettings(); });
 
 // the settings screen: calendars, sharing, following, Google, feeds
 var settingsBack = document.getElementById('settings-back');

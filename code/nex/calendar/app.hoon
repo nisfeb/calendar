@@ -2445,7 +2445,7 @@
           ["response_type" "code"]
           ["scope" "https://www.googleapis.com/auth/calendar"]
           ["access_type" "offline"]
-          ["prompt" "consent"]
+          ["prompt" "consent select_account"]
           ["state" (trip state)]
       ==
     =/  qs=tape  (sep-join:rr "&" (turn q |=([k=tape v=tape] "{k}={(enc-seg:dav v)}")))
