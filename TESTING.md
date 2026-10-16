@@ -43,7 +43,8 @@ node --check code/nex/calendar/calendar.js
 ```
 
 These cover Web-client import, callback matching, endpoint exclusion, secret
-reuse, failed saves, save-before-navigation and account-replacement cancellation.
+reuse, failed saves, save-before-navigation, account-replacement cancellation,
+and refreshing the calendar list without saving credentials or starting OAuth.
 They do not establish that Google's live consent or the Hoon sync backend works.
 For the UI, open `/apps/calendar#google` in a browser, verify setup expands,
 copy the callback, and check import failures and a refused save. Run the fake

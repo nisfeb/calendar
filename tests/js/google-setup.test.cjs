@@ -119,3 +119,29 @@ test('cancelling replacement of a connected account sends nothing', () => {
   h.element('google-connect').onclick();
   assert.equal(h.requests.length, 0);
 });
+
+test('refresh retries a connected calendar list without saving credentials or starting OAuth', () => {
+  const h = harness();
+  prepare(h);
+  h.context.googleSettings.connected = true;
+  h.context.googleSettings.linked = {example: {last_ms: 123}};
+  const before = h.context.location.href;
+  let refreshed;
+  h.context.loadGoogleCalendars = linked => { refreshed = linked; };
+  h.element('google-csec').value = 'unsaved-secret';
+  h.element('google-refresh').onclick();
+  assert.equal(refreshed, h.context.googleSettings.linked);
+  assert.equal(h.requests.length, 0);
+  assert.equal(h.context.location.href, before);
+  assert.equal(h.element('google-csec').value, 'unsaved-secret');
+});
+
+test('refresh waits for an existing authorization', () => {
+  const h = harness();
+  h.context.loadGoogleCalendars = () => { assert.fail('must not list without authorization'); };
+  h.element('google-refresh').onclick();
+  prepare(h);
+  h.element('google-refresh').onclick();
+  assert.equal(h.requests.length, 0);
+  assert.match(h.element('google-msg').textContent, /Connect to Google/);
+});

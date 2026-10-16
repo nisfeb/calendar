@@ -1263,7 +1263,7 @@ var GoogleSetup = (function() {
   }
   function importClient(text, origin) {
     var data;
-    try { data = JSON.parse(text); } catch (e) { throw new Error('This file is not valid JSON. Download the OAuth client JSON from Google Cloud.'); }
+    try { data = JSON.parse(text); } catch (e) { throw new Error('This file is not valid JSON. Choose the JSON saved when the Web client was created, or enter the credentials manually.'); }
     var web = data && data.web;
     if (!web || typeof web !== 'object' || Array.isArray(web)) {
       throw new Error('Choose a Web application OAuth client JSON, not a Desktop client or service account key.');
@@ -1275,7 +1275,7 @@ var GoogleSetup = (function() {
     validate(id, secret, null);
     var uri = redirect(origin);
     if (!Array.isArray(web.redirect_uris) || web.redirect_uris.indexOf(uri) === -1) {
-      throw new Error('This JSON does not list the exact redirect URI shown above. Add it to this client in Google Cloud, then import updated JSON or enter the credentials manually.');
+      throw new Error('This JSON does not list the exact redirect URI shown above. Update this client in Google Cloud, then enter its matching credentials manually or keep the secret already saved for this client.');
     }
     // Never import auth_uri/token_uri or other endpoints from a file.
     return { client_id: id, client_secret: secret };
@@ -1415,7 +1415,7 @@ function loadGoogleCalendars(linked) {
     })
     .catch(function(e) {
       list.innerHTML = '<div class="feed-row empty err"></div>';
-      list.firstChild.textContent = 'Could not list calendars (' + e.message + '). Check that Google Calendar API is enabled, this account is allowed, and its authorization has not expired. Then reconnect if needed.';
+      list.firstChild.textContent = 'Could not list calendars (' + e.message + '). First check Google Calendar API is enabled in the same project as your client, then use Refresh calendar list. Keep your existing client. If it still fails, check account permissions, Workspace policy, and authorization expiry.';
     });
 }
 
@@ -1445,6 +1445,10 @@ document.getElementById('google-disconnect').onclick = function() {
   if (!confirm('Disconnect Google? All linked Google calendars will stop syncing. This forgets the ship’s tokens; revoke the app in your Google account too if you want to withdraw its grant.')) return;
   busy(this, postJSON('/google/disconnect').then(googleResponse).then(function() { loadGoogle(); })
     .catch(function(e) { document.getElementById('google-msg').textContent = 'Could not disconnect: ' + e.message; }));
+};
+document.getElementById('google-refresh').onclick = function() {
+  if (googleSettings && googleSettings.connected) loadGoogleCalendars(googleSettings.linked || {});
+  else document.getElementById('google-msg').textContent = 'Connect to Google before refreshing its calendar list.';
 };
 document.getElementById('google-sync-now').onclick = function() {
   busy(this, postJSON('/google/sync').then(googleResponse).then(function() {

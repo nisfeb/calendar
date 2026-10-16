@@ -13,10 +13,13 @@ support needs a backend change, not three Cloud projects.
 
 ## Making the client (once)
 
-1. console.cloud.google.com → make a project (any name).
-2. **APIs & Services → Library** → enable **Google Calendar API**.
+1. console.cloud.google.com → select or make a project. Keep the same project
+   selected for API enablement and the OAuth client.
+2. **APIs & Services → Library** → enable **Google Calendar API** (also listed
+   in the Library's Google Workspace section). Confirm it is enabled. Creating
+   a client does not enable this service; Gmail API and CalDAV API are not needed.
 3. **Google Auth Platform → Branding / Audience** (previously **APIs & Services
-   → OAuth consent screen**) → External → app name and your
+   → OAuth consent screen**, which now opens Auth Platform's Overview) → External → app name and your
    email. Then **Publish app** so its status is *In production*. Left in
    *Testing*, Google lets the sign-in last only 7 days for Calendar access,
    and you would press Connect again every week. Published and unverified is
@@ -27,14 +30,23 @@ support needs a backend change, not three Cloud projects.
    policy. A project
    inside a company's Google Workspace can choose *Internal* instead: no
    warning or test-user allowlist, but only that organization's users can
-   connect. Use External for personal Gmail or different organizations.
+   connect. Use External for personal Gmail or different organizations. If
+   Publish app is disabled with a link to Branding, finish and save the required
+   fields there first. Any homepage or policy links must describe your own app.
 4. **Google Auth Platform → Clients → Create client → Web application**
    (or **Credentials → Create credentials → OAuth client ID**).
+   If a matching Web client is already saved on the ship, inspect and keep it
+   instead of creating another.
    Under *Authorized redirect URIs* add exactly the URI the Google panel shows:
    `https://<your-host>/apps/calendar/google/callback`.
    Use **Copy redirect URI** in the panel. Include the whole path, HTTPS and
    no trailing slash; Authorized JavaScript origins is a different field.
-5. Import the Web client's downloaded JSON, or paste its matching client ID
+5. Save the secret securely when Google creates it. The Console only shows or
+   downloads it once; the client detail page later shows just its last four
+   characters. If Calendar already has the matching secret saved, leave that
+   field blank to retain it. If it is lost everywhere, follow Google's **Add
+   secret** rotation flow and update the ship before retiring the old secret.
+   Import the Web client's downloaded JSON, or paste its matching client ID
    and secret. Import validates the exact redirect URI and ignores endpoint
    URLs in the file. The file is read in the browser; only the client ID and
    secret are submitted to your ship when you save. Keep the file private.
@@ -51,6 +63,26 @@ Google's [web-server OAuth guide](https://developers.google.com/identity/protoco
 [personal-use exceptions](https://support.google.com/cloud/answer/13464323)
 explain these requirements. Tokens can still expire or be revoked in
 production; reconnect when necessary.
+
+Google documents the one-time secret display under
+[Manage OAuth clients](https://support.google.com/cloud/answer/15549257#client-secret-hashing).
+
+### Connected, but Google answers HTTP 403
+
+The released UI's **Connected** status means a refresh token is stored; it
+does not prove Calendar API calls work. First check **APIs & Services → Library
+→ Google Calendar API** in the same project as the client. Authorization and
+API enablement are independent. If the API was disabled, enable it, allow
+configuration to propagate, then use **Refresh calendar list** (or close and
+reopen Settings on older versions). Keep the existing client and grant.
+If it still fails, check granted Calendar permissions and Workspace policy;
+403 can have several causes. Do not rotate secrets or repeatedly reconnect
+different accounts merely to troubleshoot a disabled API.
+
+The Console navigation and one-time secret display were checked on 2026-10-16.
+**Branding**, **Audience**, **Clients**, and **Data Access** are now separate
+sections of Google Auth Platform. The old OAuth consent screen link opens its
+Overview; API enablement remains in APIs & Services.
 
 The redirect URI the ship tells Google is the one the panel showed when you
 saved: the page records the address it was opened at (`redirect_uri` in

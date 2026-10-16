@@ -348,12 +348,12 @@
           <summary>Set up your own OAuth client (once)</summary>
           <ol class="dav-hint">
             <li>Open <a href="https://console.cloud.google.com/" target="_blank" rel="noopener noreferrer">Google Cloud</a> and select or create a project. Use that same project throughout setup.</li>
-            <li>In <a href="https://console.cloud.google.com/apis/library/calendar-json.googleapis.com" target="_blank" rel="noopener noreferrer">API Library</a>, enable <b>Google Calendar API</b>.</li>
+            <li>In <a href="https://console.cloud.google.com/apis/library/calendar-json.googleapis.com" target="_blank" rel="noopener noreferrer">API Library</a>, enable <b>Google Calendar API</b> in the same project as your client. Creating a client does not enable the API.</li>
             <li>In <a href="https://console.cloud.google.com/auth/overview" target="_blank" rel="noopener noreferrer">Google Auth Platform</a>, fill in Branding and choose an Audience. Use <b>External</b> for a personal Gmail account or accounts from different organizations. Internal allows only your own Workspace organization. In Testing, add the connecting account as a test user; Calendar authorizations expire after seven days. For ongoing personal use, publish to <b>In production</b>. Publishing does not verify the app or override a Workspace admin's restrictions. Proceed through an unverified-app notice only if you recognize your own project and permissions.</li>
             <li>Under <b>Clients</b> (or APIs &amp; Services → Credentials), create a <b>Web application</b> client. Add this exact <b>Authorized redirect URI</b>, including its path and no trailing slash. JavaScript origins are a different field.</li>
           </ol>
           <div class="dav-hint"><code id="google-redirect"></code> <button id="google-copy-redirect" class="nav-btn">Copy redirect URI</button></div>
-          <p class="dav-hint">Download the client's JSON when Google offers it, then import it below, or paste the client ID and secret. These credentials go only to your ship. Keep the file private; it contains your client secret.</p>
+          <p class="dav-hint">Save the secret or download the client's JSON at creation: Google only shows the full secret once. Import that file below, or paste the client ID and secret. Leave the secret blank to keep the one already saved for the same client. These credentials go only to your ship. Keep the file private; it contains your client secret.</p>
           <label class="f" for="google-client-file">Import Google client JSON</label>
           <input id="google-client-file" type="file" accept=".json,application/json">
           <ol class="dav-hint" start="5">
@@ -375,6 +375,7 @@
         <details class="dav-hint">
           <summary>Connection help</summary>
           <ul>
+            <li><b>Google answered HTTP 403:</b> first check Google Calendar API is enabled in your client's project. After enabling it, use Refresh calendar list below. Keep your existing client and authorization. If it still fails, check Calendar permissions and Workspace policy.</li>
             <li><b>redirect_uri_mismatch:</b> register the exact URI above on this client. Save again from your public HTTPS address. Calendar 31 fixed a proxy-related HTTP/HTTPS mismatch; update older installs first.</li>
             <li><b>access_denied:</b> check test users, the selected account, and your Workspace admin's app policy. Internal apps cannot connect accounts outside their organization.</li>
             <li><b>disallowed_useragent:</b> open this page in your system browser. Google sign-in does not support embedded webviews.</li>
@@ -387,7 +388,7 @@
         <div id="google-list"></div>
         <div class="feeds-foot">
           <a id="google-conflicts" class="dav-hint" href="#conflicts-sect"></a>
-          <button id="google-sync-now" class="nav-btn">Sync now</button>
+          <span><button id="google-refresh" class="nav-btn">Refresh calendar list</button> <button id="google-sync-now" class="nav-btn">Sync now</button></span>
         </div>
         </details>
         <details class="sect">
