@@ -1,26 +1,17 @@
 # Google Calendar, two-way
 
-Press **Google** on the calendar page. You bring your own OAuth client; the
-app has no shared credential.
+Open **Settings → Google Calendar** on the calendar page. You bring your own OAuth client. The app has no shared credential.
 
 ## Making the client (once, about five minutes)
 
-1. console.cloud.google.com → make a project (any name).
-2. **APIs & Services → Library** → enable **Google Calendar API**.
-3. **APIs & Services → OAuth consent screen** → External → app name and your
-   email. Then **Publish app** so its status is *In production*. Left in
-   *Testing*, Google lets the sign-in last only 7 days for Calendar access,
-   and you would press Connect again every week. Published and unverified is
-   fine for your own use: Google shows an "unverified app" warning at
-   Connect, which you click through (Advanced → go to the app). A project
-   inside a company's Google Workspace can choose *Internal* instead: no
-   warning, no test users, and the sign-in lasts.
-4. **Credentials → Create credentials → OAuth client ID → Web application**.
-   Under *Authorized redirect URIs* add exactly the URI the Google panel shows:
-   `https://<your-host>/apps/calendar/google/callback`.
-5. Paste the client id and secret into the panel, **Save**, then **Connect**.
-   Google asks for consent, then sends you back; the panel lists your
-   calendars. **Link** the ones you want on the ship.
+Google's console moved the OAuth pages into **Google Auth platform** in 2025. Older guides that say "OAuth consent screen" or "Credentials → Create credentials" describe menus that no longer look that way.
+
+1. At console.cloud.google.com, open the project picker at the top, press **New project**, give any name, and select the new project.
+2. Menu → **APIs & Services → Library**, search **Google Calendar API**, press **Enable**.
+3. Menu → **Google Auth platform** → **Get started**. App information: an app name and your email. Audience: **External** (or **Internal**, see below). Contact information: your email. Agree to the policy and press **Create**.
+4. External only: open **Audience** and press **Publish app** so the status is *In production*. Left in *Testing*, Google lets the sign-in last only 7 days for Calendar access, and you would press Connect again every week. Published and unverified is fine for your own use: Google shows an "unverified app" warning at Connect, which you click through (**Advanced** → go to the app). A project inside a company's Google Workspace can choose *Internal* instead: no warning, no publishing, and the sign-in lasts.
+5. Open **Clients** → **Create client**. Application type **Web application**. Under **Authorized redirect URIs** press **Add URI** and paste exactly the URI the Google panel shows: `https://<your-host>/apps/calendar/google/callback`. Press **Create**.
+6. Google shows the client id and secret in a dialog, and the secret only this once. Copy both into the panel, press **Save**, then **Connect**. If the dialog is already closed, open the client under **Clients** and press **Add secret** for a new one. Google asks for consent, then sends you back, and the panel lists your calendars. **Link** the ones you want on the ship.
 
 The redirect URI the ship tells Google is the one the panel showed when you
 saved: the page records the address it was opened at (`redirect_uri` in

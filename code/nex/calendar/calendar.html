@@ -346,10 +346,12 @@
         <details id="google-setup">
           <summary>Set up your own OAuth client (once)</summary>
           <ol class="dav-hint">
-            <li>In the Google Cloud console make a project, open <b>APIs &amp; Services → OAuth consent screen</b>, choose External, fill the name and your email, then press <b>Publish app</b> so it is <i>In production</i>. Left in Testing, Google ends the sign-in after 7 days. At Connect, Google warns the app is unverified; it is yours, so go on (Advanced → go to the app). A project inside a company's Google Workspace can choose Internal instead.</li>
-            <li>Enable the <b>Google Calendar API</b> under Library.</li>
-            <li>Under <b>Credentials</b> make an OAuth client of type <b>Web application</b>. Authorized redirect URI, exactly: <code id="google-redirect"></code></li>
-            <li>Paste the client id and secret here, save, then press Connect.</li>
+            <li>At <a href="https://console.cloud.google.com/" target="_blank" rel="noopener">console.cloud.google.com</a> make a new project (the project picker at the top → <b>New project</b>, any name) and select it.</li>
+            <li>Menu → <b>APIs &amp; Services → Library</b>, search <b>Google Calendar API</b>, press <b>Enable</b>.</li>
+            <li>Menu → <b>Google Auth platform</b> → <b>Get started</b>. Give an app name and your email, pick <b>External</b> under Audience (or <b>Internal</b> in a company's Google Workspace), give your email again, agree, press <b>Create</b>.</li>
+            <li>External only: open <b>Audience</b> and press <b>Publish app</b>, so the status is <i>In production</i>. Left in Testing, the sign-in ends after 7 days.</li>
+            <li>Open <b>Clients</b> → <b>Create client</b>. Type <b>Web application</b>. Under <b>Authorized redirect URIs</b> press <b>Add URI</b> and paste exactly: <code id="google-redirect"></code> Press <b>Create</b>.</li>
+            <li>Google shows the client id and secret once. Copy both into the boxes below, press <b>Save</b>, then <b>Connect</b>. If Google says the app is unverified, it is yours: press <b>Advanced</b> → go to the app.</li>
           </ol>
         </details>
         <label class="f" for="google-cid">Client id</label>
