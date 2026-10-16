@@ -79,6 +79,14 @@ If it still fails, check granted Calendar permissions and Workspace policy;
 403 can have several causes. Do not rotate secrets or repeatedly reconnect
 different accounts merely to troubleshoot a disabled API.
 
+A live setup checked on 2026-10-16 had a matching Web client and HTTPS
+callback, and showed Connected, while Google Calendar API was disabled in
+that client's project. After the owner enabled the API, connected and linked
+a calendar, the released app imported existing events and recorded a
+successful sync. The important distinction is authorization versus API
+availability versus linked-calendar sync. This validates the setup diagnosis;
+it is not an end-to-end test of the proposed onboarding changes.
+
 The Console navigation and one-time secret display were checked on 2026-10-16.
 **Branding**, **Audience**, **Clients**, and **Data Access** are now separate
 sections of Google Auth Platform. The old OAuth consent screen link opens its
@@ -111,11 +119,11 @@ allows.
   companies block apps they have not approved from reaching Calendar, and
   Google answers "Access blocked … by your admin". The admin can trust the
   client id in the admin console.
-- **Through a personal account.** Share the work calendar with your
-  personal Google address only with its owner's permission and within the
+- **Through the connected account.** Share the work calendar with the
+  Google address already connected to the ship only with its owner's permission and within the
   organization's policy. This discloses the calendar to that account. Use
   full event details, or edit rights for your
-  changes to go back, then link it from the personal account; the panel
+  changes to go back, then link it from the connected account; the panel
   lists every calendar an account can see. Companies often allow only
   free/busy outside the organization, and then there is nothing to read.
 - **Not these.** The calendar's secret iCal address is often turned off in
@@ -126,6 +134,38 @@ allows.
 Attendees, invitations and Meet links do not come across (see below), so a
 meeting shows without its video link unless the link is in its
 description.
+
+
+### Give the connected account event-editing access
+
+1. In Google Calendar, switch to the account that owns the calendar to add.
+2. Open **Settings → Settings for my calendars → [calendar] → Shared with**.
+   Confirm its Calendar ID identifies the intended calendar; its display name
+   may be an old custom name rather than the account's email address.
+3. Choose **Add people and groups** and enter the Google account already
+   connected to the ship.
+4. For two-way event management, select **Make changes and see all event
+   details** (older interfaces call this **Make changes to events**). This
+   grants reading, creation, editing and deletion, including private event
+   details. **Make changes (see private events as free/busy)** does not expose
+   private-event details. **Make changes and manage sharing** is broader than
+   needed; it also allows changing who can access the calendar.
+5. Review the recipient and permission and press **Send**. Workspace policy
+   may restrict external sharing even when an option appears in the dialog.
+6. Switch to the connected account and add the shared calendar to its calendar
+   list using the invitation link, or **Other calendars → + → Subscribe to
+   calendar**, then select the owner's email for their primary calendar.
+   Confirm it appears in Google Calendar and shows the expected editor access.
+7. Reopen the ship's Google settings (or **Refresh calendar list**), then
+   **Link** the newly visible calendar and **Sync now**. Keep the same OAuth
+   account; do not reconnect as the calendar's owner.
+8. Check the successful sync time and existing events. When creating an event
+   on the ship, choose the intended Google-linked calendar, not a local one.
+
+This authorizes event management on the shared calendar. The integration's
+limits on invitations, attendees, conference links and recurring-instance
+edits still apply. See Google's
+[calendar sharing guide](https://support.google.com/calendar/answer/37082).
 
 ## What syncs
 
