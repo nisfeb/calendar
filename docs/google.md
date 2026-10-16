@@ -18,21 +18,22 @@ support needs a backend change, not three Cloud projects.
 2. **APIs & Services → Library** → enable **Google Calendar API** (also listed
    in the Library's Google Workspace section). Confirm it is enabled. Creating
    a client does not enable this service; Gmail API and CalDAV API are not needed.
-3. **Google Auth Platform → Branding / Audience** (previously **APIs & Services
-   → OAuth consent screen**, which now opens Auth Platform's Overview) → External → app name and your
-   email. Then **Publish app** so its status is *In production*. Left in
-   *Testing*, Google lets the sign-in last only 7 days for Calendar access,
-   and you would press Connect again every week. Published and unverified is
-   fine for your own use: Google shows an "unverified app" warning at
-   Connect; continue only if you recognize your own project and requested
-   Calendar permissions. If staying in Testing, add the connecting account to
-   Test users. Publishing does not verify the app or override Workspace
-   policy. A project
-   inside a company's Google Workspace can choose *Internal* instead: no
-   warning or test-user allowlist, but only that organization's users can
-   connect. Use External for personal Gmail or different organizations. If
-   Publish app is disabled with a link to Branding, finish and save the required
-   fields there first. Any homepage or policy links must describe your own app.
+3. **Google Auth Platform → Branding** (previously **APIs & Services → OAuth
+   consent screen**, which now opens Auth Platform's Overview) → app name and
+   requested contact information. Under **Audience**, choose by the account
+   that will perform OAuth. **Internal** requires that account to belong to
+   the project's Workspace organization. Calendars shared with it may belong
+   to personal Gmail or other organizations, subject to sharing policy.
+   **External** is needed when the account signing in is outside the project's
+   organization or is personal Gmail. For External Testing, add the connecting
+   account to Test users; Calendar authorizations expire after seven days.
+   For ongoing use, choose Internal when eligible, or **Publish app** for
+   External so its status is *In production*, then reconnect. Publishing does
+   not verify the app or override Workspace policy. Personal use may qualify
+   for a verification exception; proceed through an unverified-app notice only
+   if you recognize your own project and requested Calendar permissions.
+   If Publish app is disabled with a link to Branding, finish and save its
+   required fields first. Any homepage or policy links must describe your app.
 4. **Google Auth Platform → Clients → Create client → Web application**
    (or **Credentials → Create credentials → OAuth client ID**).
    If a matching Web client is already saved on the ship, inspect and keep it
@@ -107,6 +108,21 @@ The refresh token lives in `google-auth.json` inside the calendar's own tree
 and is never returned by the Calendar HTTP API. **Disconnect** forgets it on
 the ship; revoke the grant in your Google account too to withdraw access at
 Google. The ship and its backups remain part of the credential trust boundary.
+
+### Use an Internal project with shared calendars
+
+For an organization-owned project, **Google Auth Platform → Audience → Make
+internal → Confirm** limits OAuth sign-in to that organization. This affects
+all OAuth clients in the project, so check that no external users need to
+sign in. Reconnect the same organization account from the ship afterward;
+keep its saved client, calendar links and sharing permissions. In a live
+setup on 2026-10-16, the Console then showed **Internal**, and the same account
+could authorize access to its own calendar and calendars shared from other
+organizations. Verify each link's last successful sync after reconnecting.
+
+Internal avoids the specific External Testing seven-day refresh-token rule;
+it does not guarantee that tokens can never expire or be revoked. Google
+explains [refresh-token expiration](https://developers.google.com/identity/protocols/oauth2/#expiration).
 
 ## A work account (Google Workspace)
 
