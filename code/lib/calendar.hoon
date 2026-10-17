@@ -113,11 +113,15 @@
 ::
 +$  cache  [thru=@da stops=(map eid @da) =order]
 ::  +cache-ver: what a cache is current for: each calendar's seq (a
-::  write moves it), the horizon, and the zone (the day a task sits on)
+::  write moves it), the horizon, the zone (the day a task sits on), and
+::  how rules expand (+expansion), so new code builds afresh
 ++  cache-ver
   |=  c=calendar
   ^-  @uv
-  (sham [horizon.c zone.c (~(run by cals.c) |=(k=cal seq.k))])
+  (sham [expansion horizon.c zone.c (~(run by cals.c) |=(k=cal seq.k))])
+::  +expansion: bumped when a rule's occurrences change for the same
+::  data (v37: a day an RRULE names twice is one occurrence)
+++  expansion  %37
 ++  on-order  ((on @da (set ref)) lth)
 ::
 ++  on-log    ((on @ud logent) lth)
@@ -516,6 +520,8 @@
         (recur-json recur.e)
         ^-  (list [@t json])
         :~  ['zone' `json`?~(zone.e s+'none' s+u.zone.e)]
+            ::  the index bound, not how many occurrences (an RRULE has slots
+            ::  with none): event.json gives that (+count-of in lib/ics)
             ['count' (numb:enjs:format (fall dom.bound.e 0))]
             ['except' (except-json except.bound.e)]
         ==

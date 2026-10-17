@@ -31,7 +31,9 @@
 ::  +max-reach: how far ahead a cache is ever built (the horizon's cap)
 ++  max-reach  (mul 3.650 ~d1)
 ::  +by-uid: the keyed index as other apps read it, each ref under its
-::  bare uid (the same UID in two calendars shows as two refs of it)
+::  bare uid. The same UID in two calendars shows as two refs when they
+::  differ; identical ones collapse into one, and one stop stands for
+::  both (the map holds one per uid)
 ++  by-uid
   |=  ca=cache:cal
   ^-  cache:cal
@@ -98,8 +100,11 @@
 ++  del-object
   |=  [k=cal:cal u=uid:cal]
   ^-  cal:cal
-  =.  k  (roll (kids-of:cal k u) |=([ch=entry:cal acc=_k] (del-entry:cal acc uid.ch)))
-  (del-entry:cal k u)
+  =/  kids=(list entry:cal)  (kids-of:cal k u)
+  ::  the parent first: each child's delete then finds no parent to
+  ::  stamp (and log) again
+  =.  k  (del-entry:cal k u)
+  (roll kids |=([ch=entry:cal acc=_k] (del-entry:cal acc uid.ch)))
 ::  +skips-of, +set-skips: an event's skipped indices, read and replaced
 ++  skips-of
   |=  ev=event:cal
@@ -619,6 +624,21 @@
   |=  j=json
   ^-  ?
   ?=([~ %o *] (~(get by (omap j)) 'objects'))
+::  +late-reach: the longest alarm set after a start or an end (31 days
+::  at most): how far back the reminders fiber looks for occurrences
+::  whose alarm is yet to fire
+++  late-reach
+  |=  c=calendar:cal
+  ^-  @dr
+  %+  min  ~d31
+  %+  roll  ~(val by cals.c)
+  |=  [k=cal:cal acc=@dr]
+  %+  roll  ~(val by entries.k)
+  |=  [e=entry:cal a=@dr]
+  %+  roll  alarms.e
+  |=  [al=alarm:cal b=@dr]
+  ?.  ?=([%off * %.y *] trigger.al)  b
+  (max b d.trigger.al)
 ::  +target-of: the calendar +put-ev-in puts an edit in: the one wanted,
 ::  when it exists, else the entry's own (else default). ~ when that is
 ::  a move onto a UID the target already holds, which is refused

@@ -244,8 +244,9 @@
         =/  named=@ta  (crip (trip (gs jon 'cal')))
         =/  home=@ta  (crip (trip (gs jon 'home')))
         =/  owner=@ta  (fall (bind (locate c home (gs jon 'id')) head) '')
-        ?:  &(!=('' named) (ship-read-only c named))  $
-        ?:  &(!=('' owner) (ship-read-only c owner))  $
+        ?:  |(&(!=('' named) (ship-read-only c named)) &(!=('' owner) (ship-read-only c owner)))
+          ;<  ~  bind:m  (refuse './' act (gs jon 'id') '' "the calendar is shared with you read-only")
+          $
         ?:  =('del-event' act)
           =/  id=@ta  (crip (trip (gs jon 'id')))
           ?:  =('' id)  $
@@ -331,7 +332,9 @@
           =/  id=@ta  (crip (trip (gs jon 'id')))
           =/  nm=@t  (gs jon 'name')
           ::  an id goes into hrefs and index keys: a knot, no slash
-          ?:  |(=('' id) =('' nm) !((sane %ta) id) (~(has by cals.c) id))  $
+          ?:  |(=('' id) =('' nm) !((sane %ta) id) (~(has by cals.c) id))
+            ;<  ~  bind:m  (refuse './' act id '' "a calendar needs a name and a new id of lowercase letters, digits and - . ~ _")
+            $
           =/  color=@t  (gs jon 'color')
           =/  k=cal:cal  (born now)
           =.  props.k  [nm ?:(=('' color) '#1e3a5f' color) %local ~]
@@ -369,6 +372,9 @@
           ::  ponytail: ten years is as far as the index is walked ahead
           =.  horizon.c  ?~(hd horizon.c (mul (max 1 (min 3.650 u.hd)) ~d1))
           ;<  ~  bind:m  (replace:io c)
+          ;<  ~  bind:m
+            ?:  |(=('' zo) =('none' zo) (known-zone:rules zo))  (pure:(fiber:fiber:nexus ,~) ~)
+            (refuse './' act zo '' "the zone is not one this ship knows; the calendar's stays")
           ::  lead_min: the heads-up before every timed event; 0 turns it
           ::  off and leaves the alarms events carry
           ;<  ~  bind:m  ?~(lm (pure:(fiber:fiber:nexus ,~) ~) (set-lead-min u.lm))
@@ -393,7 +399,9 @@
         ?:  =('edit-event' act)
           =/  id=@ta  (crip (trip (gs jon 'id')))
           =/  old=(unit event:cal)  (event-of c home id)
-          ?~  old  $
+          ?~  old
+            ;<  ~  bind:m  (refuse './' act (gs jon 'id') '' "no such event")
+            $
           =/  ev=(unit event:cal)  (parse-event jon zone.c)
           ?~  ev
             ;<  ~  bind:m  (refuse './' act (gs jon 'id') '' "the event could not be read: its name, kind, start or rule")
@@ -429,7 +437,9 @@
           =/  id=@ta  (crip (trip (gs jon 'id')))
           =/  st=@t  (gs jon 'status')
           =/  old=(unit event:cal)  (event-of c home id)
-          ?~  old  $
+          ?~  old
+            ;<  ~  bind:m  (refuse './' act (gs jon 'id') '' "no such event")
+            $
           ?.  ?=(?(%accepted %declined %tentative) st)
             ;<  ~  bind:m  (refuse './' act (gs jon 'id') '' "the answer is accepted, declined or tentative")
             $
@@ -451,7 +461,9 @@
           ::  tick or untick a task
           =/  id=@ta  (crip (trip (gs jon 'id')))
           =/  old=(unit event:cal)  (event-of c home id)
-          ?~  old  $
+          ?~  old
+            ;<  ~  bind:m  (refuse './' act (gs jon 'id') '' "no such event")
+            $
           ?.  ?=(%todo -.u.old)  $
           =/  done=(unit @da)
             =/  j=(unit json)  (~(get by p.jon) 'done')
@@ -464,7 +476,9 @@
           =/  cap=(unit @ud)  (gn jon 'dom')
           ?:  |(=('' id) ?=(~ cap))  $
           =/  old=(unit event:cal)  (event-of c home id)
-          ?~  old  $
+          ?~  old
+            ;<  ~  bind:m  (refuse './' act (gs jon 'id') '' "no such event")
+            $
           =/  new=(unit event:cal)
             ::  a cap only shortens, as split-event's
             ?-  -.u.old
@@ -528,10 +542,12 @@
         =/  c=calendar:cal  (cal-of view)
         =/  ver=@uv  (cache-ver:cal c)
         ;<  have=@uv  bind:m  (read-cache-ver './')
-        =/  key=(unit [(map eid:cal event:cal) @dr (unit @t)])  `[(keyed-events c) horizon.c zone.c]
+        ::  current already (a request built it): nothing to key. last
+        ::  stays as it was, so the next change at worst refreshes
         ?:  =(ver have)
           ;<  *  bind:m  (take-news:io /cal)
-          $(last key)
+          $
+        =/  key=(unit [(map eid:cal event:cal) @dr (unit @t)])  `[(keyed-events c) horizon.c zone.c]
         ?:  =(last key)
           ;<  ~  bind:m  (write-cache-ver './' ver)
           ;<  *  bind:m  (take-news:io /cal)
@@ -549,7 +565,9 @@
         ;<  ~  bind:m
           ?:  =(order.new order.ca)  (pure:(fiber:fiber:nexus ,~) ~)
           (replace:io (by-uid new))
-        ;<  ~  bind:m  (over:io (grub-road './' 'index.calendar-cache') [[/ %calendar-cache] new])
+        ;<  ~  bind:m
+          ?:  =(new ca)  (pure:(fiber:fiber:nexus ,~) ~)
+          (over:io (grub-road './' 'index.calendar-cache') [[/ %calendar-cache] new])
         ;<  ~  bind:m  (write-cache-ver './' ver)
         ;<  *  bind:m  (take-news:io /cal)
         $(last key, ix nix)
@@ -843,11 +861,12 @@
         ;<  ca=cache:cal  bind:m  (fresh-cache './' c (add now (add lead ~d31)))
         ::  the lead window goes on from where the last one ended
         ::  (thru_ms), so a longer lead skips no starts and a shorter
-        ::  one sends none twice
+        ::  one sends none twice. Never before now: a start missed while
+        ::  the ship slept has begun, and is past a heads-up
         =/  hi=@da  (add now lead)
         =/  lo=@da
           =/  t=(unit @ud)  (gn st 'thru_ms')
-          (max (add floor lead) ?~(t (add from lead) (ms-to-da u.t)))
+          ?~(t (add from lead) (max now (ms-to-da u.t)))
         =/  due=(list ref:cal)
           %+  skim  ~(tap in (window:cal order.ca lo hi))
           |=  r=ref:cal
@@ -855,10 +874,13 @@
         ;<  ~  bind:m  (send-pushes ?:(=(0 lead-min) ~ (lead-pushes due (keyed-events c) now)))
         ::  alarms: a relative one fires when its occurrence minus the
         ::  lead falls in (from, now]; an absolute one when its moment
-        ::  does. Occurrences up to 31 days out are considered — the
-        ::  ceiling for a relative lead.
+        ::  does. Occurrences up to 31 days out are considered, the
+        ::  ceiling for a relative lead, and back as far as the longest
+        ::  alarm set after a start or an end: its occurrence is over
+        ::  by the time it fires.
+        =/  back=@dr  (late-reach c)
         =/  ahead=(list ref:cal)
-          ~(tap in (window:cal order.ca from (add now ~d31)))
+          ~(tap in (window:cal order.ca (sub from (min back (sub from *@da))) (add now ~d31)))
         ;<  ~  bind:m  (send-pushes (alarm-pushes ahead (keyed c) from now zone.c))
         =/  new-st=json
           :-  %o
@@ -872,7 +894,10 @@
           ::  /requests: window.json, events.json
           ::
           [[%requests ~] @]
-        ;<  ~  bind:m  (rise-wait:io prod "%calendar request: failed")
+        ::  a request that crashed is answered, not held: the kernel has
+        ::  printed the trace, and a fiber waiting on a poke no one sends
+        ::  would leave the browser hanging
+        ?^  prod  (send-text name.rail 500 'calendar: the request failed')
         =/  eyre-id=@ta  name.rail
         ;<  [src=@p req=inbound-request:eyre]  bind:m
           (get-state-as:io ,[src=@p inbound-request:eyre])
@@ -950,8 +975,18 @@
           ?.  ?=([%o *] masked)  masked
           :-  %o
           %-  ~(gas by p.masked)
+          ::  each link's Google id, last sync and error: the rest of a
+          ::  row (its id map, its sync token) is no business of the page
           :~  ['connected' b+!=('' (gs auth 'refresh_token'))]
-              ['linked' sync]
+              :-  'linked'
+              :-  %o
+              %-  ~(run by (omap sync))
+              |=  r=json
+              %-  pairs:enjs:format
+              :~  ['google_id' s+(gs r 'google_id')]
+                  ['last_ms' (numb:enjs:format (fall (gn r 'last_ms') 0))]
+                  ['error' s+(gs r 'error')]
+              ==
           ==
         ::  /dav-clients.json, /dav-clients, /dav-clients/revoke: the owner
         ::  mints and revokes CalDAV client passwords. The password is
@@ -1354,27 +1389,11 @@
   =/  note=tang  ~[leaf+"{msg}: waiting after a crash; the poke was refused"]
   =/  crash=?  !=(note u.prod)
   ;<  clock=(unit @da)  bind:m  soft-now
-  ?~  clock
-    ::  no clock to time a retry by. The crash is still counted, with no
-    ::  times, so it is on record; the kernel has printed it
-    ;<  ~  bind:m
-      =/  m  (fiber:fiber:nexus ,~)
-      ?.  crash  (pure:m ~)
-      ;<  log=json  bind:m  (read-json-grub './' 'rise.json')
-      =/  row=json  (fall (~(get by (omap log)) key) [%o ~])
-      ;<  *  bind:m
-        %^  over-as-soft:io  (grub-road './' 'rise.json')
-          :-  [/ %json]
-          :-  %o
-          %+  ~(put by (omap log))  key
-          %-  pairs:enjs:format
-          :~  ['n' (numb:enjs:format +((fall (gn row 'n') 0)))]
-              ['last_ms' (numb:enjs:format 0)]
-              ['until_ms' (numb:enjs:format 0)]
-          ==
-        [/ %json]
-      (pure:m ~)
-    (rise-park note)
+  ::  no clock to time a retry by: /sys/bowl.sig is refused, and every
+  ::  file read asks it for a nonce, so nothing can be counted either.
+  ::  It parks until a poke comes; the kernel has printed the crash, and
+  ::  its permits page shows the road
+  ?~  clock  (rise-park note)
   =/  now=@da  u.clock
   ;<  log=json  bind:m  (read-json-grub './' 'rise.json')
   =/  row=json  (fall (~(get by (omap log)) key) [%o ~])
@@ -1550,7 +1569,9 @@
   ::  built whole: the fiber keeps the per-event index that would let
   ::  this move only the changed events, and it is almost always ahead
   ::  of a request (its refresh runs in the write's own event)
-  =/  new=cache:cal  (inflate-all c (max (add now horizon.c) to))
+  ::  past to by a week: a caller asking a little further each time (the
+  ::  reminders fiber, every tick) would otherwise rebuild every time
+  =/  new=cache:cal  (inflate-all c (max (add now horizon.c) (add to ~d7)))
   ::  the cache first, then what it is current for: a reload between the
   ::  two leaves a version that says stale, never one that says current
   ;<  ~  bind:m  (over:io (grub-road pre 'index.calendar-cache') [[/ %calendar-cache] new])
@@ -1582,6 +1603,7 @@
 ++  put-ev  put-ev:core
 ++  put-ev-in  put-ev-in:core
 ++  target-of  target-of:core
+++  late-reach  late-reach:core
 ++  unhome  unhome:core
 ++  cal-arg  cal-arg:core
 ++  del-ev  del-ev:core
@@ -1986,10 +2008,10 @@
 ::  becomes an override child with the shape ev, and the series skips
 ::  it, as a client's RECURRENCE-ID would have it. So it stays the
 ::  series' instance everywhere: in CalDAV objects, and on Google as an
-::  edit of that instance, guests and all. A child already there for it
-::  is replaced, keeping its Google id; alarms absent are the old
-::  child's, else the series'. ~ when the series is not found, does not
-::  repeat, or has no occurrence at `at`.
+::  edit of that instance, guests and all. Alarms absent are the
+::  series'. ~ when the series is not found, does not repeat, or has no
+::  occurrence at `at` (one already moved has none: its child is edited
+::  as itself).
 ++  put-child
   |=  [c=calendar:cal home=@ta id=@ta at=@da ev=event:cal als=(unit (list alarm:cal))]
   ^-  (unit calendar:cal)
@@ -2014,14 +2036,12 @@
   =/  rid=[@t @t]  [(crip (weld "RECURRENCE-ID" ps)) (crip v)]
   =/  k=cal:cal  (~(got by cals.c) cid.u.got)
   =/  cu=uid:cal  (crip "{(trip uid.pe)}#{v}")
-  =/  old=(unit entry:cal)  (~(get by entries.k) cu)
-  =/  gids=(list [@t @t])
-    ?~  old  ~
-    (skim props.u.old |=([key=@t *] =("X-GOOGLE-" (scag 9 (trip key)))))
+  ::  no child is here for it: an occurrence already moved is skipped, and
+  ::  occurrence-index above names none (the child is edited as itself)
   =/  ch=entry:cal
     :*  ev  cu  ''  0
-        (fall als ?~(old alarms.pe alarms.u.old))
-        [['X-GRUBBERY-PARENT' uid.pe] rid gids]
+        (fall als alarms.pe)
+        ~[['X-GRUBBERY-PARENT' uid.pe] rid]
     ==
   =.  k  (skip-instances k uid.pe ~[~[rid]])
   =.  k  (restamp:cal (put-one:cal k ch) `uid.pe)
@@ -2059,6 +2079,12 @@
   |=  [[p=uid:cal rs=(list (list [k=@t v=@t]))] acc=_k]
   (skip-instances acc p rs)
 ++  dav-unquote  dav-unquote:core
+::  +soft-xml: a body's XML, ~ when it cannot be read (deep nesting a
+::  client or a remote sends must not crash the fiber)
+++  soft-xml
+  |=  body=@t
+  ^-  (unit manx)
+  (fall (mole |.((parse:dav body))) ~)
 ::  +dav-delete: an object (with its override children), or a calendar
 ++  dav-delete
   |=  [eyre-id=@ta req=inbound-request:eyre c=calendar:cal res=dav-res]
@@ -2098,7 +2124,7 @@
   ::  an id goes into hrefs and index keys: a knot, no slash
   ?.  ((sane %ta) id.res)
     (send-text eyre-id 403 'calendar: a calendar id is lowercase letters, digits, - . ~ _')
-  =/  root=(unit manx)  (parse:dav body)
+  =/  root=(unit manx)  (soft-xml body)
   =/  name=@t
     ?~  root  id.res
     =/  el=(unit manx)  (find-el:dav u.root %displayname)
@@ -2125,7 +2151,7 @@
   =/  k=(unit cal:cal)  (~(get by cals.c) id.res)
   ?~  k
     (send-text eyre-id 404 'calendar: no such calendar')
-  =/  root=(unit manx)  (parse:dav body)
+  =/  root=(unit manx)  (soft-xml body)
   =/  set-el=(unit manx)  ?~(root ~ (find-el:dav u.root %set))
   =/  asked=marl
     ?~  set-el  ~
@@ -2229,7 +2255,7 @@
   =/  k=(unit cal:cal)  (~(get by cals.c) id.res)
   ?~  k
     (send-text eyre-id 404 'calendar: no such calendar')
-  =/  root=(unit manx)  (parse:dav body)
+  =/  root=(unit manx)  (soft-xml body)
   ?~  root
     (send-text eyre-id 400 'calendar: REPORT needs an XML body')
   ;<  now=@da  bind:m  get-time:io
@@ -2357,7 +2383,7 @@
   =/  depth=@ud
     =/  d=(unit @t)  (get-header:http 'depth' header-list.request.req)
     ?:(&(?=(^ d) =('0' u.d)) 0 1)
-  =/  asked=(list @tas)  (prop-names:dav (parse:dav body))
+  =/  asked=(list @tas)  (prop-names:dav (soft-xml body))
   =/  self-href=tape
     ?-  -.res
       %principal  dav-root
@@ -2628,6 +2654,11 @@
   =/  access=@t  (gs tok 'access_token')
   ?:  |(!=(200 status) =('' access))
     ;<  ~  bind:m
+      ?:  =(0 status)
+        %:  fault  pre  'google-auth'  %warning  |
+          "Google could not be reached to renew the sign-in, so Google calendars are not syncing"
+          "nothing to do: it is tried again on the next pass"
+        ==
       %:  fault  pre  'google-auth'  %error  |((acts status) =(200 status))
         "Google gave no new sign-in token (status {(a-co:co status)}), so Google calendars are not syncing"
         "reconnect Google under Settings"
@@ -2658,7 +2689,12 @@
   ^-  form:m
   ;<  cfg=json  bind:m  (google-config pre)
   ;<  tok=(unit @t)  bind:m  (google-token pre)
-  ?~  tok  (pure:m [401 [%o ~]])
+  ::  no token: 401 when not connected; connected, the refresh failed
+  ::  (google-auth says why), and a network that did not answer is no
+  ::  reason to tell the owner to reconnect: status 0, asked again
+  ?~  tok
+    ;<  auth=json  bind:m  (google-auth pre)
+    (pure:m [?:(=('' (gs auth 'refresh_token')) 401 0) [%o ~]])
   =/  headers=(list [@t @t])
     :-  ['authorization' (cat 3 'Bearer ' u.tok)]
     %+  weld  extra
@@ -2780,21 +2816,50 @@
       ==
     (redirect-to "/apps/calendar?google=connected")
   ?:  &(post ?=([%disconnect ~] rest))
+    ::  the grant is revoked at Google too, so it does not outlive the
+    ::  link (best effort: this side disconnects whatever Google says).
+    ::  The revoke endpoint sits beside the token one
+    ;<  auth=json  bind:m  (google-auth '../')
+    ;<  cfg=json  bind:m  (google-config '../')
+    =/  tok=@t  =/(r (gs auth 'refresh_token') ?.(=('' r) r (gs auth 'access_token')))
+    =/  tu=tape  (trip (gs cfg 'token_url'))
+    =/  cut=@ud  (sub (lent tu) (min 6 (lent tu)))
+    ;<  ~  bind:m
+      ?:  |(=('' tok) !=("/token" (slag cut tu)))  (pure:(fiber:fiber:nexus ,~) ~)
+      ;<  *  bind:(fiber:fiber:nexus ,~)
+        %-  fetch-full
+        :^  %'POST'  (crip (weld (scag cut tu) "/revoke"))
+          ~[['content-type' 'application/x-www-form-urlencoded']]
+        `(form-body ~[["token" (trip tok)]])
+      (pure:(fiber:fiber:nexus ,~) ~)
     ;<  ~  bind:m  (write-json-grub '../' 'google-auth.json' [%o ~])
     (send-json eyre-id (pairs:enjs:format ~[['ok' b+&]]))
   ::  calendars.json: the account's calendars, with which are linked
   ?:  ?=([%'calendars.json' ~] rest)
-    ;<  [status=@ud res=json]  bind:m
-      (google-api '../' %'GET' "/calendar/v3/users/me/calendarList" ~)
-    ?.  =(200 status)  (send-text eyre-id status (crip "calendar: google answered {(a-co:co status)}"))
+    ::  every page (Google's is 100), ten at most
+    ;<  got=(each (list json) @ud)  bind:m
+      =/  n  (fiber:fiber:nexus ,(each (list json) @ud))
+      =|  acc=(list json)
+      =/  page=@t  ''
+      =/  pages=@ud  0
+      |-
+      ;<  [status=@ud res=json]  bind:n
+        %:  google-api  '../'  %'GET'
+          (weld "/calendar/v3/users/me/calendarList" ?:(=('' page) "" "?pageToken={(enc-seg:dav (trip page))}"))
+          ~
+        ==
+      ?.  =(200 status)  (pure:n |+status)
+      =.  acc  (weld acc (arr:gcal res 'items'))
+      =/  next=@t  (gs res 'nextPageToken')
+      ?:  |(=('' next) (gte pages 9))  (pure:n &+acc)
+      $(page next, pages +(pages))
+    ?:  ?=(%| -.got)  (send-text eyre-id p.got (crip "calendar: google answered {(a-co:co p.got)}"))
     ;<  sync=json  bind:m  (google-sync '../')
     =/  linked=(map @t @t)
       %-  ~(gas by *(map @t @t))
       %+  turn  ?:(?=([%o *] sync) ~(tap by p.sync) ~)
       |=([id=@t v=json] [(gs v 'google_id') id])
-    =/  items=(list json)
-      =/  it=(unit json)  ?:(?=([%o *] res) (~(get by p.res) 'items') ~)
-      ?:(?=([~ %a *] it) p.u.it ~)
+    =/  items=(list json)  p.got
     %+  send-json  eyre-id
     :-  %a
     %+  turn  items
@@ -2891,9 +2956,14 @@
         ['local' s+ics]
         ['remote_updated' s+remote-updated]
     ==
-  ::  one row per calendar and uid, the newest 500: a host or remote that
-  ::  makes up refusals cannot grow the log without end
-  =/  rest=(list json)  (skip all same)
+  ::  three rows per calendar and uid (a second conflict keeps the copy
+  ::  the first saved), the newest 500: a host or remote that makes up
+  ::  refusals cannot grow the log without end. Rows run oldest first.
+  =/  mine=(list json)  (skim all same)
+  =/  rest=(list json)
+    ?.  (gte (lent mine) 3)  all
+    =/  at=(unit @ud)  (find ~[(snag 0 mine)] all)
+    ?~(at all (oust [u.at 1] all))
   =/  keep=(list json)  (slag (sub (max 500 +((lent rest))) 500) (snoc rest row))
   (write-json-grub pre 'google-conflicts.json' [%a keep])
 ::  +log-clashes: a conflict row for each uid a pull let the remote win
@@ -3068,6 +3138,8 @@
     ;<  ~  bind:m
       %:  fault  pre  (cat 3 'google-pull/' id)  %error  (acts status)
         "Google would not list calendar {(trip id)} (status {(a-co:co status)})"
+        ?:  |(=(0 status) (gte status 500) =(429 status))
+          "nothing to do unless it stays: it is asked again on the next pass"
         "reconnect Google under Settings, or unlink the calendar"
       ==
     (pure:m row)
@@ -3578,7 +3650,7 @@
     (dav-fetch row %'REPORT' url `body ~[['content-type' 'application/xml; charset=utf-8'] ['depth' '0']])
   ?:  =(0 status)  (pure:m ~)
   ?:  =(207 status)
-    =/  root=(unit manx)  (parse:dav res)
+    =/  root=(unit manx)  (soft-xml res)
     ?~  root  (pure:m ~)
     =/  token=@t
       =/  el=(unit manx)  (kid:dav u.root %'sync-token')
@@ -3611,7 +3683,7 @@
         "check its address, username and password under Settings, Following"
       ==
     (pure:m ~)
-  =/  root=(unit manx)  (parse:dav res2)
+  =/  root=(unit manx)  (soft-xml res2)
   ?~  root  (pure:m ~)
   =/  listed=(list [href=tape etag=@t])
     %+  murn  (kids:dav u.root %response)
