@@ -633,11 +633,13 @@
   %+  min  ~d31
   %+  roll  ~(val by cals.c)
   |=  [k=cal:cal acc=@dr]
+  ::  each inner roll goes on from the outer one's running value (_acc)
   %+  roll  ~(val by entries.k)
-  |=  [e=entry:cal a=@dr]
+  |=  [e=entry:cal a=_acc]
   %+  roll  alarms.e
-  |=  [al=alarm:cal b=@dr]
-  ?.  ?=([%off * %.y *] trigger.al)  b
+  |=  [al=alarm:cal b=_a]
+  ?.  ?=(%off -.trigger.al)  b
+  ?.  late.trigger.al  b
   (max b d.trigger.al)
 ::  +target-of: the calendar +put-ev-in puts an edit in: the one wanted,
 ::  when it exists, else the entry's own (else default). ~ when that is

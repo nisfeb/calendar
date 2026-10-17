@@ -821,4 +821,17 @@
     (expect-eq !>(`%a) !>((target-of:core c `%gone %a 'x@t')))
     (expect-eq !>(c) !>((put-ev-in:core c `%b %a 'x@t' (ev 'y'))))
   ==
+::  how far back the reminders fiber looks: the longest alarm set after a
+::  start or an end, capped at 31 days; none, nothing
+++  test-late-reach
+  =/  with
+    |=  als=(list alarm:cal)
+    ^-  calendar:cal
+    (cals ~[[%a ~[`entry:cal`[(ev 'x') 'x@t' '' 0 als ~]]]])
+  ;:  weld
+    (expect-eq !>(~s0) !>((late-reach:core (with ~))))
+    (expect-eq !>(~s0) !>((late-reach:core (with ~[[[%rel ~h1] ''] [[%off & | ~h3] '']]))))
+    (expect-eq !>(~h2) !>((late-reach:core (with ~[[[%off & & ~h2] ''] [[%off | & ~m30] '']]))))
+    (expect-eq !>(~d31) !>((late-reach:core (with ~[[[%off | & ~d40] '']]))))
+  ==
 --

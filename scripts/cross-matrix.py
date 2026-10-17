@@ -146,6 +146,15 @@ if len(sys.argv) > 6:
     wait('google: the edit is one update, no echo', lambda: [w[0] for w in writes()] == ['insert', 'update'] and 'from peer v2' in gevents())
     time.sleep(20); sync(PEER, PJ); gsync(); time.sleep(10)
     check('no ping-pong after two more passes', [w[0] for w in writes()] == ['insert', 'update'] and rows(PEER, PJ, gsid)['from peer v2']['cat'] == 'timed', writes())
+    # a peer cannot make the host's Google account mail anyone: guests it
+    # names in a Google-linked calendar are not taken, the edit is
+    pu = rows(PEER, PJ, gsid)['from peer v2']['id']
+    poke(PEER, PJ, {'action': 'edit-event', 'cal': gsid, 'id': pu, 'cat': 'timed', 'kind': 'once', 'start_ms': 1793700000000, 'fin': 'dur', 'dur_min': 45,
+                    'meta': {'name': 'from peer v3', 'guests': [{'email': 'stranger@x.test', 'status': 'needs-action'}]}})
+    wait('host: peer edit with a guest arrived, the guest left out', lambda: 'from peer v3' in rows(HOST, HJ, gc) and not rows(HOST, HJ, gc)['from peer v3']['meta'].get('guests'))
+    gsync()
+    def gev(name): return [e for e in ctl({'op': 'state'}).get('events', {}).get('primary@fake', {}).values() if e.get('summary') == name]
+    wait('google: the edit went up with no attendee', lambda: gev('from peer v3') and not gev('from peer v3')[0].get('attendees'))
     curl(HOST, HJ, '/apps/calendar/share/revoke', {'id': gc, 'ship': PEERNAME}); time.sleep(3)
     poke(PEER, PJ, {'action': 'del-calendar', 'id': gsid})
     curl(HOST, HJ, '/apps/calendar/google/unlink', {'id': gc}); ctl({'op': 'reset'})
