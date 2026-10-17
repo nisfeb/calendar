@@ -1,6 +1,8 @@
 # Google Calendar, two-way
 
-Open **Settings → Google Calendar** on the calendar page. You bring your own OAuth client. The app has no shared credential.
+Open **Settings → Google Calendar** on the calendar page, in a real browser: Google refuses sign-in inside an app's embedded webview. `/apps/calendar#google` opens the panel directly. You bring your own OAuth client. The app has no shared credential.
+
+**One account, several calendars.** The ship keeps one Google sign-in. Link any calendars that account can reach, including calendars other accounts share with it (below). Connecting a different account replaces the sign-in for every linked calendar. It does not add a second one.
 
 ## Making the client (once, about five minutes)
 
@@ -11,7 +13,7 @@ Google's console moved the OAuth pages into **Google Auth platform** in 2025. Ol
 3. Menu → **Google Auth platform** → **Get started**. App information: an app name and your email. Audience: **External** (or **Internal**, see below). Contact information: your email. Agree to the policy and press **Create**.
 4. External only: open **Audience** and press **Publish app** so the status is *In production*. Left in *Testing*, Google lets the sign-in last only 7 days for Calendar access, and you would press Connect again every week. Published and unverified is fine for your own use: Google shows an "unverified app" warning at Connect, which you click through (**Advanced** → go to the app). A project inside a company's Google Workspace can choose *Internal* instead: no warning, no publishing, and the sign-in lasts.
 5. Open **Clients** → **Create client**. Application type **Web application**. Under **Authorized redirect URIs** press **Add URI** and paste exactly the URI the Google panel shows: `https://<your-host>/apps/calendar/google/callback`. Press **Create**.
-6. Google shows the client id and secret in a dialog, and the secret only this once. Copy both into the panel, press **Save**, then **Connect**. If the dialog is already closed, open the client under **Clients** and press **Add secret** for a new one. Google asks for consent, then sends you back, and the panel lists your calendars. **Link** the ones you want on the ship.
+6. Google shows the client id and secret in a dialog, and the secret only this once. Import the client's downloaded JSON in the panel, or copy both into it, and press **Save and connect**. The import reads only the client id and secret, and refuses a file whose redirect URIs lack the panel's. If the dialog is already closed, open the client under **Clients** and press **Add secret** for a new one. Google asks for consent, then sends you back, and the panel lists your calendars. **Link** the ones you want on the ship.
 
 The redirect URI the ship tells Google is the one the panel showed when you
 saved: the page records the address it was opened at (`redirect_uri` in
@@ -20,6 +22,8 @@ http, and Google refuses an http redirect for anything but localhost, so
 save the client from the address you want registered, `https://<your-host>`.
 A `redirect_uri_mismatch` error from Google means the two differ: save again
 from the right address, or change the URI registered for the client.
+
+A stored sign-in does not prove the Calendar API answers. If the calendar list says Google answered 403, check that **Google Calendar API** is enabled in the same project as the client, then press **Refresh calendar list**. Keep the client and the sign-in you have. If it still fails, check the Calendar permissions granted and the Workspace admin's app policy.
 
 The refresh token lives in `google-auth.json` inside the calendar's own tree
 and nowhere else. **Disconnect** forgets it.
@@ -40,6 +44,7 @@ allows.
   changes to go back), then link it from the personal account; the panel
   lists every calendar an account can see. Companies often allow only
   free/busy outside the organization, and then there is nothing to read.
+- **Several accounts through one.** The same trick gathers all your calendars under the account the ship signs in with. In the account that owns a calendar, open **Settings for my calendars → the calendar → Shared with → Add people and groups**, give the connected account **Make changes and see all event details**, and send. In the connected account, add the calendar from the invitation. Then press **Refresh calendar list** here and **Link** it.
 - **Not these.** The calendar's secret iCal address is often turned off in
   a company, and an ICS feed here skips repeating events. Following it over
   CalDAV does not work: Google's CalDAV needs an OAuth sign-in, and the

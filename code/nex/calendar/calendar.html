@@ -342,35 +342,52 @@
         </details>
         <details class="sect" id="google-sect">
           <summary>Google Calendar</summary>
-        <div id="google-status" class="dav-hint"></div>
+        <div id="google-status" class="dav-hint" role="status" aria-live="polite"></div>
+        <p class="dav-hint"><b>One Google account at a time.</b> You can link several calendars that account can access. Connecting a different account replaces the authorization for every linked calendar. It does not add a second account.</p>
         <details id="google-setup">
           <summary>Set up your own OAuth client (once)</summary>
           <ol class="dav-hint">
-            <li>At <a href="https://console.cloud.google.com/" target="_blank" rel="noopener">console.cloud.google.com</a> make a new project (the project picker at the top → <b>New project</b>, any name) and select it.</li>
-            <li>Menu → <b>APIs &amp; Services → Library</b>, search <b>Google Calendar API</b>, press <b>Enable</b>.</li>
-            <li>Menu → <b>Google Auth platform</b> → <b>Get started</b>. Give an app name and your email, pick <b>External</b> under Audience (or <b>Internal</b> in a company's Google Workspace), give your email again, agree, press <b>Create</b>.</li>
+            <li>At <a href="https://console.cloud.google.com/" target="_blank" rel="noopener noreferrer">console.cloud.google.com</a> make a new project (the project picker at the top → <b>New project</b>, any name) and select it. Use that one project for every step.</li>
+            <li>Menu → <b>APIs &amp; Services → Library</b>, search <b>Google Calendar API</b>, press <b>Enable</b>. Making a client does not enable it.</li>
+            <li>Menu → <b>Google Auth platform</b> → <b>Get started</b>. Give an app name and your email, pick <b>External</b> under Audience, give your email again, agree, press <b>Create</b>. In a company's Google Workspace you can pick <b>Internal</b>: only that organization's accounts can sign in, and calendars others share with that account still come along.</li>
             <li>External only: open <b>Audience</b> and press <b>Publish app</b>, so the status is <i>In production</i>. Left in Testing, the sign-in ends after 7 days.</li>
-            <li>Open <b>Clients</b> → <b>Create client</b>. Type <b>Web application</b>. Under <b>Authorized redirect URIs</b> press <b>Add URI</b> and paste exactly: <code id="google-redirect"></code> Press <b>Create</b>.</li>
-            <li>Google shows the client id and secret once. Copy both into the boxes below, press <b>Save</b>, then <b>Connect</b>. If Google says the app is unverified, it is yours: press <b>Advanced</b> → go to the app.</li>
+            <li>Open <b>Clients</b> → <b>Create client</b>. Type <b>Web application</b>. Under <b>Authorized redirect URIs</b> press <b>Add URI</b> and paste exactly this, with no trailing slash. Press <b>Create</b>.
+              <div><code id="google-redirect"></code> <button id="google-copy-redirect" class="nav-btn">Copy</button></div></li>
+            <li>Google shows the secret once. Download the client's JSON and import it below, or copy the client id and secret into the boxes. Press <b>Save and connect</b> and choose your account. If Google says the app is unverified, it is yours: press <b>Advanced</b> → go to the app.</li>
+            <li>Back here, <b>Link</b> each calendar you want. Signing in alone syncs nothing.</li>
           </ol>
+          <label class="f" for="google-client-file">Import the client's JSON</label>
+          <input id="google-client-file" type="file" accept=".json,application/json">
         </details>
         <label class="f" for="google-cid">Client id</label>
-        <input id="google-cid" placeholder="1234…apps.googleusercontent.com">
+        <input id="google-cid" placeholder="1234…apps.googleusercontent.com" autocomplete="off" spellcheck="false">
         <label class="f" for="google-csec">Client secret</label>
-        <input id="google-csec" type="password" placeholder="GOCSPX-…">
+        <input id="google-csec" type="password" placeholder="GOCSPX-…" autocomplete="off">
         <div class="feeds-foot">
-          <span id="google-msg"></span>
+          <span id="google-msg" role="status" aria-live="polite"></span>
           <span>
             <button id="google-save" class="nav-btn">Save</button>
-            <button id="google-connect" class="nav-btn">Connect</button>
+            <button id="google-connect" class="nav-btn">Save and connect</button>
             <button id="google-disconnect" class="nav-btn danger">Disconnect</button>
           </span>
         </div>
+        <details class="dav-hint">
+          <summary>Connection help</summary>
+          <ul>
+            <li><b>Google answered HTTP 403:</b> first check Google Calendar API is enabled in your client's project. After enabling it, use Refresh calendar list below. Keep your existing client and authorization. If it still fails, check Calendar permissions and Workspace policy.</li>
+            <li><b>redirect_uri_mismatch:</b> register the exact URI above on this client. Save again from your ship's public HTTPS address.</li>
+            <li><b>access_denied:</b> check test users, the selected account, and your Workspace admin's app policy. Internal apps cannot connect accounts outside their organization.</li>
+            <li><b>disallowed_useragent:</b> open this page in your system browser. Google sign-in does not support embedded webviews.</li>
+            <li><b>Token exchange failed:</b> check that the client ID and secret belong to the same Web application client. Start a fresh connection instead of refreshing the callback page.</li>
+            <li><b>Stops after a week:</b> check whether the Google project is External and still in Testing. Use Internal for an eligible organization account or publish External, then reconnect for a new authorization.</li>
+            <li><b>Missing another account's calendar:</b> one Google sign-in at a time. Share that calendar with the connected account in Google (with event details, not free/busy only), then use Refresh calendar list.</li>
+          </ul>
+        </details>
         <label class="f">Calendars on Google</label>
         <div id="google-list"></div>
         <div class="feeds-foot">
           <a id="google-conflicts" class="dav-hint" href="#conflicts-sect"></a>
-          <button id="google-sync-now" class="nav-btn">Sync now</button>
+          <span><button id="google-refresh" class="nav-btn">Refresh calendar list</button> <button id="google-sync-now" class="nav-btn">Sync now</button></span>
         </div>
         </details>
         <details class="sect">

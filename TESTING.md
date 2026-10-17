@@ -34,6 +34,12 @@ should start from: `$F snap calendar compiled`. For a throwaway point,
 
 ## Offline tests (no ship)
 
+The Google panel's setup checks run in Node, with no ship:
+
+```sh
+node tests/js/google-setup.test.cjs
+```
+
 ```sh
 scripts/offline-tests.sh            # all five suites at once, ~90 s
 scripts/offline-tests.sh ics rrule  # by name
