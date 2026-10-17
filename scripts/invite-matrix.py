@@ -4,7 +4,8 @@ Invitations to one event, ship to ship. HOST invites GUEST by @p (meta
 ships); the guest's ship lists it; the guest accepts onto a calendar of
 its choosing and the host hears the answer; the host's changes follow to
 the copy; the host's next invitation offers the same calendar; a decline
-reaches the host; the copy never invites anyone itself; taking the guest
+reaches the host; the copy never invites anyone itself, not even a ship
+the guest names on it; taking the guest
 off, or deleting the event, takes the copy and the invitation away.
 Cleans up. HOSTNAME and GUESTNAME are the ships' @p (e.g. ~bes ~reb)."""
 import sys, json, subprocess, time
@@ -108,8 +109,16 @@ d = curl(GUEST, GJ, '/apps/calendar/invites/answer', {'key': r2['key'] if r2 els
 check('a decline puts nothing on a calendar', isinstance(d, dict) and d.get('told') and not [e for e in events(GUEST, GJ, 'urbit') if e['meta']['name'] == 'inv drinks'], d)
 check('the host hears the decline', wait(lambda: host_ships('inv drinks') == {GUESTNAME: 'declined'}), host_ships('inv drinks'))
 
-# a copy is not the guest's to send on
-time.sleep(10)
+# a copy is not the guest's to send on: the guest names the host on its
+# copy (still marked as the host's), and the host gets no invitation
+cm = ([e['meta'] for e in events(GUEST, GJ, 'urbit') if e['meta']['name'] == 'inv meeting moved'] or [{}])[0]
+poke(GUEST, GJ, {'action': 'edit-event', 'cal': 'urbit', 'id': 'inv-meeting@gate', 'cat': 'timed', 'kind': 'once', 'start_ms': 1793026800000,
+                 'fin': 'dur', 'dur_min': 60, 'meta': dict(cm, ships=cm.get('ships', []) + [{'ship': HOSTNAME, 'status': 'needs-action'}])})
+def named_host():
+    return [e for e in events(GUEST, GJ, 'urbit') if e['meta']['name'] == 'inv meeting moved' and e['meta'].get('host') == HOSTNAME
+            and HOSTNAME in [g.get('ship') for g in e['meta'].get('ships', [])]]
+check('the guest names the host on its copy', wait(named_host), events(GUEST, GJ, 'urbit'))
+time.sleep(15)
 check('the copy sends no invitation of its own', not invites(HOST, HJ), invites(HOST, HJ))
 
 # taken off the guest list: the copy and the invitation go

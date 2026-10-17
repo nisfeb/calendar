@@ -6,14 +6,17 @@
 #
 #   upgrade-check.sh <pier> <ship-url> <cookie-jar> [files ...]
 #
-# files: paths under code/ to write (default: every file that differs from
-# the ship's copy is the operator's job to name; pass them, the new ones
-# first and nex/calendar/app.hoon last). A new file is created first.
+# files: paths under code/ to write, at least one. Naming every file that
+# differs from the ship's copy is the operator's job: the new ones first
+# and nex/calendar/app.hoon last. A new file is created first.
 # Passes when: the instance is not banged, the worker never sits at full
 # CPU for 30 s, the route answers at the end, a poke is acknowledged, and
-# rise.json names no crash after the deploy. Route differences are printed
-# for the operator to explain; they are not a failure by themselves.
+# rise.json shows no fiber crashing twice since the deploy (one crash
+# during the deploy itself, n=1, is the retry doing its job). Route
+# differences are printed for the operator to explain; they are not a
+# failure by themselves. The captures are kept when they differ.
 set -uo pipefail
+(( $# > 3 )) || { echo "usage: upgrade-check.sh <pier> <ship-url> <cookie-jar> <file> [file ...]" >&2; exit 2; }
 pier=$(cd "$1" && pwd); B=${2%/}; JAR=$3; shift 3
 SRC=$(cd "$(dirname "$0")/../code" && pwd)
 D=/grubbery/ball/apps/shell.shell/desks/calendar.desk/desk
@@ -61,8 +64,10 @@ import json,sys,time
 t0=int(sys.argv[1])*1000; rows=json.load(sys.stdin)
 late={k:v for k,v in rows.items() if v.get("last_ms",0)>=t0}
 print("rise.json since the deploy:", late or "no crash")
-sys.exit(1 if late else 0)' "$t0" || echo "(a crash during the deploy itself, n=1, is the retry doing its job; read its trace)"
+if any(v.get("n",0)==1 for v in late.values()):
+    print("(a crash during the deploy itself, n=1, is the retry doing its job; read its trace)")
+sys.exit(1 if any(v.get("n",0)>1 for v in late.values()) else 0)' "$t0" || { echo "FAIL: rise.json shows a fiber crashing again since the deploy, or could not be read"; fail=1; }
 snap "$work/after"
-diff -rq "$work/before" "$work/after" && echo "routes: identical"
+if diff -rq "$work/before" "$work/after"; then echo "routes: identical"; rm -rf "$work"; else echo "captures kept in $work"; fi
 (( fail )) && exit 1
 echo "ok: upgraded, and quiet"
