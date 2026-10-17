@@ -373,6 +373,25 @@
       ['api_base' s+'https://www.googleapis.com']
       ['tick_min' (numb:enjs:format 5)]
   ==
+::  +endpoint-ok: a Google endpoint the settings may name: Google's own,
+::  over https, or this machine (the gates' fake Google). The refresh
+::  token and client secret go to token_url, so not just anywhere.
+++  endpoint-ok
+  |=  u=@t
+  ^-  ?
+  =/  t=tape  (trip u)
+  =/  tls=?  =("https://" (scag 8 t))
+  =/  rest=(unit tape)
+    ?:  tls  `(slag 8 t)
+    ?:  =("http://" (scag 7 t))  `(slag 7 t)
+    ~
+  ?~  rest  |
+  =/  host=tape  (scag (fall (find "/" u.rest) (lent u.rest)) u.rest)
+  =/  name=tape  (scag (fall (find ":" host) (lent host)) host)
+  ?|  &(tls ?=(^ (find ~[name] `(list tape)`~["oauth2.googleapis.com" "www.googleapis.com" "accounts.google.com"])))
+      =("localhost" name)
+      =("127.0.0.1" name)
+  ==
 ++  form-body
   |=  kvs=(list [k=tape v=tape])
   ^-  octs
@@ -576,10 +595,20 @@
 ++  new-id-ok
   |=  [c=calendar:cal id=@t]
   ^-  ?
-  ?&  !=('' id)
+  ?&  (key-ok id)
       (lte (met 3 id) 255)
-      !(lien (trip id) |=(ch=@t |(=('/' ch) =('#' ch) (lth ch 32) =(127 ch))))
+      !(lien (trip id) |=(ch=@t =('/' ch)))
       ?=(~ (find-entry:cal c id))
+  ==
+::  +key-ok: a key another ship names (a peer's object, a host's
+::  invitation): not empty, no #, no control characters, at most 1 KiB.
+::  A slash is let through: some UIDs are URLs
+++  key-ok
+  |=  id=@t
+  ^-  ?
+  ?&  !=('' id)
+      (lte (met 3 id) 1.024)
+      !(lien (trip id) |=(ch=@t |(=('#' ch) (lth ch 32) =(127 ch))))
   ==
 ::  +has-objects: a share file or index that names its objects (maybe
 ::  none), as opposed to one that could not be read

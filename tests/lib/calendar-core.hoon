@@ -775,4 +775,28 @@
     (expect-eq !>(3) !>(~(wyt by rows.ix1)))
     (expect-eq !>((inflate-all:core c2 kf thru)) !>(-.r2))
   ==
+::
+::  ==  what other ships and the settings may name
+::
+++  test-key-ok
+  ;:  weld
+    (expect-eq !>(&) !>((key-ok:core 'abc@google.com')))
+    (expect-eq !>(&) !>((key-ok:core 'https://example.com/e/1')))
+    (expect-eq !>(|) !>((key-ok:core '')))
+    (expect-eq !>(|) !>((key-ok:core 'victim#20260101')))
+    (expect-eq !>(|) !>((key-ok:core 'a\0ab')))
+    (expect-eq !>(|) !>((key-ok:core `@t`(fil 3 1.025 'a'))))
+  ==
+++  test-endpoint-ok
+  ;:  weld
+    (expect-eq !>(&) !>((endpoint-ok:core 'https://oauth2.googleapis.com/token')))
+    (expect-eq !>(&) !>((endpoint-ok:core 'https://www.googleapis.com')))
+    (expect-eq !>(&) !>((endpoint-ok:core 'https://accounts.google.com/o/oauth2/v2/auth')))
+    (expect-eq !>(&) !>((endpoint-ok:core 'http://127.0.0.1:9123/token')))
+    (expect-eq !>(&) !>((endpoint-ok:core 'http://localhost:9123')))
+    (expect-eq !>(|) !>((endpoint-ok:core 'http://www.googleapis.com')))
+    (expect-eq !>(|) !>((endpoint-ok:core 'https://www.googleapis.com.evil.example/x')))
+    (expect-eq !>(|) !>((endpoint-ok:core 'https://evil.example/oauth2.googleapis.com')))
+    (expect-eq !>(|) !>((endpoint-ok:core 'ftp://localhost/')))
+  ==
 --
