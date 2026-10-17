@@ -446,7 +446,9 @@ function isSeries(ev) { return (ev.cat === 'timed' || ev.cat === 'allday') && ev
 // after a change: the view and the tag list (a change may add a tag)
 function refresh() { loadTags(); load(); }
 // a poke is acknowledged before the ship reads it: look soon, and again
-// once a busy ship has caught up
+// once a busy ship has caught up.
+// ponytail: fixed timers; poll the calendar's seq in calendars.json if a
+// busy ship still shows stale after 2 s
 function afterChange() { setTimeout(load, 400); setTimeout(refresh, 2000); }
 // an answer to another ship's invitation. The ship says whether the
 // copy went on the calendar
@@ -2172,7 +2174,7 @@ function showModal() {
 // ask: an Escape or a backdrop click, which can be a slip, asks before
 // it throws away a changed form
 function closeModal(ask) {
-  if (ask && formState() !== formAtOpen && !confirm('Discard the changes to this event?')) return;
+  if (ask && formState() !== formAtOpen && !confirm('Discard your changes?')) return;
   var inside = back.contains(document.activeElement);
   back.classList.remove('open');
   modalClosedAt = Date.now();
@@ -2554,8 +2556,8 @@ fSave.onclick = function() {
   };
   // the form closes and says so at once; the ship is told behind it.
   // Save stays off until the ship has the change
-  fSave.disabled = true;
   closeModal();
+  fSave.disabled = true;
   toast('Saving "' + name + '"…');
   if (cat === 'todo' && state.view === 'tasks') {
     var cur = editCtx && lastTasks.filter(function(t) { return t.id === editCtx.id && t.cal === editCtx.home; })[0];
