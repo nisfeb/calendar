@@ -191,6 +191,51 @@
     (expect !>((meta-prop:ics ['CONFERENCE;VALUE=URI' 'https://zoom.us/j/1'])))
   ==
 ::
+::  guests: ATTENDEE and ORGANIZER read into meta, written back as lines
+::  with a known status only, and a ship guest (no email) not written
+++  test-guests-in-and-out
+  =/  body=@t
+    %-  crip
+    %-  zing
+    %+  turn
+      :~  "BEGIN:VCALENDAR"
+          "BEGIN:VEVENT"
+          "UID:g@test"
+          "SUMMARY:g"
+          "DTSTART:20261102T100000Z"
+          "ORGANIZER;CN=Boss:mailto:boss@x.test"
+          "ATTENDEE;CN=\"Doe: J\";PARTSTAT=TENTATIVE;ROLE=REQ-PARTICIPANT:MAILTO:doe@x.test"
+          "END:VEVENT"
+          "END:VCALENDAR"
+      ==
+    |=(l=tape (weld l crlf:ics))
+  =/  m=meta:cal  (read-meta:ics (snag 0 (events:ics body)))
+  =/  w=meta:cal
+    %-  malt
+    ^-  (list [@t json])
+    :~  ['name' s+'w']
+        ['organizer' (pairs:enjs:format ~[['email' s+'boss@x.test']])]
+        :-  'guests'
+        :-  %a
+        :~  (pairs:enjs:format ~[['email' s+'ana@x.test'] ['name' s+'Ana'] ['status' s+'accepted']])
+            (pairs:enjs:format ~[['email' s+'bo@x.test'] ['status' s+'bogus;X=1']])
+            (pairs:enjs:format ~[['ship' s+'~zod']])
+        ==
+    ==
+  =/  ev=event:cal  [%timed [[/lib/rules %once] ~ ~2026.11.2..10.00.00] ~ [%dur ~h1] [~ ~] w]
+  =/  out=tape  (write-entry:ics [ev 'w@test' '' 0 ~ ~] ~ ~2026.11.1)
+  ;:  weld
+    %+  expect-eq
+      !>(`[%a ~[(pairs:enjs:format ~[['email' s+'doe@x.test'] ['name' s+'Doe: J'] ['status' s+'tentative']])]])
+    !>((~(get by m) 'guests'))
+    (expect-eq !>(`(pairs:enjs:format ~[['email' s+'boss@x.test'] ['name' s+'Boss']])) !>((~(get by m) 'organizer')))
+    (expect !>(?=(^ (find "ORGANIZER:mailto:boss@x.test" out))))
+    (expect !>(?=(^ (find "ATTENDEE;CN=\"Ana\";PARTSTAT=ACCEPTED:mailto:ana@x.test" out))))
+    (expect !>(?=(^ (find "ATTENDEE:mailto:bo@x.test" out))))
+    (expect !>(?=(~ (find "~zod" out))))
+    (expect !>((meta-prop:ics ['ATTENDEE;CN=x' 'mailto:a@b'])))
+  ==
+::
 ::  an open task's STATUS, typed or kept from a file, is written before
 ::  its alarms either way, so an export is the same through an import
 ++  test-open-task-status-in-place

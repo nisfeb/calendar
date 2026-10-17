@@ -218,13 +218,14 @@
   ==
 ::  +keep-meta: a re-read event keeps what the file has no word for: meta
 ::  keys ICS does not carry, and a color or join link a client that knows
-::  no COLOR or CONFERENCE left out. Name, note, location and tags are
-::  the file's. ponytail: so a join link removed at the source stays
-::  here until edited; make it the file's once clients all carry it
+::  no COLOR or CONFERENCE left out. Name, note, location, tags, guests
+::  and organizer are the file's. ponytail: so a join link removed at the
+::  source stays here until edited; make it the file's once clients all
+::  carry it
 ++  keep-meta
   |=  [old=event:cal new=event:cal]
   ^-  event:cal
-  =/  own=(set @t)  (sy ~['name' 'note' 'location' 'tags'])
+  =/  own=(set @t)  (sy ~['name' 'note' 'location' 'tags' 'guests' 'organizer'])
   =/  kept=meta:cal
     %-  ~(uni by (malt (skip ~(tap by (meta-of:cal old)) |=([k=@t *] (~(has in own) k)))))
     (meta-of:cal new)

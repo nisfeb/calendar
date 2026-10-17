@@ -379,6 +379,30 @@
           =?  c  ?=(%set -.als)  (set-alarms c (fall (cal-arg jon) home) id l.als)
           ;<  ~  bind:m  (replace:io c)
           $
+        ?:  =('rsvp' act)
+          ::  the owner's answer to an invitation: the guest marked self
+          ::  takes the status, and the calendar's sync tells the organizer
+          =/  id=@ta  (crip (trip (gs jon 'id')))
+          =/  st=@t  (gs jon 'status')
+          =/  old=(unit event:cal)  (event-of c home id)
+          ?~  old  $
+          ?.  ?=(?(%accepted %declined %tentative) st)
+            ;<  ~  bind:m  (refuse './' act (gs jon 'id') '' "the answer is accepted, declined or tentative")
+            $
+          =/  mt=meta:cal  (meta-of:cal u.old)
+          =/  gl=(unit json)  (~(get by mt) 'guests')
+          =/  guests=(list json)  ?.(?=([~ %a *] gl) ~ p.u.gl)
+          =/  me  |=(g=json &(?=([%o *] g) =([~ %b %.y] (~(get by p.g) 'self'))))
+          ?.  (lien guests me)
+            ;<  ~  bind:m  (refuse './' act (gs jon 'id') '' "the event names no guest who is this calendar's owner")
+            $
+          =/  new=(list json)
+            %+  turn  guests
+            |=  g=json
+            ?.  &((me g) ?=([%o *] g))  g
+            [%o (~(put by p.g) 'status' s+st)]
+          ;<  ~  bind:m  (replace:io (put-ev c home id (put-meta:cal u.old (~(put by mt) 'guests' [%a new]))))
+          $
         ?:  =('done-event' act)
           ::  tick or untick a task
           =/  id=@ta  (crip (trip (gs jon 'id')))
@@ -2905,7 +2929,13 @@
   =/  sup=(set [@t @ud])  (suppressed row)
   =/  changes=(list [uid:cal ?(%put %del)])  (changes-since u.k since sup)
   =/  base=tape  "/calendar/v3/calendars/{(enc-seg:dav (trip gid))}/events"
-  =|  results=(list [=uid:cal gid=@t updated=@t etag=@t])
+  =|  results=(list [=uid:cal gid=@t updated=@t etag=@t join=@t])
+  ::  conferenceDataVersion=1: a Meet asked for is made, and one there is
+  ::  kept on a patch that does not name it. sendUpdates=all: Google mails
+  ::  the guests an invite, a change or a cancellation, as its own page
+  ::  does when told to. ponytail: every change of an event with guests
+  ::  mails them; a per-edit choice if that is too chatty
+  =/  q=tape  "?conferenceDataVersion=1&sendUpdates=all"
   =/  stopped=?  |
   |-
   ?^  changes
@@ -2914,7 +2944,7 @@
     ?:  =(%del what)
       ?:  =('' known)  $(changes t.changes)
       ;<  [status=@ud res=json]  bind:m
-        (google-api pre %'DELETE' "{base}/{(enc-seg:dav (trip known))}" ~)
+        (google-api pre %'DELETE' "{base}/{(enc-seg:dav (trip known))}?sendUpdates=all" ~)
       ?:  (google-stop status res)
         ;<  ~  bind:m
           %:  fault  pre  (cat 3 'google-push/' id)  %error  (acts status)
@@ -2942,14 +2972,29 @@
     ::  names the version last pulled: an edit made on Google since is a
     ::  412, logged below, and the next pull brings it
     =/  gtag=@t  =/(p (get-prop:ics props.u.e 'X-GOOGLE-ETAG') ?~(p '' v.u.p))
+    ::  guests named for an event pulled before guests were read: Google's
+    ::  list is fetched and merged in, or the patch would drop the guests
+    ::  this side never saw. A fetch that fails sends no guests at all
+    ;<  body=json  bind:m
+      =/  n  (fiber:fiber:nexus ,json)
+      ?.  ?&  !=('' have)
+              ?=(~ (get-prop:ics props.u.e 'X-GOOGLE-GUESTS'))
+              ?=([%o *] body)
+              (~(has by p.body) 'attendees')
+          ==
+        (pure:n body)
+      ?>  ?=([%o *] body)
+      ;<  [st=@ud cur=json]  bind:n  (google-api pre %'GET' "{base}/{(enc-seg:dav (trip have))}" ~)
+      ?.  =(200 st)  (pure:n [%o (~(del by p.body) 'attendees')])
+      (pure:n (merge-attendees:gcal body cur))
     ;<  [status=@ud res=json]  bind:m
-      ?:  =('' have)  (google-api pre %'POST' base `body)
-      %:  google-api-hdr  pre  %'PATCH'  "{base}/{(enc-seg:dav (trip have))}"  `body
+      ?:  =('' have)  (google-api pre %'POST' "{base}{q}" `body)
+      %:  google-api-hdr  pre  %'PATCH'  "{base}/{(enc-seg:dav (trip have))}{q}"  `body
         ?:(=('' gtag) ~ ~[['if-match' gtag]])
       ==
     ;<  [status=@ud res=json]  bind:m
       ?.  &(=(404 status) !=('' have))  (pure:(fiber:fiber:nexus ,[@ud json]) [status res])
-      (google-api pre %'POST' base `body)
+      (google-api pre %'POST' "{base}{q}" `body)
     ?:  (google-stop status res)
       ;<  ~  bind:m
         %:  fault  pre  (cat 3 'google-push/' id)  %error  (acts status)
@@ -2968,7 +3013,7 @@
     %=  $
       changes  t.changes
       ids      (~(put by ids) u s+new-gid)
-      results  [[u new-gid (gs res 'updated') (gs res 'etag')] results]
+      results  [[u new-gid (gs res 'updated') (gs res 'etag') (join-link:gcal res)] results]
     ==
   ::  the ids and stamps Google handed back, onto a fresh read of the
   ::  calendar (a poke may have landed while we waited on the network).
@@ -2981,9 +3026,14 @@
   =/  seq-mid=@ud  seq.kk
   =.  kk
     %+  roll  results
-    |=  [[u=uid:cal g=@t up=@t et=@t] acc=_kk]
+    |=  [[u=uid:cal g=@t up=@t et=@t join=@t] acc=_kk]
     =/  e=(unit entry:cal)  (~(get by entries.acc) u)
     ?~  e  acc
+    ::  the Meet Google made is the event's join link now; a request it
+    ::  left pending comes back with a later pull
+    =?  u.e  !=('' join)
+      =/  m=meta:cal  (meta-of:cal event.u.e)
+      u.e(event (put-meta:cal event.u.e (~(del by (~(put by m) 'conference' s+join)) 'call')))
     =/  props=(list [@t @t])
       :-  ['X-GOOGLE-ID' g]
       :-  ['X-GOOGLE-UPDATED' up]

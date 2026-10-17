@@ -112,6 +112,75 @@
   ?~  w  ~
   =/  [params=tape value=tape]  (when-text:ics u.w)
   `[(crip (weld "RECURRENCE-ID" params)) (crip value)]
+::  +join-link: an event's join link: its conference's video entry point
+::  (Meet, or Zoom and the like through their add-ons), else the bare
+::  Meet link, else ''
+++  join-link
+  |=  item=json
+  ^-  @t
+  =/  vid=(list json)
+    %+  skim  (arr (obj item 'conferenceData') 'entryPoints')
+    |=(e=json =('video' (str e 'entryPointType')))
+  ?^(vid (str i.vid 'uri') (str item 'hangoutLink'))
+::  +google-guest: a Google attendee or organizer as an ATTENDEE or
+::  ORGANIZER prop, ~ without an email
+++  google-guest
+  |=  [key=tape a=json]
+  ^-  (unit [@t @t])
+  =/  email=@t  (str a 'email')
+  ?:  =('' email)  ~
+  =/  name=tape  (skip (trip (str a 'displayName')) |=(c=@t |((lth c 32) =('"' c))))
+  =/  ps=tape
+    =/  st=@t  (str a 'responseStatus')
+    ?:  =('needsAction' st)  "NEEDS-ACTION"
+    ?:(?=(?(%accepted %declined %tentative) st) (cuss (trip st)) "")
+  =/  self=?  =([~ %b %.y] (get a 'self'))
+  :-  ~
+  :_  (cat 3 'mailto:' email)
+  %-  crip
+  ;:  weld  key
+    ?~(name "" ";CN=\"{name}\"")
+    ?~(ps "" ";PARTSTAT={ps}")
+    ?:(self ";X-SELF=TRUE" "")
+  ==
+::  +attendees-of: meta's guests as Google attendees, only when meta names
+::  guests at all (absent leaves Google's list alone; a patch that names
+::  attendees replaces the whole list). A guest with no email (a ship) is
+::  not Google's
+++  attendees-of
+  |=  m=meta:cal
+  ^-  (list [@t json])
+  =/  gs=(unit json)  (~(get by m) 'guests')
+  ?.  ?=([~ %a *] gs)  ~
+  :_  ~
+  :-  'attendees'
+  :-  %a
+  %+  murn  p.u.gs
+  |=  g=json
+  ^-  (unit json)
+  =/  email=@t  (jstr:ics g 'email')
+  ?:  =('' email)  ~
+  =/  name=@t  (jstr:ics g 'name')
+  =/  st=@t  (jstr:ics g 'status')
+  :-  ~
+  %-  pairs:enjs:format
+  ;:  weld
+    ^-  (list [@t json])  ~[['email' s+email]]
+    ^-  (list [@t json])  ?:(=('' name) ~ ~[['displayName' s+name]])
+    ^-  (list [@t json])
+    ?:  =('needs-action' st)  ~[['responseStatus' s+'needsAction']]
+    ?:(?=(?(%accepted %declined %tentative) st) ~[['responseStatus' s+st]] ~)
+  ==
+::  +merge-attendees: a push body's attendees, then the ones Google holds
+::  that it lacks (by email), for an event pulled before guests were read
+++  merge-attendees
+  |=  [body=json cur=json]
+  ^-  json
+  ?.  ?=([%o *] body)  body
+  =/  ours=(list json)  (arr body 'attendees')
+  =/  have=(set @t)  (silt (turn ours |=(a=json (str a 'email'))))
+  =/  more=(list json)  (skip (arr cur 'attendees') |=(a=json (~(has in have) (str a 'email'))))
+  [%o (~(put by p.body) 'attendees' [%a (weld ours more)])]
 ::  +item-of: one Google event to the exchange shape
 ++  item-of
   |=  item=json
@@ -154,13 +223,12 @@
     ?:  =('' (str item 'recurringEventId'))  ~
     (rid-of (obj item 'originalStartTime'))
   =/  tags=@t  (str (obj (obj item 'extendedProperties') 'private') 'tags')
-  ::  the join link: the conference's video entry point (Meet, or Zoom and
-  ::  the like through their add-ons), else the bare Meet link
-  =/  join=@t
-    =/  vid=(list json)
-      %+  skim  (arr (obj item 'conferenceData') 'entryPoints')
-      |=(e=json =('video' (str e 'entryPointType')))
-    ?^(vid (str i.vid 'uri') (str item 'hangoutLink'))
+  =/  join=@t  (join-link item)
+  ::  the guests and organizer, as the ATTENDEE and ORGANIZER lines a
+  ::  file would carry, so they reach meta the same way
+  =/  guests=(list [@t @t])
+    %+  weld  (murn (arr item 'attendees') |=(a=json (google-guest "ATTENDEE" a)))
+    (drop (google-guest "ORGANIZER" (obj item 'organizer')))
   =/  extra=(list [@t @t])
     ;:  weld
       ^-  (list [@t @t])
@@ -172,7 +240,12 @@
           ::  the calendar's default reminders, which the event does not
           ::  list: a push keeps them on rather than sending none
           ['X-GOOGLE-REMINDERS' rdef]
+          ::  the guests in meta are Google's as of this pull (a push of
+          ::  guests for an event pulled before guests came along merges
+          ::  Google's list in first)
+          ['X-GOOGLE-GUESTS' '1']
       ==
+      guests
       ^-  (list [@t @t])
       ?:(=('' tags) ~ ~[['CATEGORIES' tags]])
       ^-  (list [@t @t])
@@ -270,6 +343,20 @@
         =/  tags=(list @t)  (meta-tags:cal m)
         ?~(tags ~ ~[['tags' s+(crip (sep-join:rr "," (turn tags trip)))]])
     ==
+  ::  a Meet the owner asked for (meta call 'meet') and the event lacks:
+  ::  Google makes one when the request names conferenceDataVersion=1.
+  ::  The id is the event's, so a retried push asks for the same one
+  =/  meet=(list [@t json])
+    ?.  &(=('meet' (meta-str:cal m 'call')) =('' (meta-str:cal m 'conference')))  ~
+    :_  ~
+    :-  'conferenceData'
+    %-  pairs:enjs:format
+    :_  ~
+    :-  'createRequest'
+    %-  pairs:enjs:format
+    :~  ['requestId' s+(crip ((x-co:co 8) (mug uid.e)))]
+        ['conferenceSolutionKey' (pairs:enjs:format ~[['type' s+'hangoutsMeet']])]
+    ==
   =/  timing=(list [@t json])
     ?-    -.ev
         %todo
@@ -314,5 +401,5 @@
       ?~  zone  s+(crip "EXDATE:{(dt-text:ics x)}Z")
       s+(crip "EXDATE;TZID={(trip u.zone)}:{(dt-text:ics x)}")
     ~[['recurrence' [%a [s+(cat 3 'RRULE:' u.rt) ex]]]]
-  (pairs:enjs:format :(weld base timing recurrence))
+  (pairs:enjs:format :(weld base meet (attendees-of m) timing recurrence))
 --

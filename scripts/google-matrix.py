@@ -67,7 +67,7 @@ for c in ship_get('/calendars.json'):
     if c['kind'] == 'google': ship_post('/google/unlink', {'id': c['id']})
 cals = ship_get('/google/calendars.json'); check('calendars listed', any(c['id'] == 'primary@fake' for c in cals), cals)
 # remote seed, then link (the link pulls)
-ctl({'op': 'put', 'event': {'id': 'g-timed', 'summary': 'G timed', 'start': {'dateTime': '2026-10-01T10:00:00-04:00', 'timeZone': 'America/New_York'}, 'end': {'dateTime': '2026-10-01T11:00:00-04:00', 'timeZone': 'America/New_York'}, 'reminders': {'useDefault': False, 'overrides': [{'method': 'popup', 'minutes': 10}]}}})
+ctl({'op': 'put', 'event': {'id': 'g-timed', 'summary': 'G timed', 'start': {'dateTime': '2026-10-01T10:00:00-04:00', 'timeZone': 'America/New_York'}, 'end': {'dateTime': '2026-10-01T11:00:00-04:00', 'timeZone': 'America/New_York'}, 'reminders': {'useDefault': False, 'overrides': [{'method': 'popup', 'minutes': 10}]}, 'hangoutLink': 'https://meet.google.com/abc-defg-hij'}})
 ctl({'op': 'put', 'event': {'id': 'g-allday', 'summary': 'G all-day', 'start': {'date': '2026-10-03'}, 'end': {'date': '2026-10-05'}}})
 ctl({'op': 'put', 'event': {'id': 'g-weekly', 'iCalUID': 'g-weekly@google.com', 'summary': 'G weekly', 'start': {'dateTime': '2026-10-06T09:00:00Z'}, 'end': {'dateTime': '2026-10-06T09:30:00Z'}, 'recurrence': ['RRULE:FREQ=WEEKLY;COUNT=4']}})
 ctl({'op': 'put', 'event': {'id': 'g-weekly_2', 'iCalUID': 'g-weekly@google.com', 'recurringEventId': 'g-weekly', 'originalStartTime': {'dateTime': '2026-10-13T09:00:00Z'}, 'summary': 'G weekly (moved)', 'start': {'dateTime': '2026-10-14T11:00:00Z'}, 'end': {'dateTime': '2026-10-14T11:30:00Z'}}})
@@ -80,6 +80,8 @@ skipped = [r for r in win if r['meta'].get('name') == 'G weekly' and r['idx'] ==
 check('moved instance shows, original skipped', len(moved) == 1 and not skipped, (len(moved), len(skipped)))
 ex = curl([CAL + '/dav/cal/%s/g-timed%%40google.com.ics' % gc])
 check('alarm pulled', 'TRIGGER:-PT10M' in str(ex), str(ex)[:200])
+check('meet link pulled', 'CONFERENCE;VALUE=URI;FEATURE=VIDEO:https://meet.google.com/abc-defg-hij' in str(ex)
+      and [r['meta'].get('conference') for r in ship_get('/events.json') if r['meta'].get('name') == 'G timed'] == ['https://meet.google.com/abc-defg-hij'], str(ex)[:400])
 check('nothing pushed back', writes() == [], writes())
 # remote delete + rename
 ctl({'op': 'delete', 'id': 'g-allday'}); ctl({'op': 'put', 'event': {'id': 'g-timed', 'summary': 'G timed renamed', 'start': {'dateTime': '2026-10-01T14:00:00Z'}, 'end': {'dateTime': '2026-10-01T15:00:00Z'}}}); prod()
@@ -100,6 +102,15 @@ check('alarm pushed', al and al[0].get('reminders', {}).get('overrides') == [{'m
 poke({'action': 'del-event', 'id': uid}); time.sleep(10)
 w = writes(); check('local delete pushed', w[-1][0] == 'delete', w)
 prod(); check('no echo after a pull', len(writes()) == 4, writes())
+# a Meet asked for: the push names conferenceDataVersion=1, Google makes one,
+# and its link comes back as the event's join link, the request gone
+poke({'action': 'add-event', 'cal': gc, 'cat': 'timed', 'kind': 'once', 'start_ms': 1791385200000, 'fin': 'dur', 'dur_min': 30, 'meta': {'name': 'meet me', 'call': 'meet'}}); time.sleep(10)
+st = ctl({'op': 'state'})['events']['primary@fake']; mm = [e for e in st.values() if e.get('summary') == 'meet me']
+link = mm and mm[0].get('hangoutLink', '')
+row = [r for r in ship_get('/events.json') if r['meta'].get('name') == 'meet me']
+check('meet made on the push', bool(link) and link.startswith('https://meet.google.com/fake-'), mm)
+check('meet link kept on the ship, request gone', row and row[0]['meta'].get('conference') == link and 'call' not in row[0]['meta'], row and row[0]['meta'])
+if row: poke({'action': 'del-event', 'id': row[0]['id']}); time.sleep(8)
 # forced 410
 ctl({'op': 'gone'}); prod()
 check('410 resync keeps everything', gnames() == ['G timed renamed', 'G weekly', 'G weekly (moved)', 'ship alarm'], gnames())
@@ -127,6 +138,31 @@ st = ctl({'op': 'state'})['events']['primary@fake']
 cs = ship_get('/google/conflicts.json')
 check('a stale push does not overwrite google', st['g-timed']['summary'] == 'google side' and len(cs) == 1 and 'SUMMARY:ship side' in cs[0]['local'], (st['g-timed']['summary'], len(cs)))
 prod(); check('and the next pull brings google\'s', 'google side' in gnames(), gnames())
+# guests: Google's attendees and organizer come in as meta guests, the
+# owner's answer goes back (the whole list, so only the answer changes),
+# and guests added here go out with sendUpdates=all so Google mails them
+ctl({'op': 'put', 'event': {'id': 'g-guests', 'summary': 'G guests', 'start': {'dateTime': '2026-10-21T14:00:00Z'}, 'end': {'dateTime': '2026-10-21T15:00:00Z'},
+     'organizer': {'email': 'boss@x.test', 'displayName': 'Boss'},
+     'attendees': [{'email': 'ana@x.test', 'displayName': 'Ana', 'responseStatus': 'accepted'}, {'email': 'me@fake', 'self': True, 'responseStatus': 'needsAction'}]}})
+prod()
+row = [r for r in ship_get('/events.json') if r['meta'].get('name') == 'G guests']
+gm = row and row[0]['meta'] or {}
+check('guests pulled', gm.get('organizer', {}).get('email') == 'boss@x.test'
+      and {(g['email'], g.get('status'), bool(g.get('self'))) for g in gm.get('guests', [])} == {('ana@x.test', 'accepted', False), ('me@fake', 'needs-action', True)}, gm)
+n0 = len(writes())
+poke({'action': 'rsvp', 'id': 'g-guests@google.com', 'status': 'accepted'}); time.sleep(10)
+st = ctl({'op': 'state'}); ev = st['events']['primary@fake']['g-guests']
+check('rsvp pushed with the whole list', len(st['writes']) == n0 + 1
+      and {(a['email'], a.get('responseStatus')) for a in ev.get('attendees', [])} == {('ana@x.test', 'accepted'), ('me@fake', 'accepted')}, ev.get('attendees'))
+check('the push asks google to mail guests', 'sendUpdates=all' in (st['queries'] or [''])[-1], st['queries'][-1:])
+poke({'action': 'add-event', 'cal': gc, 'cat': 'timed', 'kind': 'once', 'start_ms': 1791385200000, 'fin': 'dur', 'dur_min': 30,
+      'meta': {'name': 'invite out', 'guests': [{'email': 'bo@x.test', 'status': 'needs-action'}]}}); time.sleep(10)
+st = ctl({'op': 'state'}); io = [e for e in st['events']['primary@fake'].values() if e.get('summary') == 'invite out']
+check('guests added here go to google', io and io[0].get('attendees') == [{'email': 'bo@x.test', 'responseStatus': 'needsAction'}], io and io[0].get('attendees'))
+for nm in ('G guests', 'invite out'):
+    for r in ship_get('/events.json'):
+        if r['meta'].get('name') == nm: poke({'action': 'del-event', 'id': r['id']})
+time.sleep(8)
 # cleanup
 ship_post('/google/conflicts/clear', {}); ship_post('/google/unlink', {'id': gc}); ship_post('/google/disconnect', {}); ctl({'op': 'reset'})
 check('cleanup', not [c for c in ship_get('/calendars.json') if c['kind'] == 'google'] and ship_get('/google.json').get('connected') is False)

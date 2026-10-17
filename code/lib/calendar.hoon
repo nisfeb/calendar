@@ -435,6 +435,11 @@
   |=  e=event
   ^-  meta
   ?-(-.e %timed meta.e, %allday meta.e, %date meta.e, %todo meta.e)
+::  +put-meta: the event with its meta replaced
+++  put-meta
+  |=  [e=event m=meta]
+  ^-  event
+  ?-(-.e %timed e(meta m), %allday e(meta m), %date e(meta m), %todo e(meta m))
 ::  +meta-tags: the tags on an event (meta `tags`, a list of strings)
 ++  meta-tags
   |=  m=meta

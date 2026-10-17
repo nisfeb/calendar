@@ -25,11 +25,24 @@ EVENTS = {c: {} for c in CALS}        # cid -> eid -> event (deleted ones keep s
 CHANGES = {c: [] for c in CALS}       # cid -> [eid, ...] in change order (sync tokens index this)
 GONE = {c: False for c in CALS}
 WRITES = []                           # every write the ship made: (method, cid, eid)
+QUERIES = []                          # the query string of each write, in order
 FAIL = {'writes': False}              # __control {op: fail, on: true|false}: writes answer 503
 
 
 def now_iso():
     return datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
+
+
+def meet(ev, q):
+    # Google makes a Meet for a createRequest only under conferenceDataVersion=1,
+    # and drops conferenceData from the request otherwise
+    req = (ev.get('conferenceData') or {}).get('createRequest')
+    if not req: return
+    if q.get('conferenceDataVersion') != ['1']: ev.pop('conferenceData', None); return
+    link = 'https://meet.google.com/fake-' + req.get('requestId', 'x')
+    ev['hangoutLink'] = link
+    ev['conferenceData'] = {'entryPoints': [{'entryPointType': 'video', 'uri': link}],
+                            'conferenceSolution': {'key': {'type': 'hangoutsMeet'}}}
 
 
 def touch(cid, ev):
@@ -96,7 +109,7 @@ class H(BaseHTTPRequestHandler):
             c = json.loads(raw or b'{}'); op = c.get('op'); cid = c.get('cal', 'primary@fake')
             if op == 'reset':
                 for k in EVENTS: EVENTS[k] = {}; CHANGES[k] = []; GONE[k] = False
-                WRITES.clear(); FAIL['writes'] = False; self.send(200, {'ok': True}); return
+                WRITES.clear(); QUERIES.clear(); FAIL['writes'] = False; self.send(200, {'ok': True}); return
             if op == 'put':
                 ev = c['event']; ev.setdefault('id', uuid.uuid4().hex[:12]); ev.setdefault('status', 'confirmed')
                 ev.setdefault('iCalUID', ev['id'] + '@google.com'); touch(cid, ev); self.send(200, ev); return
@@ -107,14 +120,14 @@ class H(BaseHTTPRequestHandler):
             if op == 'fail':
                 FAIL['writes'] = bool(c.get('on', True)); self.send(200, {'ok': True}); return
             if op == 'state':
-                self.send(200, {'events': EVENTS, 'writes': WRITES}); return
+                self.send(200, {'events': EVENTS, 'writes': WRITES, 'queries': QUERIES}); return
             self.send(400, {'error': 'bad op'}); return
         if not self.authed(): self.send(401, {'error': {'code': 401}}); return
         parts = p.split('/')
         if len(parts) == 6 and parts[3] == 'calendars' and parts[5] == 'events':
             if FAIL['writes']: self.send(503, {'error': {'code': 503, 'message': 'forced'}}); return
-            cid = parts[4]; ev = json.loads(raw); ev['id'] = uuid.uuid4().hex[:12]; ev.setdefault('status', 'confirmed')
-            ev.setdefault('iCalUID', ev['id'] + '@google.com'); touch(cid, ev); WRITES.append(('insert', cid, ev['id'])); self.send(200, ev); return
+            cid = parts[4]; ev = json.loads(raw); ev['id'] = uuid.uuid4().hex[:12]; ev.setdefault('status', 'confirmed'); meet(ev, parse_qs(u.query))
+            ev.setdefault('iCalUID', ev['id'] + '@google.com'); touch(cid, ev); WRITES.append(('insert', cid, ev['id'])); QUERIES.append(u.query); self.send(200, ev); return
         self.send(404, {'error': {'code': 404}})
 
     def do_PUT(self):
@@ -131,7 +144,7 @@ class H(BaseHTTPRequestHandler):
 
     def do_PATCH(self):
         # Google's patch: the fields sent replace, the rest stay
-        p = unquote(urlparse(self.path).path); raw = self.body()
+        u = urlparse(self.path); p = unquote(u.path); raw = self.body()
         if not self.authed(): self.send(401, {'error': {'code': 401}}); return
         parts = p.split('/')
         if len(parts) == 7 and parts[5] == 'events':
@@ -140,8 +153,9 @@ class H(BaseHTTPRequestHandler):
             if eid not in EVENTS[cid]: self.send(404, {'error': {'code': 404}}); return
             im = self.headers.get('If-Match')
             if im and im != EVENTS[cid][eid].get('etag'): self.send(412, {'error': {'code': 412, 'message': 'Precondition Failed'}}); return
-            ev = dict(EVENTS[cid][eid]); ev.update(json.loads(raw)); ev['id'] = eid; ev['status'] = 'confirmed'
-            touch(cid, ev); WRITES.append(('update', cid, eid)); self.send(200, ev); return
+            body = json.loads(raw); meet(body, parse_qs(u.query))
+            ev = dict(EVENTS[cid][eid]); ev.update(body); ev['id'] = eid; ev['status'] = 'confirmed'
+            touch(cid, ev); WRITES.append(('update', cid, eid)); QUERIES.append(u.query); self.send(200, ev); return
         self.send(404, {'error': {'code': 404}})
 
     def do_DELETE(self):

@@ -651,6 +651,11 @@
     ::  a URI, not text: no escaping, but no control characters either
     =/  conf=tape  (skip (trip (ms 'conference')) |=(c=@t (lth c 32)))
     ?~(conf ~ ~[(line "CONFERENCE;VALUE=URI;FEATURE=VIDEO" conf)])
+    =/  org=(unit json)  (~(get by m) 'organizer')
+    ?~(org ~ (drop (guest-line "ORGANIZER" u.org)))
+    =/  gs=(unit json)  (~(get by m) 'guests')
+    ?.  ?=([~ %a *] gs)  ~
+    (murn p.u.gs |=(g=json (guest-line "ATTENDEE" g)))
     =/  pri=@ud  (meta-priority:cal m)
     ?:(=(0 pri) ~ ~[(line "PRIORITY" (a-co:co pri))])
     timing
@@ -705,9 +710,9 @@
   ?~  wall  rc
   rc(args (~(put by args.rc) 'until_naive' (numb:enjs:format (da-to-ms:cal u.wall))))
 ::  +read-meta: name, note, location, tags, color of a read component.
-::  CATEGORIES (RFC 5545) are the tags, COLOR (RFC 7986) the color and
-::  the first CONFERENCE (RFC 7986) the join link; they ride in meta, not
-::  props. ponytail: one join link; a second CONFERENCE (a dial-in, say)
+::  CATEGORIES (RFC 5545) are the tags, COLOR (RFC 7986) the color, the
+::  first CONFERENCE (RFC 7986) the join link, ATTENDEE the guests and
+::  ORGANIZER the organizer; they ride in meta, not props. ponytail: one join link; a second CONFERENCE (a dial-in, say)
 ::  is not kept, keep them all in props if clients send several
 ++  read-meta
   |=  ve=vevent
@@ -718,6 +723,8 @@
     |=(p=prop (split-categories v.p))
   =/  color=(unit prop)  (get-prop extra.ve 'COLOR')
   =/  conf=(unit prop)  (get-prop extra.ve 'CONFERENCE')
+  =/  guests=(list json)  (murn (all-props extra.ve 'ATTENDEE') guest-json)
+  =/  org=(unit json)  (biff (get-prop extra.ve 'ORGANIZER') guest-json)
   ::  PRIORITY (RFC 5545): 1 highest to 9 lowest; 0 or unreadable is none
   =/  pri=@ud  (fall (biff (get-prop extra.ve 'PRIORITY') |=(p=prop (rush v.p dem))) 0)
   %-  ~(gas by *(map @t json))
@@ -736,10 +743,55 @@
     ^-  (list [@t json])
     ?~(conf ~ ~[['conference' s+v.u.conf]])
     ^-  (list [@t json])
+    ?~(guests ~ ~[['guests' [%a guests]]])
+    ^-  (list [@t json])
+    ?~(org ~ ~[['organizer' u.org]])
+    ^-  (list [@t json])
     ?:(|(=(0 pri) (gth pri 9)) ~ ~[['priority' (numb:enjs:format pri)]])
   ==
 ::  +meta-prop: a prop read into meta, so not kept verbatim as well
-++  meta-prop  |=(p=prop ?=(?(%'CATEGORIES' %'COLOR' %'PRIORITY' %'CONFERENCE') (base-key k.p)))
+++  meta-prop  |=(p=prop ?=(?(%'CATEGORIES' %'COLOR' %'PRIORITY' %'CONFERENCE' %'ATTENDEE' %'ORGANIZER') (base-key k.p)))
+::  +guest-json: an ATTENDEE or ORGANIZER as {email, name, status, self}.
+::  status is the PARTSTAT in lower case; self (X-SELF, which only the
+::  Google pull writes) marks the calendar's own owner among the guests.
+::  ponytail: ROLE, RSVP and the other params are not kept
+++  guest-json
+  |=  p=prop
+  ^-  (unit json)
+  =/  v=tape  (trip v.p)
+  =/  email=tape  ?:(=("mailto:" (cass (scag 7 v))) (slag 7 v) v)
+  ?~  email  ~
+  =/  name=@t  (key-param k.p 'CN')
+  =/  st=@t  (crip (cass (trip (key-param k.p 'PARTSTAT'))))
+  :-  ~
+  %-  pairs:enjs:format
+  ;:  weld
+    ^-  (list [@t json])  ~[['email' s+(crip email)]]
+    ^-  (list [@t json])  ?:(=('' name) ~ ~[['name' s+name]])
+    ^-  (list [@t json])  ?:(=('' st) ~ ~[['status' s+st]])
+    ^-  (list [@t json])  ?.(=('TRUE' (key-param k.p 'X-SELF')) ~ ~[['self' b+&]])
+  ==
+::  +guest-line: a guest from meta as an ATTENDEE or ORGANIZER line; ~
+::  for one with no email (a ship). A name loses quotes and control
+::  characters, and only a known status is written
+++  guest-line
+  |=  [key=tape g=json]
+  ^-  (unit tape)
+  =/  clean  |=(t=@t `tape`(skip (trip t) |=(c=@t |((lth c 32) =('"' c)))))
+  =/  email=tape  (clean (jstr g 'email'))
+  ?~  email  ~
+  =/  name=tape  (clean (jstr g 'name'))
+  =/  st=@t  (jstr g 'status')
+  =/  ps=tape
+    ?.(?=(?(%needs-action %accepted %declined %tentative %delegated) st) "" ";PARTSTAT={(cuss (trip st))}")
+  `(line :(weld key ?~(name "" ";CN=\"{name}\"") ps) (weld "mailto:" email))
+::  +jstr: a string member of a json object, '' when absent
+++  jstr
+  |=  [j=json k=@t]
+  ^-  @t
+  ?.  ?=([%o *] j)  ''
+  =/  v=(unit json)  (~(get by p.j) k)
+  ?:(?=([~ %s *] v) p.u.v '')
 ::  +to-entry: a read VEVENT as an entry (uid kept, etag and seq left for
 ::  +put-entry) plus its EXDATEs as naive moments of the series (for the
 ::  caller to map to indices through the kind). ~ when there is no usable

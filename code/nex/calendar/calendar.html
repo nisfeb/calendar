@@ -86,6 +86,12 @@
       <div id="pop-time"></div>
       <div id="pop-alarms"></div>
       <div id="pop-where"></div>
+      <div id="pop-guests"></div>
+      <div id="pop-rsvp">
+        <button class="pop-act" data-st="accepted">Going</button>
+        <button class="pop-act" data-st="tentative">Maybe</button>
+        <button class="pop-act" data-st="declined">No</button>
+      </div>
       <div id="pop-note"></div>
       <div id="pop-tags"></div>
       <div id="pop-actions">
@@ -250,6 +256,16 @@
           <div id="f-alarm-when" class="hidden"><label class="f" for="f-alarm-at">When</label><input id="f-alarm-at" type="datetime-local"></div>
           <div id="f-alarm-go" class="hidden"><label class="f">&nbsp;</label><button type="button" id="f-alarm-ok" class="nav-btn">Add</button></div>
         </div>
+        <label class="f rc" for="f-loc">Location</label>
+        <input id="f-loc" type="text" class="rc">
+        <label class="f rc" for="f-guests">Guests (emails, comma separated)</label>
+        <input id="f-guests" type="text" class="rc" placeholder="ana@example.com, bo@example.com">
+        <label class="f tf" for="f-call">Video call</label>
+        <select id="f-call" class="tf">
+          <option value="">None</option>
+          <option value="meet">Google Meet (a Google calendar's events)</option>
+          <option value="keep">Keep the current link</option>
+        </select>
         <label class="f" for="f-note">Note</label>
         <textarea id="f-note" rows="3"></textarea>
         <label class="f" for="f-cal">Calendar</label>

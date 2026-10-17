@@ -147,6 +147,8 @@ function fetchWindow(fromMs, toMs, cb) {
         r.note = m.note || '';
         r.location = m.location || '';
         r.conference = m.conference || '';
+        r.guests = m.guests || [];
+        r.organizer = m.organizer || null;
         r.color = safeColor(m.color) || calColor(r.cal) || '';
         r.tags = m.tags || [];
         r.alarms = r.alarms || [];
@@ -300,6 +302,17 @@ function showPop(ev, x, y) {
   var pj = document.getElementById('pop-join');
   pj.style.display = join ? '' : 'none';
   if (join) pj.href = join;
+  // the guests and their answers, the owner's own answer as buttons
+  var gl = document.getElementById('pop-guests');
+  var others = (ev.guests || []).filter(function(g) { return !g.self; });
+  gl.textContent = others.length ? 'Guests: ' + others.map(function(g) {
+    return (g.name || g.email || g.ship) + ' (' + (GUEST_ST[g.status] || 'no answer') + ')';
+  }).join(', ') : '';
+  gl.style.display = others.length ? '' : 'none';
+  var me = (ev.guests || []).filter(function(g) { return g.self; })[0];
+  var rs = document.getElementById('pop-rsvp');
+  rs.style.display = me && !calReadonly(ev.cal) ? '' : 'none';
+  rs.querySelectorAll('button').forEach(function(b) { b.classList.toggle('on', !!me && me.status === b.dataset.st); });
   var pt = document.getElementById('pop-tags');
   pt.textContent = '';
   (ev.tags || []).forEach(function(t) { var sp = document.createElement('span'); sp.textContent = '#' + t; pt.appendChild(sp); });
@@ -321,6 +334,20 @@ function showPop(ev, x, y) {
   pop.style.top = Math.min(y, window.innerHeight - ph - 8) + 'px';
 }
 function hidePop() { pop.classList.add('hidden'); popTarget = null; }
+var GUEST_ST = { accepted: 'going', tentative: 'maybe', declined: 'not going', 'needs-action': 'no answer' };
+document.querySelectorAll('#pop-rsvp button').forEach(function(b) {
+  b.onclick = function() {
+    var t = popTarget;
+    if (!t) return;
+    poke({ action: 'rsvp', id: t.id, home: t.cal, status: b.dataset.st }, function(ok) {
+      if (ok) { hidePop(); setTimeout(refresh, 400); }
+    });
+  };
+});
+// the guests field shows the guests with an email, the owner left out
+function guestText(gs) {
+  return (gs || []).filter(function(g) { return g.email && !g.self; }).map(function(g) { return g.email; }).join(', ');
+}
 // a recurring series: timed or all-day with a repeating kind
 function isSeries(ev) { return (ev.cat === 'timed' || ev.cat === 'allday') && ev.kind !== 'once'; }
 // after a change: the view and the tag list (a change may add a tag)
@@ -1885,6 +1912,14 @@ fCal.addEventListener('change', function() {
   if (!colorTouched && !(editCtx && editCtx.meta.color)) fColor.value = hex6(calColor(fCal.value));
 });
 
+// the video call select: Keep only while the event has a link, a call
+// asked for and not made yet shows as asked
+function setCallSelect(m) {
+  var sel = document.getElementById('f-call');
+  sel.querySelector('option[value="keep"]').hidden = !m.conference;
+  sel.value = m.conference ? 'keep' : (m.call || '');
+}
+
 // the priority select: None, High, Medium, Low, plus the task's own number
 // when it is another one (a client may send any of 1 to 9)
 function setPriSelect(p) {
@@ -1909,6 +1944,9 @@ function openModal(opts) {
   document.getElementById('f-date').value = ymd(p);
   document.getElementById('f-name').value = '';
   document.getElementById('f-note').value = '';
+  document.getElementById('f-loc').value = '';
+  document.getElementById('f-guests').value = '';
+  setCallSelect({});
   document.getElementById('f-tags').value = '';
   document.getElementById('f-count').value = 0;
   document.getElementById('f-until').value = '';
@@ -1959,6 +1997,9 @@ function openEdit(d, target) {
   document.getElementById('f-status').textContent = '';
   document.getElementById('f-name').value = dm.name || '';
   document.getElementById('f-note').value = dm.note || '';
+  document.getElementById('f-loc').value = dm.location || '';
+  document.getElementById('f-guests').value = guestText(dm.guests);
+  setCallSelect(dm);
   document.getElementById('f-tags').value = (dm.tags || []).join(', ');
   if (d.cal) fCal.value = d.cal;
   fColor.value = hex6(safeColor(dm.color) || calColor(d.cal));
@@ -2116,6 +2157,39 @@ fSave.onclick = function() {
   var meta = Object.assign({}, editCtx ? editCtx.meta : {},
     { name: name, note: document.getElementById('f-note').value });
   if (!meta.note) delete meta.note;
+  meta.location = document.getElementById('f-loc').value.trim();
+  if (!meta.location) delete meta.location;
+  // guests, only when the field changed: an untouched field leaves meta's
+  // list (and so Google's) alone. A guest kept keeps their answer; the
+  // owner and guests without an email (ships) stay
+  var gText = document.getElementById('f-guests').value;
+  var oldGuests = (editCtx && editCtx.meta.guests) || [];
+  if (cat !== 'todo' && cat !== 'date' && gText.split(',').map(function(x) { return x.trim(); }).filter(Boolean).join(', ') !== guestText(oldGuests)) {
+    var emails = gText.split(',').map(function(x) { return x.trim(); }).filter(Boolean);
+    var bad = emails.filter(function(e) { return !/^[^\s@,;:"<>]+@[^\s@,;:"<>]+\.[^\s@,;:"<>]+$/.test(e); });
+    if (bad.length) { st.textContent = 'not an email: ' + bad[0]; return; }
+    if (emails.length && !(CALS[fCal.value] && CALS[fCal.value].kind === 'google')) {
+      st.textContent = 'Email guests need a calendar linked to Google'; return;
+    }
+    var byEmail = {};
+    oldGuests.forEach(function(g) { if (g.email) byEmail[g.email.toLowerCase()] = g; });
+    var next = oldGuests.filter(function(g) { return g.self || !g.email; });
+    emails.forEach(function(e) {
+      var had = byEmail[e.toLowerCase()];
+      if (had && had.self) return;
+      next.push(had || { email: e, status: 'needs-action' });
+    });
+    meta.guests = next;
+  }
+  // a call asked for: the calendar's sync makes it (Google makes a Meet on
+  // the push). Keep leaves the link the event has
+  var call = document.getElementById('f-call').value;
+  if (cat === 'timed' && call !== 'keep') {
+    if (call === 'meet' && !(CALS[fCal.value] && CALS[fCal.value].kind === 'google')) {
+      st.textContent = 'Google Meet needs a calendar linked to Google'; return;
+    }
+    if (call) meta.call = call; else delete meta.call;
+  }
   var tags = parseTags(document.getElementById('f-tags').value);
   if (tags.length) meta.tags = tags; else delete meta.tags;
   if (colorTouched) meta.color = fColor.value;
