@@ -59,13 +59,12 @@
   |=  [c=calendar:cal want=(unit @ta) home=@ta id=@ta ev=event:cal]
   ^-  calendar:cal
   =/  got=(unit [cid=@ta e=entry:cal])  (locate c home id)
-  =/  cid=@ta
-    ?:  &(?=(^ want) (~(has by cals.c) u.want))  u.want
-    ?~(got %default cid.u.got)
-  =/  move=?  &(?=(^ got) !=(cid.u.got cid))
   ::  a move onto a UID the calendar already holds is refused: it would
   ::  overwrite that entry, and push the overwrite to its remote
-  ?:  &(move (~(has by entries:(fall (~(get by cals.c) cid) fresh-cal:cal)) id))  c
+  =/  to=(unit @ta)  (target-of c want home id)
+  ?~  to  c
+  =/  cid=@ta  u.to
+  =/  move=?  &(?=(^ got) !=(cid.u.got cid))
   =/  kids=(list entry:cal)
     ?.  move  ~
     ?~  got  ~
@@ -214,18 +213,22 @@
   %+  skip  props
   |=  [key=@t *]
   ?|  =("X-GOOGLE-" (scag 9 (trip key)))
+      ::  this ship's own bookkeeping, set only by the caller: from a
+      ::  file it would hang the object on another event
+      ?=(^ (find ~[key] `(list @t)`~['X-GRUBBERY-PARENT' 'X-GRUBBERY-KIDS' 'X-GRUBBERY-UID']))
       (lien extra |=([x=@t *] =(x key)))
   ==
 ::  +keep-meta: a re-read event keeps what the file has no word for: meta
 ::  keys ICS does not carry, and a color or join link a client that knows
-::  no COLOR or CONFERENCE left out. Name, note, location, tags, guests
-::  and organizer are the file's. ponytail: so a join link removed at the
+::  no COLOR or CONFERENCE left out. Name, note, location, tags, guests,
+::  organizer and a task's priority are the file's (a client clears one
+::  by leaving it out). ponytail: so a join link removed at the
 ::  source stays here until edited; make it the file's once clients all
 ::  carry it
 ++  keep-meta
   |=  [old=event:cal new=event:cal]
   ^-  event:cal
-  =/  own=(set @t)  (sy ~['name' 'note' 'location' 'tags' 'guests' 'organizer'])
+  =/  own=(set @t)  (sy ~['name' 'note' 'location' 'tags' 'guests' 'organizer' 'priority'])
   =/  kept=meta:cal
     %-  ~(uni by (malt (skip ~(tap by (meta-of:cal old)) |=([k=@t *] (~(has in own) k)))))
     (meta-of:cal new)
@@ -616,6 +619,19 @@
   |=  j=json
   ^-  ?
   ?=([~ %o *] (~(get by (omap j)) 'objects'))
+::  +target-of: the calendar +put-ev-in puts an edit in: the one wanted,
+::  when it exists, else the entry's own (else default). ~ when that is
+::  a move onto a UID the target already holds, which is refused
+++  target-of
+  |=  [c=calendar:cal want=(unit @ta) home=@ta id=@ta]
+  ^-  (unit @ta)
+  =/  got=(unit [cid=@ta e=entry:cal])  (locate c home id)
+  =/  cid=@ta
+    ?:  &(?=(^ want) (~(has by cals.c) u.want))  u.want
+    ?~(got %default cid.u.got)
+  =/  move=?  &(?=(^ got) !=(cid.u.got cid))
+  ?:  &(move (~(has by entries:(fall (~(get by cals.c) cid) fresh-cal:cal)) id))  ~
+  `cid
 ::  +locate: an entry by id, in the calendar named home when it holds one
 ::  (the same UID can live in two calendars), else in whichever does
 ++  locate
@@ -938,7 +954,12 @@
     ?:((known-zone:rules z) `z dz)
   =/  =fin:cal
     =/  f=@t  (gs jon 'fin')
-    ?:  =('to' f)  [%to (fall (bind (gn jon 'end_ms') ms-to-da) *@da)]
+    ?:  =('to' f)
+      =/  ed=@da  (fall (bind (gn jon 'end_ms') ms-to-da) *@da)
+      ::  a repeating event's end is a length, as ICS reads one: an end
+      ::  moment would stretch every occurrence to it
+      ?:  =(%once name.kind.u.rec)  [%to ed]
+      [%dur ?:((gth ed start.u.rec) (sub ed start.u.rec) ~s0)]
     [%dur (mul (fall (gn jon 'dur_min') 0) ~m1)]
   `[%timed u.rec zone fin bound meta]
 ::  +parse-alarms: a poke's "alarms". Absent keeps the entry's (%keep),

@@ -799,4 +799,26 @@
     (expect-eq !>(|) !>((endpoint-ok:core 'https://evil.example/oauth2.googleapis.com')))
     (expect-eq !>(|) !>((endpoint-ok:core 'ftp://localhost/')))
   ==
+::  a re-read task without PRIORITY clears it (the file's), and a file
+::  cannot name this ship's bookkeeping
+++  test-keep-meta-priority-and-extra
+  =/  old=event:cal  [%todo `at ~ (malt `(list [@t json])`~[['name' s+'t'] ['priority' (numb:enjs:format 2)] ['color' s+'#fff']])]
+  =/  new=event:cal  [%todo `at ~ (malt ~[['name' s+'t']])]
+  =/  kept=meta:cal  (meta-of:cal (keep-meta:core old new))
+  =/  ps  (with-extra:core ~[['X-GRUBBERY-PARENT' 'victim'] ['X-GRUBBERY-KIDS' 'x'] ['X-KEEP' 'k']] ~[['X-GRUBBERY-UID' 'u']])
+  ;:  weld
+    (expect !>(!(~(has by kept) 'priority')))
+    (expect-eq !>(`s+'#fff') !>((~(get by kept) 'color')))
+    (expect-eq !>(~[['X-GRUBBERY-UID' 'u'] ['X-KEEP' 'k']]) !>(ps))
+  ==
+::  an edit that would move an event onto a UID the target holds goes
+::  nowhere, and says so (~)
+++  test-target-of-refuses-a-taken-uid
+  =/  c=calendar:cal  (cals ~[[%a ~[(ent 'x' 'x@t')]] [%b ~[(ent 'x2' 'x@t')]] [%c ~]])
+  ;:  weld
+    (expect-eq !>(~) !>((target-of:core c `%b %a 'x@t')))
+    (expect-eq !>(`%c) !>((target-of:core c `%c %a 'x@t')))
+    (expect-eq !>(`%a) !>((target-of:core c `%gone %a 'x@t')))
+    (expect-eq !>(c) !>((put-ev-in:core c `%b %a 'x@t' (ev 'y'))))
+  ==
 --

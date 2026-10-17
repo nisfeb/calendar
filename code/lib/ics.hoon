@@ -400,7 +400,11 @@
 ++  line
   |=  [k=tape v=tape]
   ^-  tape
-  (fold :(weld k ":" v))
+  ::  no control character but a tab: a CR or LF in a UID or a rule's
+  ::  text would end the line early and start one of its own
+  =/  ok  |=(c=@ ?|((gte c 32) =(9 c)))
+  =/  no  |=(c=@ =(127 c))
+  (fold :(weld (skip (skim k ok) no) ":" (skip (skim v ok) no)))
 ::  +preset-text: the RRULE a retired preset kind's args phrase (daily,
 ::  weekly, monthly, monthly-nth, yearly), ~ when they phrase none
 ++  preset-text
@@ -641,7 +645,10 @@
     =/  parent=(unit prop)  (get-prop props.e 'X-GRUBBERY-PARENT')
     ~[(line "UID" (trip ?^(own v.u.own ?^(parent v.u.parent uid.e))))]
     ~[(line "DTSTAMP" (weld (dt-text now) "Z"))]
-    ~[(line "SEQUENCE" (a-co:co seq.e))]
+    ::  a calendar's seq starts at its birth in milliseconds (+born), far
+    ::  past the INTEGER RFC 5545 allows (2^31 - 1); a client reads only
+    ::  the change in it, so the low part goes
+    ~[(line "SEQUENCE" (a-co:co (mod seq.e 2.147.483.648)))]
     ~[(line "SUMMARY" (escape (ms 'name')))]
     ?:(=('' (ms 'location')) ~ ~[(line "LOCATION" (escape (ms 'location')))])
     ?:(=('' (ms 'note')) ~ ~[(line "DESCRIPTION" (escape (ms 'note')))])
@@ -770,12 +777,14 @@
   =/  name=@t  (key-param k.p 'CN')
   =/  st=@t  (crip (cass (trip (key-param k.p 'PARTSTAT'))))
   =/  self=?  =('TRUE' (key-param k.p 'X-SELF'))
+  =/  opt=?  =('OPT-PARTICIPANT' (crip (cuss (trip (key-param k.p 'ROLE')))))
   :-  ~
   %-  pairs:enjs:format
   ;:  weld
     ^-  (list [@t json])  ~[['email' s+(crip email)]]
     ^-  (list [@t json])  ?:(=('' name) ~ ~[['name' s+name]])
     ^-  (list [@t json])  ?:(=('' st) ~ ~[['status' s+st]])
+    ^-  (list [@t json])  ?.(opt ~ ~[['optional' b+&]])
     ^-  (list [@t json])  ?.(self ~ ~[['self' b+&]])
     ^-  (list [@t json])  ?:(self ~ ~[['raw' [%a ~[s+k.p s+v.p]]]])
   ==
@@ -870,6 +879,14 @@
       ?^  due.ve  `(abs u.due.ve)
       ?:  &(?=(^ start.ve) ?=(^ duration.ve))  `(add (abs u.start.ve) u.duration.ve)
       ~
+    ::  ponytail: a due with a time of day that lands on 00:00 UTC (19:00
+    ::  in New York in winter) would read as a date-only due, which this
+    ::  app keeps on UTC midnight; it is moved one second on. A flag on
+    ::  the task if a second ever matters
+    =/  timed=?
+      ?^  due.ve  !?=(%day -.u.due.ve)
+      &(?=(^ start.ve) !?=(%day -.u.start.ve))
+    =?  due  &(timed ?=(^ due) =(u.due (day-floor:rules u.due)))  `(add (need due) ~s1)
     =/  done=(unit @da)
       ?^  completed.ve  completed.ve
       ?:(=('COMPLETED' status.ve) `~1970.1.1 ~)
@@ -922,12 +939,15 @@
     =/  =date  (yore sd)
     `[[[%date m.date d.t.date meta] common] ~]
   ?:  |(?=(%day -.s) =('allday' cat.ve))
+    ::  DTEND, else DURATION (P3D), else one day
     =/  days=@ud
-      ?~  end.ve  1
+      ?~  end.ve  ?~(duration.ve 1 (max 1 (div u.duration.ve ~d1)))
       ?.  ?=(%day -.u.end.ve)  1
       ?:  (lte d.u.end.ve sd)  1
       (max 1 (div (sub d.u.end.ve sd) ~d1))
-    `[[[%allday rc days [dom ~] meta] common] (turn exdates.ve naive)]
+    ::  an EXDATE written as a moment names its day: the occurrence is
+    ::  at midnight
+    `[[[%allday rc days [dom ~] meta] common] (turn exdates.ve |=(w=when (day-floor:rules (naive w))))]
   =/  zone=(unit @t)  ?:(?=(%local -.s) (zone-of zone.s) ~)
   =?  rc  &(?=(^ zone) =(%rrule name.kind.rc))  (local-until rc u.zone)
   =/  =fin:cal

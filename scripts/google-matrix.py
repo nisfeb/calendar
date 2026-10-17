@@ -212,7 +212,18 @@ poke({'action': 'edit-event', 'id': 'two-guests@gate', 'cat': 'timed', 'kind': '
       'meta': {'name': 'two guests', 'guests': [{'email': 'a@x.test', 'status': 'needs-action'}]}}); time.sleep(10)
 st = ctl({'op': 'state'}); tg = [e for e in st['events']['primary@fake'].values() if e.get('summary') == 'two guests']
 check('a guest taken off is off on google', tg and [a['email'] for a in tg[0].get('attendees', [])] == ['a@x.test'], tg and tg[0].get('attendees'))
-for nm in ('G guests', 'invite out', 'all hands', 'offsite', 'utc standup', 'two guests'):
+# a series made single ends the series on Google (an empty recurrence,
+# not a missing one); a timed event made all-day loses its time there
+poke({'action': 'add-event', 'cal': gc, 'id': 'shape@gate', 'cat': 'timed', 'kind': 'weekly', 'start_ms': 1791385200000, 'args': {'days': ['thu']},
+      'fin': 'dur', 'dur_min': 30, 'meta': {'name': 'shape'}}); time.sleep(10)
+poke({'action': 'edit-event', 'id': 'shape@gate', 'cat': 'timed', 'kind': 'once', 'start_ms': 1791385200000, 'fin': 'dur', 'dur_min': 30,
+      'meta': {'name': 'shape'}}); time.sleep(10)
+sh = [e for e in ctl({'op': 'state'})['events']['primary@fake'].values() if e.get('summary') == 'shape']
+check('a series made single is single on google', sh and not sh[0].get('recurrence'), sh and sh[0].get('recurrence'))
+poke({'action': 'edit-event', 'id': 'shape@gate', 'cat': 'allday', 'kind': 'once', 'start_ms': 1791331200000, 'span_days': 1, 'meta': {'name': 'shape'}}); time.sleep(10)
+sh = [e for e in ctl({'op': 'state'})['events']['primary@fake'].values() if e.get('summary') == 'shape']
+check('a timed event made all-day has only a date on google', sh and sh[0].get('start') == {'date': '2026-10-07'}, sh and sh[0].get('start'))
+for nm in ('G guests', 'invite out', 'all hands', 'offsite', 'utc standup', 'two guests', 'shape'):
     for r in ship_get('/events.json'):
         if r['meta'].get('name') == nm: poke({'action': 'del-event', 'id': r['id']})
 time.sleep(8)

@@ -43,7 +43,8 @@ try:
   poke({'action': 'done-event', 'id': tid, 'done': True})
   check('done-event ticks it', wait(lambda: todos()['gate task']['done'] is True and win()[0]['done'] is True))
   ics = curl('/apps/calendar/export.ics?cal=default')
-  vt = ics[ics.find('BEGIN:VTODO'):ics.find('END:VTODO')]
+  # its own VTODO: the ship may hold other tasks (another gate's)
+  vt = next((b for b in ics.split('BEGIN:VTODO')[1:] if 'SUMMARY:gate task' in b), '').split('END:VTODO')[0]
   check('export: VTODO with DUE and COMPLETED', 'DUE;VALUE=DATE:20261020' in vt and 'STATUS:COMPLETED' in vt and 'COMPLETED:' in vt and 'CATEGORIES:gate' in vt, vt)
   poke({'action': 'done-event', 'id': tid, 'done': False})
   check('done-event unticks it', wait(lambda: todos()['gate task']['done'] is False))

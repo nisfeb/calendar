@@ -53,6 +53,9 @@
     =/  kv=(list @t)  (split '=' p)
     ?.  ?=([@ @ ~] kv)  ~
     `[(crip (cuss (trip i.kv))) i.t.kv]
+  ::  an X- part is a client's own note (Evolution's X-EVOLUTION-ENDDATE):
+  ::  left out, not a reason to drop the whole series
+  =.  parts  (skip parts |=([k=@t *] =("X-" (scag 2 (trip k)))))
   ?:  (lien parts |=([k=@t *] !(~(has in supported) k)))  ~
   =/  get  |=(k=@t ^-((unit @t) (bind (find-part parts k) |=([* v=@t] v))))
   ::  an enumerated value is case-insensitive (RFC 5545 3.1), as a key is
@@ -67,22 +70,36 @@
   ?~  fr  ~
   =/  interval=@ud  (max 1 (fall (bind (get 'INTERVAL') |=(v=@t (fall (rush v dem) 1))) 1))
   ::  DAILY limited by BYDAY (Thunderbird's "every weekday") is WEEKLY on
-  ::  those days, every slot a live one; with an INTERVAL it stays DAILY,
-  ::  BYDAY a limit (+occurrence)
-  =/  daily-by=?  &(=(%daily u.fr) ?=(^ (get 'BYDAY')) =(1 interval))
+  ::  those days, every slot a live one; with an INTERVAL or a BYMONTHDAY
+  ::  (Friday the 13th) it stays DAILY, both limits (+occurrence)
+  =/  daily-by=?  &(=(%daily u.fr) ?=(^ (get 'BYDAY')) =(1 interval) ?=(~ (get 'BYMONTHDAY')))
   =/  =freq  ?:(daily-by %weekly u.fr)
   =/  count=(unit @ud)  (bind (get 'COUNT') |=(v=@t (fall (rush v dem) 0)))
   =/  until=(unit @da)  (bind (get 'UNTIL') parse-until)
+  ::  each BY-list once (MO,MO is one Monday), in a set's order: the
+  ::  walk sorts what they name
   =/  byday=(list byday)
+    %-  sort  :_  aor
+    %~  tap  in  %-  silt
     %+  murn  (fall (bind (get 'BYDAY') |=(v=@t (split ',' v))) ~)
     parse-byday
   =/  bymonthday=(list @sd)
+    %-  sort  :_  aor
+    %~  tap  in  %-  silt
     %+  murn  (fall (bind (get 'BYMONTHDAY') |=(v=@t (split ',' v))) ~)
     parse-signed
   =/  bymonth=(list @ud)
+    %-  sort  :_  lth
+    %~  tap  in  %-  silt
     %+  murn  (fall (bind (get 'BYMONTH') |=(v=@t (split ',' v))) ~)
     |=(v=@t (rush v dem))
   ?:  |((gth (lent byday) 64) (gth (lent bymonthday) 62) (gth (lent bymonth) 12))  ~
+  ::  the slots a month holds (a BYDAY without an ordinal is five): past
+  ::  70, a yearly walk sorts thousands at every step
+  =/  slots=@ud
+    ?^  bymonthday  (lent bymonthday)
+    (roll byday |=([b=^byday n=@ud] (add n ?~(ord.b 5 1))))
+  ?:  (gth slots 70)  ~
   =/  wkst=wkd:rules  (fall (biff (get 'WKST') parse-wkd) %mon)
   ::  the 20th Monday of the year is not read here
   ?:  &(=(%yearly freq) ?=(~ bymonth) (lien byday |=(b=^byday ?=(^ ord.b))))  ~
@@ -237,7 +254,8 @@
   =/  r=(unit rule)  (parse (str:a 'rrule'))
   ?~  r  ~
   =/  local=@ud  (num:a 'until_naive')
-  ?:  =(0 local)  r
+  ::  only for a rule that has an UNTIL to stand in for
+  ?:  |(=(0 local) ?=(~ until.u.r))  r
   `u.r(until `(add ~1970.1.1 (div (mul local ~s1) 1.000)))
 ::  +weekly: the week of the start, per WKST; BYDAY as offsets from the
 ::  week's first day; days in that week before the start are not
@@ -291,14 +309,23 @@
 ::  +sort-days: days in order, a slot the month lacks last. It stays, so
 ::  every month has as many slots as the rule names (a fifth Monday is a
 ::  slot in every month, live in some).
+::  The same day named twice (BYMONTHDAY=30,-1 in a 30-day month, MO
+::  with 1MO) is one occurrence: the second is a slot with none.
 ++  sort-days
   |=  l=(list (unit @da))
   ^-  (list (unit @da))
-  %+  sort  l
-  |=  [a=(unit @da) b=(unit @da)]
-  ?~  a  |
-  ?~  b  &
-  (lth u.a u.b)
+  =/  by
+    |=  [a=(unit @da) b=(unit @da)]
+    ?~  a  |
+    ?~  b  &
+    (lth u.a u.b)
+  =/  s=(list (unit @da))  (sort l by)
+  =|  prev=(unit @da)
+  =|  out=(list (unit @da))
+  |-
+  ?~  s  (sort (flop out) by)
+  ?:  &(?=(^ i.s) =(i.s prev))  $(s t.s, out [~ out])
+  $(s t.s, out [i.s out], prev i.s)
 ::  +named: is day d of [y m] one a BYDAY names (its weekday, and its
 ::  ordinal in the month when it has one)
 ++  named
@@ -348,12 +375,7 @@
     ?^  bymonth.r  (sort bymonth.r lth)
     ?:  |(?=(^ bymonthday.r) ?=(^ byday.r))  (gulf 1 12)
     ~[m.date]
-  =/  cands
-    |=  y=@ud
-    ^-  (list (unit @da))
-    %-  zing
-    %+  turn  months
-    |=(m=@ud (month-candidates r y m d.t.date))
+  =/  cands  |=(y=@ud (year-candidates r y months d.t.date))
   =/  cand0=(list (unit @da))  (cands y.date)
   =/  n=@ud  (lent cand0)
   ?:  =(0 n)  ~
@@ -363,6 +385,15 @@
   =/  cand=(list (unit @da))  (cands (add y.date (mul interval.r period)))
   ?:  (gte (mod g n) (lent cand))  ~
   (snag (mod g n) cand)
+::  +year-candidates: a year's slots, every month's in turn. Remembered:
+::  a walk asks for the start's year at every index
+++  year-candidates
+  |=  [r=rule y=@ud months=(list @ud) dom=@ud]
+  ~+
+  ^-  (list (unit @da))
+  %-  zing
+  %+  turn  months
+  |=(m=@ud (month-candidates r y m dom))
 ::  +wkd-text: a weekday as its RRULE two letters
 ++  wkd-text
   |=  w=wkd:rules

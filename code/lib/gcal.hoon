@@ -135,12 +135,14 @@
     ?:  =('needsAction' st)  "NEEDS-ACTION"
     ?:(?=(?(%accepted %declined %tentative) st) (cuss (trip st)) "")
   =/  self=?  =([~ %b %.y] (get a 'self'))
+  =/  opt=?  =([~ %b %.y] (get a 'optional'))
   :-  ~
   :_  (cat 3 'mailto:' email)
   %-  crip
   ;:  weld  key
     ?~(name "" ";CN=\"{name}\"")
     ?~(ps "" ";PARTSTAT={ps}")
+    ?:(opt ";ROLE=OPT-PARTICIPANT" "")
     ?:(self ";X-SELF=TRUE" "")
   ==
 ::  +attendees-of: meta's guests as Google attendees, only when meta names
@@ -169,6 +171,8 @@
   ;:  weld
     ^-  (list [@t json])  ~[['email' s+email]]
     ^-  (list [@t json])  ?:(=('' name) ~ ~[['displayName' s+name]])
+    ::  the whole list is replaced, so an optional guest says so again
+    ^-  (list [@t json])  ?.(=([~ %b %.y] ?.(?=([%o *] g) ~ (~(get by p.g) 'optional'))) ~ ~[['optional' b+&]])
     ^-  (list [@t json])
     ?:  =('needs-action' st)  ~[['responseStatus' s+'needsAction']]
     ?:(?=(?(%accepted %declined %tentative) st) ~[['responseStatus' s+st]] ~)
@@ -298,14 +302,16 @@
   ^-  tape
   =/  t=tape  (date-text:ics d)
   :(weld (scag 4 t) "-" (scag 2 (slag 4 t)) "-" (scag 2 (slag 6 t)))
-::  +time-json: a start or end object
+::  +time-json: a start or end object. The kind not used is null: a PATCH
+::  merges these objects, and an event made all-day (or timed) keeps the
+::  other kind's key unless it is cleared
 ++  time-json
   |=  [d=@da zone=(unit @t) all=?]
   ^-  json
-  ?:  all  (pairs:enjs:format ~[['date' s+(crip (date-of d))]])
+  ?:  all  (pairs:enjs:format ~[['date' s+(crip (date-of d))] ['dateTime' ~] ['timeZone' ~]])
   ::  Google wants a timeZone on a recurring event, UTC included
-  ?~  zone  (pairs:enjs:format ~[['dateTime' s+(crip (weld (rfc3339-of d) "Z"))] ['timeZone' s+'UTC']])
-  (pairs:enjs:format ~[['dateTime' s+(crip (rfc3339-of d))] ['timeZone' s+u.zone]])
+  ?~  zone  (pairs:enjs:format ~[['dateTime' s+(crip (weld (rfc3339-of d) "Z"))] ['timeZone' s+'UTC'] ['date' ~]])
+  (pairs:enjs:format ~[['dateTime' s+(crip (rfc3339-of d))] ['timeZone' s+u.zone] ['date' ~]])
 ::  +json-of: a parent entry as a Google event body. exdates are the
 ::  skipped occurrences realized by the caller.
 ++  json-of
@@ -315,7 +321,8 @@
   =/  m=meta:cal  (meta-of:cal ev)
   =/  name=@t  (meta-str:cal m 'name')
   =/  base=(list [@t json])
-    :~  ['summary' s+?:(=('' name) 'Untitled' name)]
+    ::  an untitled event stays so: Google shows its own "(No title)"
+    :~  ['summary' s+name]
         ['description' s+(meta-str:cal m 'note')]
         ['location' s+(meta-str:cal m 'location')]
         ['iCalUID' s+=/(own (get-prop:ics props.e 'X-GRUBBERY-UID') ?~(own uid.e v.u.own))]
@@ -359,13 +366,10 @@
     :~  ['requestId' s+(crip ((x-co:co 8) (mug uid.e)))]
         ['conferenceSolutionKey' (pairs:enjs:format ~[['type' s+'hangoutsMeet']])]
     ==
+  ::  a task is never pushed (Google keeps tasks in another API)
   =/  timing=(list [@t json])
     ?-    -.ev
-        %todo
-      =/  d=@da  (fall due.ev ~2000.1.1)
-      :~  ['start' (time-json d ~ &)]
-          ['end' (time-json (add d ~d1) ~ &)]
-      ==
+        %todo  ~
         %date
       =/  d=@da  (fall (on-date:rules 2.000 month.ev day.ev) *@da)
       :~  ['start' (time-json d ~ &)]
@@ -393,7 +397,9 @@
     =/  rc=recur:cal  recur.ev
     =/  dom=(unit @ud)  ?-(-.ev %timed dom.bound.ev, %allday dom.bound.ev)
     =/  rt=(unit @t)  (fall (mole |.((preset-rrule:ics name.kind.rc args.rc start.rc dom))) ~)
-    ?~  rt  ~
+    ::  none: an empty list, so a PATCH of a series made single ends the
+    ::  series on Google too (a missing key would leave it)
+    ?~  rt  ~[['recurrence' [%a ~]]]
     =/  zone=(unit @t)  ?:(?=(%timed -.ev) zone.ev ~)
     =/  ex=(list json)
       %+  turn  exdates

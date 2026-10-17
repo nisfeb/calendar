@@ -279,4 +279,50 @@
     (expect-eq !>(1) !>((lent (fand "STATUS:" b))))
     (expect-eq !>(a) !>(b))
   ==
+::  a vcalendar body of these lines
+++  body
+  |=  ls=(list tape)
+  ^-  @t
+  %-  crip
+  %-  zing
+  %+  turn  (weld (weld ~["BEGIN:VCALENDAR" "VERSION:2.0"] ls) ~["END:VCALENDAR"])
+  |=(l=tape (weld l crlf:ics))
+::  a task due at a time of day that lands on 00:00 UTC keeps a time (it
+::  is not a date-only due), and goes back out as a moment
+++  test-task-due-on-utc-midnight
+  =/  ves=(list vevent:ics)
+    %-  events:ics
+    (body ~["BEGIN:VTODO" "UID:d@test" "SUMMARY:d" "DUE;TZID=America/New_York:20260114T190000" "END:VTODO"])
+  =/  got  (to-entry:ics (snag 0 ves) ~)
+  ?>  ?=(^ got)
+  =/  out=tape  (write-entry:ics e.u.got ~ ~2026.1.1)
+  ;:  weld
+    (expect !>(?=(^ (find "DUE:20260115T000001Z" out))))
+    (expect !>(?=(~ (find "VALUE=DATE" out))))
+  ==
+::  SEQUENCE stays an RFC 5545 INTEGER, whatever a calendar's seq
+++  test-sequence-in-range
+  =/  ev=event:cal  [%todo `~2026.11.2 ~ (malt ~[['name' s+'t']])]
+  =/  out=tape  (write-entry:ics [ev 't@test' '' 2.147.483.650 ~ ~] ~ ~2026.11.1)
+  (expect !>(?=(^ (find "SEQUENCE:2\0d" out))))
+::  an all-day event's DURATION is its length when it has no DTEND, and
+::  an EXDATE written as a moment names its day
+++  test-allday-duration-and-exdate
+  =/  ves=(list vevent:ics)
+    %-  events:ics
+    %-  body
+    :~  "BEGIN:VEVENT"  "UID:a@test"  "SUMMARY:a"  "DTSTART;VALUE=DATE:20260105"
+        "DURATION:P3D"  "RRULE:FREQ=WEEKLY"  "EXDATE:20260112T000000Z"  "END:VEVENT"
+    ==
+  =/  got  (to-entry:ics (snag 0 ves) ~)
+  ?>  ?=(^ got)
+  ?>  ?=(%allday -.event.e.u.got)
+  ;:  weld
+    (expect-eq !>(3) !>(days.event.e.u.got))
+    (expect-eq !>(~[~2026.1.12]) !>(exdates.u.got))
+  ==
+::  no CR or LF reaches a line out: a UID cannot start a line of its own
+++  test-line-has-no-breaks
+  =/  out=tape  (line:ics "UID" "a\0d\0aATTENDEE:mailto:x@y")
+  (expect-eq !>("UID:aATTENDEE:mailto:x@y\0d\0a") !>(out))
 --

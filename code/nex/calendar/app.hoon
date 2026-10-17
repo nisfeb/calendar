@@ -316,10 +316,12 @@
           =/  old-als=(list alarm:cal)  (fall (bind (locate c home id) |=([* e=entry:cal] alarms.e)) ~)
           ;<  new=event:cal  bind:m  (apply-until (carry-skips u.old u.ev) (gn jon 'until_ms'))
           =/  nid=@ta  (crip "{(scow %uv (end [3 8] eny))}@{(scow %p our)}")
+          ::  a cap only shortens: one past the series' own end (its COUNT)
+          ::  would make it longer
           =/  capped=event:cal
             ?-  -.u.old
-              %timed   u.old(dom.bound `u.cap)
-              %allday  u.old(dom.bound `u.cap)
+              %timed   u.old(dom.bound `(min u.cap (fall dom.bound.u.old u.cap)))
+              %allday  u.old(dom.bound `(min u.cap (fall dom.bound.u.old u.cap)))
             ==
           =.  c  (put-ev-in (put-ev c home id capped) (cal-arg jon) '' nid new)
           =.  c  (set-alarms c '' nid ?:(?=(%set -.als) l.als old-als))
@@ -411,8 +413,14 @@
           ::  a task's priority: named sets or clears it; absent keeps it
           =.  merged  (set-pri merged ?:(?=(%set -.pri) n.pri (meta-priority:cal (meta-of:cal u.old))))
           ;<  new=event:cal  bind:m  (apply-until merged (gn jon 'until_ms'))
+          ::  the calendar it lands in, and the alarms with it there: a move
+          ::  onto a UID that calendar holds is refused, not dropped
+          =/  to=(unit @ta)  (target-of c (cal-arg jon) home id)
+          ?~  to
+            ;<  ~  bind:m  (refuse './' act (gs jon 'id') '' "the calendar it would move to already has an event with this UID")
+            $
           =.  c  (put-ev-in c (cal-arg jon) home id new)
-          =?  c  ?=(%set -.als)  (set-alarms c (fall (cal-arg jon) home) id l.als)
+          =?  c  ?=(%set -.als)  (set-alarms c u.to id l.als)
           ;<  ~  bind:m  (replace:io c)
           $
         ?:  =('rsvp' act)
@@ -458,11 +466,12 @@
           =/  old=(unit event:cal)  (event-of c home id)
           ?~  old  $
           =/  new=(unit event:cal)
+            ::  a cap only shortens, as split-event's
             ?-  -.u.old
               %date   ~
               %todo   ~
-              %timed   `u.old(dom.bound `u.cap)
-              %allday  `u.old(dom.bound `u.cap)
+              %timed   `u.old(dom.bound `(min u.cap (fall dom.bound.u.old u.cap)))
+              %allday  `u.old(dom.bound `(min u.cap (fall dom.bound.u.old u.cap)))
             ==
           ?~  new  $
           ;<  ~  bind:m  (replace:io (put-ev c home id u.new))
@@ -1572,6 +1581,7 @@
   (pure:m (cal-of vw))
 ++  put-ev  put-ev:core
 ++  put-ev-in  put-ev-in:core
+++  target-of  target-of:core
 ++  unhome  unhome:core
 ++  cal-arg  cal-arg:core
 ++  del-ev  del-ev:core
@@ -1631,8 +1641,10 @@
 ::  +anchored: an entry as it goes out. A rule whose start is not an
 ::  occurrence (a monthly one counted from the first of its month, say)
 ::  starts at its first occurrence instead, so DTSTART is a real instance
-::  and a client adds no stray one. The indices before it had none, so
-::  the bound moves down by as many and still ends where it did.
+::  and a client adds no stray one. The bound is the one that holds as
+::  many occurrences from the new start as the old one held, so it ends
+::  where it did (counting down by the indices skipped is wrong when a
+::  dead slot comes first and the start does not move).
 ++  anchored
   |=  e=entry:cal
   ^-  entry:cal
@@ -1649,7 +1661,8 @@
     ?^  at  `[idx u.at]
     $(idx +(idx))
   ?~  first  e
-  =/  down  |=(d=@ud (sub d (min d idx.u.first)))
+  =/  rc2=recur:cal  recur.ev(start at.u.first)
+  =/  down  |=(d=@ud (dom-of:ics rc2 (count-of:ics recur.ev d)))
   ?-  -.ev
     %timed   e(event ev(start.recur at.u.first, dom.bound (bind dom.bound.ev down)))
     %allday  e(event ev(start.recur at.u.first, dom.bound (bind dom.bound.ev down)))
@@ -1804,9 +1817,19 @@
   ::  its own UID must not be another object's here
   =/  u=uid:cal  uid.res
   =/  aliased=[ves=(list vevent:ics) extra=(list [@t @t])]  (alias-object ves u)
-  ?:  &(!=('' uid.u.parent) !=(u uid.u.parent) (~(has by entries.u.k) uid.u.parent))
+  ::  (under its own name, or kept aside under another's, X-GRUBBERY-UID),
+  ::  and an object keeps its UID (RFC 4791 5.3.2.1)
+  =/  new-uid=@t  ?:(=('' uid.u.parent) u uid.u.parent)
+  =/  own-uid
+    |=  [key=@t e=entry:cal]
+    ^-  @t
+    =/  p=(unit prop:ics)  (get-prop:ics props.e 'X-GRUBBERY-UID')
+    ?~(p key v.u.p)
+  ?:  (lien ~(tap by entries.u.k) |=([key=@t e=entry:cal] &(!=(key u) !(dav-is-child e) =(new-uid (own-uid key e)))))
     (send-text eyre-id 403 'calendar: another object here has this UID (no-uid-conflict)')
   =/  existing=(unit entry:cal)  (~(get by entries.u.k) u)
+  ?:  &(?=(^ existing) !(dav-is-child u.existing) !=(new-uid (own-uid u u.existing)))
+    (send-text eyre-id 403 'calendar: a PUT cannot change an object\'s UID (no-uid-conflict)')
   =/  hs  header-list.request.req
   =/  if-none=(unit @t)  (get-header:http 'if-none-match' hs)
   =/  if-match=(unit @t)  (get-header:http 'if-match' hs)
@@ -1974,11 +1997,19 @@
   ?~  got  ~
   =/  pe=entry:cal  e.u.got
   ?.  ?=(?(%timed %allday) -.event.pe)  ~
-  ?~  (occurrence-index event.pe at)  ~
-  ::  its RECURRENCE-ID: the series' own wall clock in its zone
+  =/  idx=(unit @ud)  (occurrence-index event.pe at)
+  ?~  idx  ~
+  ::  its RECURRENCE-ID: the series' own wall clock in its zone, as the
+  ::  rule makes it (in a spring-forward gap the clock reads an hour on,
+  ::  and the skip would not match)
+  =/  kd=(unit kind:rules)  (kind-for kind.recur.event.pe)
+  =/  naive=(unit @da)
+    ?~  kd  ~
+    (fall (mole |.((u.kd args.recur.event.pe start.recur.event.pe u.idx))) ~)
   =/  w=when:ics
     ?:  ?=(%allday -.event.pe)  [%day at]
-    ?~(zone.event.pe [%utc at] [%local u.zone.event.pe (wall:rules zone.event.pe at)])
+    ?~  zone.event.pe  [%utc at]
+    [%local u.zone.event.pe (fall naive (wall:rules zone.event.pe at))]
   =/  [ps=tape v=tape]  (when-text:ics w)
   =/  rid=[@t @t]  [(crip (weld "RECURRENCE-ID" ps)) (crip v)]
   =/  k=cal:cal  (~(got by cals.c) cid.u.got)
@@ -2246,9 +2277,18 @@
         =/  e=(unit entry:cal)  (~(get by entries.u.k) u)
         ?~  e  ~
         `(fall (parent-of:cal u.e) u)
+      ::  and one whose rule this side cannot walk (BYSETPOS, HOURLY):
+      ::  the index never places it, so every range names it and the
+      ::  client filters, as PROPFIND and sync already list it
       =/  undated=(list uid:cal)
         %+  murn  ~(tap by entries.u.k)
-        |=([u=uid:cal e=entry:cal] ?:(&(?=(%todo -.event.e) ?=(~ due.event.e)) `u ~))
+        |=  [u=uid:cal e=entry:cal]
+        ^-  (unit uid:cal)
+        ?:  &(?=(%todo -.event.e) ?=(~ due.event.e))  `u
+        ?.  ?=(?(%timed %allday) -.event.e)  ~
+        ?.  =(%rrule name.kind.recur.event.e)  ~
+        ?:  (dav-is-child e)  ~
+        ?~((of-args-memo:rr args.recur.event.e) `u ~)
       (pure:(fiber:fiber:nexus ,(list uid:cal)) ~(tap in (~(gas in seen) undated)))
     ::  a comp-filter naming only VTODO (or only VEVENT) narrows to
     ::  tasks (or events); anything else answers both
@@ -3004,11 +3044,16 @@
   =/  full=?  =('' tok)
   =/  base=tape  "/calendar/v3/calendars/{(enc-seg:dav (trip gid))}/events?maxResults=250"
   =/  ids=(map @t json)  (omap (obj:gcal row 'ids'))
+  ::  each uid's last Google stamp, pushed or pulled: an item with it is
+  ::  nothing new, even when the entry is gone here (a delete not yet
+  ::  pushed)
+  =/  stamps=(map @t json)  (omap (obj:gcal row 'stamps'))
   =/  since=@ud  (fall (gn row 'pushed_seq') 0)
   =/  page=@t  ''
   =/  pages=@ud  0
   =/  seen=(set uid:cal)  ~
   =/  retried=?  |
+  =/  had-insts=?  |
   |-
   =/  q=tape
     ;:  weld
@@ -3024,6 +3069,16 @@
       %:  fault  pre  (cat 3 'google-pull/' id)  %error  (acts status)
         "Google would not list calendar {(trip id)} (status {(a-co:co status)})"
         "reconnect Google under Settings, or unlink the calendar"
+      ==
+    (pure:m row)
+  ::  every page names the next page or the sync token: one with neither
+  ::  (an empty body) is no answer, and must not read as a listing of
+  ::  nothing, which would delete every event
+  ?:  &(=('' (gs res 'nextPageToken')) =('' (gs res 'nextSyncToken')))
+    ;<  ~  bind:m
+      %:  fault  pre  (cat 3 'google-pull/' id)  %error  |
+        "Google's listing of calendar {(trip id)} came back empty, with no page or sync token"
+        "nothing was changed; it is asked again on the next pass"
       ==
     (pure:m row)
   ::  from the read to the write nothing waits (+edit-cals); the clock is
@@ -3047,17 +3102,25 @@
     ::  under a name that is not its UID stays there)
     =/  u=(unit uid:cal)  (~(get by by-gid) ?~(rid.g gid.g recur.g))
     ?~(u g g(uid.ve u.u))
-  ::  our own push coming back: Google's stamp is the one the push kept
-  ::  (X-GOOGLE-UPDATED), so it is nothing new, and a local edit made
-  ::  since is not a clash with it. It is still seen.
+  ::  the entry an item is: its uid, or an instance's child under it
+  =/  item-uid
+    |=  g=gitem:gcal
+    ^-  uid:cal
+    ?~(rid.g uid.ve.g (crip "{(trip uid.ve.g)}#{(trip u.rid.g)}"))
+  ::  our own push coming back, or what the last pull read: Google's
+  ::  stamp is the one kept (the row's, or X-GOOGLE-UPDATED), so it is
+  ::  nothing new, and a local edit made since is not a clash with it.
+  ::  It is still seen.
   =/  echo=(list gitem:gcal)
     %+  skim  items
     |=  g=gitem:gcal
-    ?^  rid.g  |
-    =/  e=(unit entry:cal)  (~(get by entries.k) uid.ve.g)
+    ?:  =('' updated.g)  |
+    =/  u=uid:cal  (item-uid g)
+    ?:  =(`s+updated.g (~(get by stamps) u))  &
+    =/  e=(unit entry:cal)  (~(get by entries.k) u)
     ?~  e  |
     =/  up=(unit prop:ics)  (get-prop:ics props.u.e 'X-GOOGLE-UPDATED')
-    &(?=(^ up) !=('' updated.g) =(v.u.up updated.g))
+    &(?=(^ up) =(v.u.up updated.g))
   ::  every live item Google named is seen, read or not: one this side
   ::  cannot read must not count as deleted by a full listing
   =.  seen  (~(gas in seen) (murn items |=(g=gitem:gcal ?:(cancelled.g ~ `uid.ve.g))))
@@ -3068,9 +3131,9 @@
   =/  pending=(set uid:cal)  (pending-uids k since sup)
   =/  seq-at-peek=@ud  seq.k
   =/  clashes=(list gitem:gcal)
-    (skim items |=(g=gitem:gcal &(?=(~ rid.g) (~(has in pending) uid.ve.g))))
+    (skim items |=(g=gitem:gcal (~(has in pending) (item-uid g))))
   =/  clash-rows=(list [uid:cal (unit entry:cal) @t])
-    (turn clashes |=(g=gitem:gcal [uid.ve.g (~(get by entries.k) uid.ve.g) updated.g]))
+    (turn clashes |=(g=gitem:gcal [(item-uid g) (~(get by entries.k) (item-uid g)) updated.g]))
   ::  parents first, so an instance finds its parent
   =/  parents=(list gitem:gcal)  (skip items |=(g=gitem:gcal ?=(^ rid.g)))
   =/  insts=(list gitem:gcal)  (skim items |=(g=gitem:gcal ?=(^ rid.g)))
@@ -3098,6 +3161,9 @@
       ::  put again under a new one in this listing) leaves the live one
       =/  was=(unit json)  (~(get by ids.acc) u)
       ?:  &(?=(^ was) !=(u.was s+gid.g))  acc
+      ::  an event made a task here was taken off Google (+google-push):
+      ::  that delete coming back leaves the task
+      ?:  =/(e (~(get by entries.k.acc) u) &(?=(^ e) ?=(%todo -.event.u.e)))  acc
       acc(k (del-object k.acc u), ids (~(del by ids.acc) u))
     =/  put=(unit [k=cal:cal =uid:cal])  (put-parent k.acc ve.g zone.c u extra &)
     ?~  put  acc
@@ -3106,6 +3172,13 @@
   =.  k  k.res2
   =.  ids  ids.res2
   =.  seen  (~(uni in seen) seen.res2)
+  =.  had-insts  |(had-insts ?=(^ insts))
+  =.  stamps
+    %+  roll  items
+    |=  [g=gitem:gcal acc=_stamps]
+    ?:  cancelled.g  (~(del by acc) (item-uid g))
+    ?:  =('' updated.g)  acc
+    (~(put by acc) (item-uid g) s+updated.g)
   =/  next-page=@t  (gs res 'nextPageToken')
   =/  next-tok=@t  (gs res 'nextSyncToken')
   =/  last=?  =('' next-page)
@@ -3121,9 +3194,10 @@
   =/  gone-rows=(list [uid:cal (unit entry:cal) @t])
     (murn gone |=(u=uid:cal ?.((~(has in pending) u) ~ `[u (~(get by entries.k) u) ''])))
   =.  k  (roll gone |=([u=uid:cal acc=_k] (del-object acc u)))
-  ::  a full listing's instance that came before its parent (on an
-  ::  earlier page) skips it now
-  =?  k  &(full last)  (reskip k)
+  =.  stamps  (roll gone |=([u=uid:cal acc=_stamps] (~(del by acc) u)))
+  ::  an instance that came before its parent (on an earlier page) skips
+  ::  it now
+  =?  k  &(last |(full had-insts))  (reskip k)
   ::  what this pull wrote is not for pushing back, nor is the local
   ::  change a clash replaced
   =/  won=(set uid:cal)
@@ -3135,6 +3209,7 @@
     :~  ['sync_token' s+?:(=('' next-tok) tok next-tok)]
         ['last_ms' (numb:enjs:format (da-to-ms now))]
         ['ids' [%o ids]]
+        ['stamps' [%o stamps]]
         ['suppressed' (suppress-json sup2 since)]
     ==
   ;<  ~  bind:m  (dav-write pre c(cals (~(put by cals.c) id k)))
@@ -3186,7 +3261,7 @@
   ?:  =('' iid)  $(kids t.kids)
   =/  body=json
     =/  b=json  (json-of:gcal ch ~)
-    ?.(?=([%o *] b) b [%o (~(del by p.b) 'iCalUID')])
+    ?.(?=([%o *] b) b [%o (~(del by (~(del by p.b) 'iCalUID')) 'recurrence')])
   =/  sent=@t  (scot %uv (sham body))
   ?:  =(`sent (bind (get-prop:ics props.ch 'X-GOOGLE-SENT') tail))  $(kids t.kids)
   =/  gtag=@t  =/(p (get-prop:ics props.ch 'X-GOOGLE-ETAG') ?~(p '' v.u.p))
@@ -3225,6 +3300,7 @@
   =/  gid=@t  (gs row 'google_id')
   =/  since=@ud  (fall (gn row 'pushed_seq') 0)
   =/  ids=(map @t json)  (omap (obj:gcal row 'ids'))
+  =/  stamps=(map @t json)  (omap (obj:gcal row 'stamps'))
   ;<  c=calendar:cal  bind:m  (read-cal pre)
   =/  k=(unit cal:cal)  (~(get by cals.c) id)
   ?~  k  (pure:m row)
@@ -3247,6 +3323,9 @@
   ?^  changes
     =/  [u=uid:cal what=?(%put %del)]  i.changes
     =/  known=@t  =/(v (~(get by ids) u) ?:(?=([~ %s *] v) p.u.v ''))
+    ::  Google Calendar has no tasks (they live in Google Tasks, another
+    ::  API): an event made a task here goes from Google as if deleted
+    =?  what  =/(e (~(get by entries.u.k) u) &(?=(^ e) ?=(%todo -.event.u.e)))  %del
     ?:  =(%del what)
       ?:  =('' known)  $(changes t.changes)
       ;<  [status=@ud res=json]  bind:m
@@ -3262,11 +3341,9 @@
       ;<  ~  bind:m
         ?:  |((lth status 300) =(404 status) =(410 status))  (pure:(fiber:fiber:nexus ,~) ~)
         (google-conflict pre id u ~ '' (crip "google refused the delete ({(a-co:co status)})"))
-      $(changes t.changes, ids (~(del by ids) u))
+      $(changes t.changes, ids (~(del by ids) u), stamps (~(del by stamps) u))
     =/  e=(unit entry:cal)  (~(get by entries.u.k) u)
     ?~  e  $(changes t.changes)
-    ::  ponytail: Google Calendar has no tasks (they live in Google
-    ::  Tasks, another API); a task stays on this side
     ?:  ?=(%todo -.event.u.e)  $(changes t.changes)
     =/  body=json  (json-of:gcal (anchored u.e) (object-exdates u.e (kids-of:cal u.k u)))
     =/  have=@t
@@ -3306,8 +3383,12 @@
       %:  google-api-hdr  pre  %'PATCH'  "{base}/{(enc-seg:dav (trip have))}{q}"  `body
         ?:(=('' gtag) ~ ~[['if-match' gtag]])
       ==
+    ::  a 404 for an id only the entry's props named (the id map never
+    ::  had it: an event that was a task, say) is put anew. One the map
+    ::  had was deleted or moved on Google: logged below, and the pull
+    ::  settles it (Google wins)
     ;<  [status=@ud res=json]  bind:m
-      ?.  &(=(404 status) !=('' have))  (pure:(fiber:fiber:nexus ,[@ud json]) [status res])
+      ?.  &(=(404 status) !=('' have) =('' known))  (pure:(fiber:fiber:nexus ,[@ud json]) [status res])
       (google-api pre %'POST' "{base}{q}" `body)
     ?:  (google-stop status res)
       ;<  ~  bind:m
@@ -3320,6 +3401,7 @@
       ;<  ~  bind:m
         %:  google-conflict  pre  id  u  e  (gs res 'updated')
           ?:  =(412 status)  'changed on both sides; google kept'
+          ?:  =(404 status)  'google no longer has this event (deleted or moved there); the next full pull settles it'
           (crip "google refused the push ({(a-co:co status)})")
         ==
       $(changes t.changes)
@@ -3353,6 +3435,9 @@
     |=  [[u=uid:cal g=@t up=@t et=@t join=@t sent=@t guests=(unit json)] acc=_kk]
     =/  e=(unit entry:cal)  (~(get by entries.acc) u)
     ?~  e  acc
+    ::  guests edited here while the push waited are the newer: Google's
+    ::  answer does not replace them
+    =?  guests  !=(`seq.u.e (bind (~(get by entries.u.k) u) |=(b=entry:cal seq.b)))  ~
     ::  the Meet Google made is the event's join link now; a request it
     ::  left pending comes back with a later pull
     =?  u.e  !=('' join)
@@ -3369,15 +3454,25 @@
       =/  rest=(list [@t @t])
         (skip props.u.e |=([key=@t *] ?=(^ (find ~[key] `(list @t)`~['X-GOOGLE-ID' 'X-GOOGLE-UPDATED' 'X-GOOGLE-ETAG' 'X-GOOGLE-SENT']))))
       ?~(guests rest [['X-GOOGLE-GUESTS' '1'] (skip rest |=([key=@t *] =('X-GOOGLE-GUESTS' key)))])
-    (put-entry:cal acc u.e(props props))
+    =.  u.e  u.e(props props)
+    ::  a merged body is not the one meta makes, but meta now holds the
+    ::  guests it sent: the body meta makes now is the one sent, so the
+    ::  next push of nothing new (an instance's move) skips the series
+    =?  props.u.e  &(=('' sent) ?=(^ guests) ?=(~ (parent-of:cal u.e)))
+      =/  now-sent=@t  (scot %uv (sham (json-of:gcal (anchored u.e) (object-exdates u.e (kids-of:cal acc u)))))
+      [['X-GOOGLE-SENT' now-sent] (skip props.u.e |=([key=@t *] =('X-GOOGLE-SENT' key)))]
+    (put-entry:cal acc u.e)
   ;<  ~  bind:m
     ?~  results  (pure:(fiber:fiber:nexus ,~) ~)
     (dav-write pre c(cals (~(put by cals.c) id kk)))
   ;<  ~  bind:m  ?:(stopped (pure:(fiber:fiber:nexus ,~) ~) (unfault pre (cat 3 'google-push/' id)))
   =/  mark=@ud  ?:(stopped since seq-before)
+  =.  stamps
+    (roll results |=([[u=uid:cal * up=@t *] acc=_stamps] ?:(=('' up) acc (~(put by acc) u s+up))))
   %-  pure:m
   %+  row-put  row
   :~  ['ids' [%o ids]]
+      ['stamps' [%o stamps]]
       ['pushed_seq' (numb:enjs:format mark)]
       ['suppressed' (suppress-json (~(uni in sup) (wrote-between kk seq-mid seq.kk)) mark)]
   ==
@@ -3479,7 +3574,8 @@
       "</D:sync-token><D:sync-level>1</D:sync-level><D:prop><D:getetag/></D:prop></D:sync-collection>"
     ==
   ;<  [status=@ud * res=@t]  bind:m
-    (dav-fetch row %'REPORT' url `body ~[['content-type' 'application/xml; charset=utf-8'] ['depth' '1']])
+    ::  Depth 0: RFC 6578 3.2 defines the report for no other
+    (dav-fetch row %'REPORT' url `body ~[['content-type' 'application/xml; charset=utf-8'] ['depth' '0']])
   ?:  =(0 status)  (pure:m ~)
   ?:  =(207 status)
     =/  root=(unit manx)  (parse:dav res)
@@ -3722,7 +3818,9 @@
           "check its username and password under Settings, Following; the changes stay queued"
         ==
       $(changes ~, stopped &)
-    ?:  (gte status 400)
+    ::  anything but a 2xx did not store it: a redirect (a server moved
+    ::  to https, say) is no success
+    ?:  |((lth status 200) (gte status 300))
       ;<  ~  bind:m
         (google-conflict pre id u (~(get by entries.u.k) u) '' (crip "remote refused the push ({(a-co:co status)})"))
       $(changes t.changes)

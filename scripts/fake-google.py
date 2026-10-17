@@ -50,6 +50,18 @@ def touch(cid, ev):
     EVENTS[cid][ev['id']] = ev; CHANGES[cid].append(ev['id'])
 
 
+def patch(old, body):
+    """Google's patch semantics: objects merge key by key, a list replaces
+    whole, and null clears the field"""
+    out = dict(old)
+    for k, v in body.items():
+        if v is None: out.pop(k, None)
+        elif isinstance(v, dict) and isinstance(out.get(k), dict): out[k] = patch(out[k], v)
+        elif isinstance(v, dict): out[k] = patch({}, v)
+        else: out[k] = v
+    return out
+
+
 class H(BaseHTTPRequestHandler):
     protocol_version = 'HTTP/1.1'
 
@@ -126,7 +138,7 @@ class H(BaseHTTPRequestHandler):
         parts = p.split('/')
         if len(parts) == 6 and parts[3] == 'calendars' and parts[5] == 'events':
             if FAIL['writes']: self.send(503, {'error': {'code': 503, 'message': 'forced'}}); return
-            cid = parts[4]; ev = json.loads(raw); ev['id'] = uuid.uuid4().hex[:12]; ev.setdefault('status', 'confirmed'); meet(ev, parse_qs(u.query))
+            cid = parts[4]; ev = patch({}, json.loads(raw)); ev['id'] = uuid.uuid4().hex[:12]; ev.setdefault('status', 'confirmed'); meet(ev, parse_qs(u.query))
             ev.setdefault('iCalUID', ev['id'] + '@google.com'); touch(cid, ev); WRITES.append(('insert', cid, ev['id'])); QUERIES.append(u.query); self.send(200, ev); return
         self.send(404, {'error': {'code': 404}})
 
@@ -138,7 +150,7 @@ class H(BaseHTTPRequestHandler):
             if FAIL['writes']: self.send(503, {'error': {'code': 503, 'message': 'forced'}}); return
             cid, eid = parts[4], parts[6]
             if eid not in EVENTS[cid]: self.send(404, {'error': {'code': 404}}); return
-            ev = json.loads(raw); ev['id'] = eid; ev.setdefault('status', 'confirmed'); ev.setdefault('iCalUID', EVENTS[cid][eid].get('iCalUID'))
+            ev = patch({}, json.loads(raw)); ev['id'] = eid; ev.setdefault('status', 'confirmed'); ev.setdefault('iCalUID', EVENTS[cid][eid].get('iCalUID'))
             touch(cid, ev); WRITES.append(('update', cid, eid)); self.send(200, ev); return
         self.send(404, {'error': {'code': 404}})
 
@@ -165,7 +177,7 @@ class H(BaseHTTPRequestHandler):
             im = self.headers.get('If-Match')
             if im and im != EVENTS[cid][eid].get('etag'): self.send(412, {'error': {'code': 412, 'message': 'Precondition Failed'}}); return
             body = json.loads(raw); meet(body, parse_qs(u.query))
-            ev = dict(EVENTS[cid][eid]); ev.update(body); ev['id'] = eid; ev['status'] = 'confirmed'
+            ev = patch(EVENTS[cid][eid], body); ev['id'] = eid; ev['status'] = 'confirmed'
             touch(cid, ev); WRITES.append(('update', cid, eid)); QUERIES.append(u.query); self.send(200, ev); return
         self.send(404, {'error': {'code': 404}})
 

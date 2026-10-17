@@ -42,12 +42,36 @@
 ::
 ++  test-parse-list-caps
   ;:  weld
-    (expect !>(?=(^ (parse:rr (listed "WEEKLY" "BYDAY" "MO" 64)))))
-    (expect !>(?=(~ (parse:rr (listed "WEEKLY" "BYDAY" "MO" 65)))))
-    (expect !>(?=(^ (parse:rr (listed "MONTHLY" "BYMONTHDAY" "1" 62)))))
-    (expect !>(?=(~ (parse:rr (listed "MONTHLY" "BYMONTHDAY" "1" 63)))))
-    (expect !>(?=(^ (parse:rr (listed "DAILY" "BYMONTH" "1" 12)))))
-    (expect !>(?=(~ (parse:rr (listed "DAILY" "BYMONTH" "1" 13)))))
+    ::  a value named twice is one (MO,MO is one Monday), so a long list
+    ::  of one value is one
+    (expect-eq !>(1) !>((lent byday:(rule (listed "WEEKLY" "BYDAY" "MO" 65)))))
+    (expect-eq !>(1) !>((lent bymonthday:(rule (listed "MONTHLY" "BYMONTHDAY" "1" 63)))))
+    (expect !>(?=(^ (parse:rr 'FREQ=DAILY;BYMONTH=1,2,3,4,5,6,7,8,9,10,11,12'))))
+    (expect !>(?=(~ (parse:rr 'FREQ=DAILY;BYMONTH=1,2,3,4,5,6,7,8,9,10,11,12,13'))))
+    ::  70 slots a month at most: a weekday without an ordinal is five
+    (expect !>(?=(^ (parse:rr 'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR,SA,SU,1MO,2MO,3MO,4MO,5MO,1TU,2TU,3TU,4TU,5TU,1WE,2WE,3WE,4WE,5WE,1TH,2TH,3TH,4TH,5TH,1FR,2FR,3FR,4FR,5FR,1SA,2SA,3SA,4SA,5SA,1SU,2SU,3SU,4SU,5SU'))))
+    (expect !>(?=(~ (parse:rr 'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR,SA,SU,1MO,2MO,3MO,4MO,5MO,1TU,2TU,3TU,4TU,5TU,1WE,2WE,3WE,4WE,5WE,1TH,2TH,3TH,4TH,5TH,1FR,2FR,3FR,4FR,5FR,1SA,2SA,3SA,4SA,5SA,1SU,2SU,3SU,4SU,5SU,-1MO'))))
+  ==
+::  the same day named twice is one occurrence: the second is a slot with
+::  none, so the next index is the next day
+++  test-same-day-once
+  =/  y  (rule 'FREQ=YEARLY;BYMONTH=1;BYDAY=MO,MO')
+  =/  m  (rule 'FREQ=MONTHLY;BYMONTHDAY=30,-1')
+  ;:  weld
+    (expect-eq !>(`~2026.1.5..10.00.00) !>((occurrence:rr y ~2026.1.5..10.00.00 0)))
+    (expect-eq !>(`~2026.1.12..10.00.00) !>((occurrence:rr y ~2026.1.5..10.00.00 1)))
+    ::  April has 30 days: its 30th is also its last
+    (expect-eq !>(`~2026.4.30..10.00.00) !>((occurrence:rr m ~2026.4.30..10.00.00 0)))
+    (expect-eq !>(~) !>((occurrence:rr m ~2026.4.30..10.00.00 1)))
+    (expect-eq !>(`~2026.5.30..10.00.00) !>((occurrence:rr m ~2026.4.30..10.00.00 2)))
+  ==
+::  a client's X- part is left out, not a reason to drop the series; a
+::  DAILY with BYMONTHDAY keeps it (Friday the 13th)
+++  test-parse-x-parts-and-daily-by
+  ;:  weld
+    (expect !>(?=(^ (parse:rr 'FREQ=WEEKLY;BYDAY=MO;X-EVOLUTION-ENDDATE=20261231T000000Z'))))
+    (expect-eq !>(%daily) !>(freq:(rule 'FREQ=DAILY;BYDAY=FR;BYMONTHDAY=13')))
+    (expect-eq !>(%weekly) !>(freq:(rule 'FREQ=DAILY;BYDAY=FR')))
   ==
 ::
 ++  test-occurrences
