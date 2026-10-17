@@ -3691,7 +3691,9 @@
 ::  gets a cancel. A copy of someone else's invitation (meta host) is not
 ::  ours to send. Sent is not delivered: a ship that is down is tried
 ::  again an hour on, and one on an older calendar takes the poke and
-::  drops it
+::  drops it. ponytail: an answer moves the etag, so every guest is sent
+::  the event again with it (n answers, n*n pokes); key the resend on
+::  the ICS alone if meetings grow large
 ++  invite-pass
   =/  m  (fiber:fiber:nexus ,~)
   ^-  form:m
