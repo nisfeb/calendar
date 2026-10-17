@@ -69,6 +69,9 @@ function fmtDate(p) {
   return WDS[dow] + ', ' + MN[p.m - 1].slice(0, 3) + ' ' + p.d;
 }
 
+// a moment as Settings shows it: in the calendar's zone, like the views
+function stamp(ms) { var p = parts(ms); return fmtDate(p) + ', ' + fmtTime(p); }
+
 // ISO 8601 week number: the week of its Thursday, weeks start Monday
 function isoWeek(ser) {
   var dow = (new Date(ser * MS_DAY).getUTCDay() + 6) % 7;
@@ -472,7 +475,7 @@ document.getElementById('pop-skip').onclick = function() {
   var t = popTarget;
   poke({ action: 'skip-at', id: t.id, home: t.cal, start_ms: t.l }, function(ok) {
     if (!ok) { toast('The ship did not answer: "' + t.name + '" is unchanged'); return; }
-    toast('Skipped "' + t.name + '" on ' + fmtDate(evParts(t, t.l)) + '.', function() {
+    toast('Deleted "' + t.name + '" on ' + fmtDate(evParts(t, t.l)) + '.', function() {
       poke({ action: 'unskip-at', id: t.id, home: t.cal, start_ms: t.l }, afterChange);
     });
     afterChange();
@@ -482,11 +485,12 @@ document.getElementById('pop-skip').onclick = function() {
 
 // a note at the foot of the page, with an undo for the change it names
 var toastTimer = null;
-function toast(text, undo) {
+function toast(text, undo, label) {
   var el = document.getElementById('toast');
   document.getElementById('toast-text').textContent = text;
   var b = document.getElementById('toast-undo');
   b.style.display = undo ? '' : 'none';
+  b.textContent = label || 'Undo';
   b.onclick = function() { el.classList.add('hidden'); if (undo) undo(); };
   el.classList.remove('hidden');
   clearTimeout(toastTimer);
@@ -540,6 +544,7 @@ function chipEl(ev, cont) {
 // ---- month view ---------------------------------------------------
 
 var grid = document.getElementById('grid');
+var narrow = window.matchMedia('(max-width: 600px)');
 document.getElementById('dow-row').innerHTML =
   '<div class="dow wk-stub"></div>' +
   WDS.map(function(d) { return '<div class="dow">' + d + '</div>'; }).join('');
@@ -594,9 +599,11 @@ function renderMonth(rows) {
     if (ser === today) cell.setAttribute('aria-current', 'date');
     cell.onclick = function(e) {
       if (e.target !== cell) return;
+      // a phone's cells are too small for their chips: a tap opens the day
+      if (narrow.matches) { state.view = 'day'; state.y = c.y; state.m = c.m; state.d = c.d; load(); return; }
       openModal({ date: c, kind: 'once' });
     };
-    pressable(cell, 'New event on ' + fmtDate(c));
+    pressable(cell, (narrow.matches ? 'Open ' : 'New event on ') + fmtDate(c));
     (byDay[ser] || [])
       // carried-over days first, then all-day ones, then by start: an
       // all-day event's midnight is UTC, not this zone's
@@ -1222,7 +1229,8 @@ function syncFields() {
     mf: rc && k === 'monthly',
     nf: rc && k === 'monthly-nth',
     yf: rc && k === 'yearly',
-    ef: rc && k === 'every'
+    ef: rc && k === 'every',
+    rp: rc && k !== 'once'
   };
   Object.keys(show).forEach(function(c) {
     document.querySelectorAll('.' + c).forEach(function(el) {
@@ -1238,6 +1246,7 @@ kindSel.onchange = syncFields;
 var seg = document.getElementById('cat-seg');
 function setCat(c) {
   cat = c;
+  document.getElementById('modal-title').textContent = (editCtx ? 'Edit ' : 'New ') + (c === 'todo' ? 'Task' : 'Event');
   seg.querySelectorAll('.seg-btn').forEach(function(b) {
     b.classList.toggle('on', b.dataset.cat === c);
   });
@@ -1360,6 +1369,12 @@ function loadZones() {
       fillZoneSelect(zoneSel, zs, true);
       fillZoneSelect(dispSel, zs, false);
       dispSel.value = CFG.zone || 'none';
+      // a calendar still on UTC offers the browser's zone, once
+      if (!CFG.zone && browserZone && browserZone !== 'UTC' && zs.indexOf(browserZone) >= 0) {
+        var asked = true;
+        try { asked = localStorage.getItem('cal-zone-asked') === '1'; localStorage.setItem('cal-zone-asked', '1'); } catch (e) {}
+        if (!asked) toast('Times show in UTC. Use your zone, ' + browserZone + '?', function() { globeBtn.onclick(); }, 'Use it');
+      }
     })
     .catch(function() {});
 }
@@ -1513,8 +1528,12 @@ function loadGoogle() {
 
 // the conflict log (every backend writes it): what the other side won
 // over, each local copy downloadable, and a way to clear it
+var conflictUrls = [];
 function loadConflicts() {
   getJSON('/google/conflicts.json').then(function(cs) {
+    // the last list's downloads go with it
+    conflictUrls.forEach(function(u) { URL.revokeObjectURL(u); });
+    conflictUrls = [];
     var gl = document.getElementById('google-conflicts');
     gl.textContent = cs.length ? (cs.length + ' conflict' + (cs.length === 1 ? '' : 's') + ' logged') : '';
     gl.onclick = function(e) { e.preventDefault(); var sect = document.getElementById('conflicts-sect'); sect.open = true; sect.scrollIntoView(); };
@@ -1526,12 +1545,13 @@ function loadConflicts() {
       var nm = document.createElement('span'); nm.className = 'fn';
       nm.textContent = (CALS[c.cal] ? CALS[c.cal].name : c.cal) + ': ' + c.why;
       var u = document.createElement('span'); u.className = 'fu';
-      u.textContent = new Date(c.at_ms).toLocaleString() + ' · ' + c.uid;
+      u.textContent = stamp(c.at_ms) + ' · ' + c.uid;
       row.appendChild(nm); row.appendChild(u);
       if (c.local) {
         var a = document.createElement('a'); a.className = 'fx'; a.style.fontSize = '12px';
         a.textContent = 'Your copy';
         a.href = URL.createObjectURL(new Blob([c.local], { type: 'text/calendar' }));
+        conflictUrls.push(a.href);
         a.download = 'conflict.ics';
         row.appendChild(a);
       }
@@ -1578,7 +1598,7 @@ function loadGoogleCalendars(linked) {
         var nm = document.createElement('span'); nm.className = 'fn'; nm.textContent = c.name + (c.primary ? ' (primary)' : '');
         var u = document.createElement('span'); u.className = 'fu';
         var linkedId = c.linked;
-        u.textContent = linkedId ? ('linked' + (linked[linkedId] && linked[linkedId].last_ms ? ', synced ' + new Date(linked[linkedId].last_ms).toLocaleString() : ', not synced yet')) : '';
+        u.textContent = linkedId ? ('linked' + (linked[linkedId] && linked[linkedId].last_ms ? ', synced ' + stamp(linked[linkedId].last_ms) : ', not synced yet')) : '';
         if (linkedId && linked[linkedId] && linked[linkedId].error) {
           u.textContent += ' · ' + linked[linkedId].error;
           u.classList.add('err');
@@ -1698,7 +1718,7 @@ function sayRefusal(id, since) {
 function loadOutcomes() {
   getJSON('/outcomes.json').then(function(o) {
     var fl = document.getElementById('faults-list'), rl = document.getElementById('refusals-list');
-    var when = function(ms) { return ms ? fmtDate(parts(ms)) + ', ' + fmtTime(parts(ms)) : ''; };
+    var when = function(ms) { return ms ? stamp(ms) : ''; };
     var line = function(box, text, cls) {
       var row = document.createElement('div'); row.className = cls || 'alarm-row';
       var t = document.createElement('span'); t.textContent = text; row.appendChild(t); box.appendChild(row);
@@ -1854,7 +1874,7 @@ function loadShares() {
       anyO = true; var r = accepted[id];
       var row = document.createElement('div'); row.className = 'feed-row';
       var nm = document.createElement('span'); nm.className = 'fn'; nm.textContent = (CALS[id] ? CALS[id].name : id) + ' (' + r.key.split('/')[0] + ')';
-      var u = document.createElement('span'); u.className = 'fu'; u.textContent = r.error ? r.error : ((r.mode === 'edit' ? 'read and edit' : 'read only') + (r.last_ms ? ', synced ' + new Date(r.last_ms).toLocaleString() : ', not synced yet'));
+      var u = document.createElement('span'); u.className = 'fu'; u.textContent = r.error ? r.error : ((r.mode === 'edit' ? 'read and edit' : 'read only') + (r.last_ms ? ', synced ' + stamp(r.last_ms) : ', not synced yet'));
       if (r.error) u.style.color = '#f87171';
       row.appendChild(nm); row.appendChild(u); ol.appendChild(row);
     });
@@ -1913,7 +1933,7 @@ function loadCdav() {
     subs.forEach(function(sub) {
       var row = document.createElement('div'); row.className = 'feed-row';
       var nm = document.createElement('span'); nm.className = 'fn'; nm.textContent = sub.user + ' @ ' + sub.url;
-      var u = document.createElement('span'); u.className = 'fu'; u.textContent = sub.error ? sub.error : (sub.last_ms ? 'synced ' + new Date(sub.last_ms).toLocaleString() : 'not synced yet');
+      var u = document.createElement('span'); u.className = 'fu'; u.textContent = sub.error ? sub.error : (sub.last_ms ? 'synced ' + stamp(sub.last_ms) : 'not synced yet');
       if (sub.error) u.style.color = '#f87171';
       var x = document.createElement('button'); x.className = 'fx'; x.textContent = 'Unfollow'; x.style.fontSize = '12px';
       x.onclick = function() {
@@ -2143,6 +2163,7 @@ function formState() {
 function showModal() {
   fSave.disabled = false;
   alarmSel.value = ''; alarmInputs('');
+  syncTimeLabel();
   modalOpener = document.activeElement;
   back.classList.add('open');
   formAtOpen = formState();
@@ -2158,6 +2179,23 @@ function closeModal(ask) {
   if (inside && modalOpener && document.contains(modalOpener)) modalOpener.focus();
 }
 trapTab(document.getElementById('modal'));
+// the time is a wall clock in the event's own zone: say which, when that
+// is not the calendar's, since the grid shows the calendar's
+function syncTimeLabel() {
+  var z = zoneSel.value, mine = CFG.zone || 'UTC', shown = z === 'none' ? 'UTC' : z || mine;
+  document.getElementById('lbl-time').textContent = shown === mine ? 'At time' : 'At time (' + shown + ')';
+}
+zoneSel.addEventListener('change', syncTimeLabel);
+// Enter in a field saves, Ctrl or Cmd+Enter in the note. Not in a select,
+// a button, or the reminder inputs, which have their own Add
+document.getElementById('modal').addEventListener('keydown', function(e) {
+  if (e.key !== 'Enter' || e.isComposing) return;
+  var t = e.target;
+  if (t.tagName === 'TEXTAREA' ? !(e.ctrlKey || e.metaKey)
+      : t.tagName !== 'INPUT' || /^(button|checkbox|radio|color|file)$/.test(t.type) || t.closest('#f-alarm-custom, #f-alarm-when')) return;
+  e.preventDefault();
+  fSave.click();
+});
 
 function openModal(opts) {
   if (Date.now() - modalClosedAt < 400) return;
@@ -2166,7 +2204,6 @@ function openModal(opts) {
   fAlarms = [];
   setPriSelect(0);
   keptKindOption('');
-  document.getElementById('modal-title').textContent = 'New Event';
   document.getElementById('edit-scope').classList.remove('on');
   var p = opts.date || parts(Date.now());
   document.getElementById('f-date').value = ymd(p);
@@ -2222,7 +2259,6 @@ function openEdit(d, target) {
   // date space, timed in its zone (UTC when it has none)
   editCtx.occ = d.cat === 'allday' ? msToUTC(target.l)
     : parts(target.l, zoneFmt(d.zone && d.zone !== 'none' ? d.zone : 'UTC'));
-  document.getElementById('modal-title').textContent = 'Edit Event';
   document.getElementById('f-status').textContent = '';
   document.getElementById('f-name').value = dm.name || '';
   document.getElementById('f-note').value = dm.note || '';
@@ -2241,7 +2277,6 @@ function openEdit(d, target) {
   document.querySelector('input[name="scope"][value="all"]').checked = true;
 
   if (d.cat === 'todo') {
-    document.getElementById('modal-title').textContent = 'Edit Task';
     var du = d.due_ms ? dueParts(d.due_ms) : null;
     editCtx.dueDate = du ? ymd(du) : '';
     document.getElementById('f-due').value = editCtx.dueDate;
