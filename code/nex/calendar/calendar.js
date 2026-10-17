@@ -1992,6 +1992,7 @@ function openEdit(d, target) {
   kindSel.value = kind;
   var a = shown ? shown.args : (d.args || {});
   var sp = msToUTC(d.start_ms);
+  editCtx.startDate = ymd(sp);
   document.getElementById('f-date').value = ymd(sp);
   var atMin = (a.at !== undefined) ? a.at : (sp.hh * 60 + sp.mm);
   document.getElementById('f-time').value = pad2(Math.floor(atMin / 60)) + ':' + pad2(atMin % 60);
@@ -2201,7 +2202,6 @@ fSave.onclick = function() {
   var scope = (editCtx.series && scopeEl) ? scopeEl.value : 'all';
   // the first occurrence and all that follow is the whole series
   if (scope === 'following' && !editCtx.idx) scope = 'all';
-  var o = editCtx.occ;
 
   if (scope === 'all') {
     body.action = 'edit-event';
@@ -2216,22 +2216,19 @@ fSave.onclick = function() {
     body.id = editCtx.id;
     body.home = editCtx.home;
     body.idx = editCtx.idx;
-    body.start_ms = (cat === 'timed' && timedStart(k))
-      ? Date.UTC(o.y, o.m - 1, o.d, +tv[0], +tv[1])
-      : Date.UTC(o.y, o.m - 1, o.d);
     if (body.count && body.count === editCtx.count) body.count = Math.max(1, body.count - editCtx.before);
     poke(body, finish);
   } else {
-    // only this one: a one-off on this occurrence's day, at the form's
-    // time, then the occurrence skipped by its start
+    // only this one: a one-off at the form's day and time, then the
+    // occurrence skipped by its start
     var only = { action: 'add-event', cat: cat, meta: body.meta, kind: 'once', alarms: body.alarms };
     if (body.cal) only.cal = body.cal;
     if (cat === 'timed') {
-      only.start_ms = Date.UTC(o.y, o.m - 1, o.d, +tv[0], +tv[1]);
+      only.start_ms = Date.UTC(+p[0], +p[1] - 1, +p[2], +tv[0], +tv[1]);
       if (body.zone) only.zone = body.zone;
       only.fin = 'dur'; only.dur_min = body.dur_min;
     } else {
-      only.start_ms = Date.UTC(o.y, o.m - 1, o.d);
+      only.start_ms = Date.UTC(+p[0], +p[1] - 1, +p[2]);
       only.span_days = body.span_days || 1;
     }
     var skip = { action: 'skip-at', id: editCtx.id, home: editCtx.home, start_ms: editCtx.l };
@@ -2241,6 +2238,16 @@ fSave.onclick = function() {
     });
   }
 };
+
+// the date field follows the scope: the series' first day for all of
+// it, the tapped occurrence's day for one or from one on, so moving one
+// occurrence to another day is a change of the date
+document.querySelectorAll('input[name="scope"]').forEach(function(r) {
+  r.onchange = function() {
+    if (!editCtx || !editCtx.series) return;
+    document.getElementById('f-date').value = r.value === 'all' ? editCtx.startDate : ymd(editCtx.occ);
+  };
+});
 
 // ---- boot ---------------------------------------------------------
 
