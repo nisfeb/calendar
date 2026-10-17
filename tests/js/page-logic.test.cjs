@@ -61,3 +61,9 @@ test('a call taken off drops the join line the ship wrote, and only that', () =>
   assert.equal(c.dropJoinLine('See ' + line), 'See ' + line);
   assert.equal(c.dropJoinLine(undefined), '');
 });
+
+test('a link or address in angle brackets stays in a plain note', () => {
+  assert.equal(c.noteText('Join Microsoft Teams Meeting<https://teams.microsoft.com/l/x>'), 'Join Microsoft Teams Meeting https://teams.microsoft.com/l/x');
+  assert.equal(c.noteText('Ask Bo <bo@x.test>'), 'Ask Bo  bo@x.test');
+  assert.equal(c.noteText('plain'), 'plain');
+});

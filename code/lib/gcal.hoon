@@ -397,9 +397,10 @@
     =/  rc=recur:cal  recur.ev
     =/  dom=(unit @ud)  ?-(-.ev %timed dom.bound.ev, %allday dom.bound.ev)
     =/  rt=(unit @t)  (fall (mole |.((preset-rrule:ics name.kind.rc args.rc start.rc dom))) ~)
-    ::  none: an empty list, so a PATCH of a series made single ends the
-    ::  series on Google too (a missing key would leave it)
-    ?~  rt  ~[['recurrence' [%a ~]]]
+    ::  a single event: an empty list, so a PATCH of a series made single
+    ::  ends the series on Google too (a missing key would leave it). A rule
+    ::  RRULE cannot say leaves Google's as it is
+    ?~  rt  ?:(=(%once name.kind.rc) ~[['recurrence' [%a ~]]] ~)
     =/  zone=(unit @t)  ?:(?=(%timed -.ev) zone.ev ~)
     =/  ex=(list json)
       %+  turn  exdates

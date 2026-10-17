@@ -66,12 +66,18 @@
     (expect-eq !>(`~2026.5.30..10.00.00) !>((occurrence:rr m ~2026.4.30..10.00.00 2)))
   ==
 ::  a client's X- part is left out, not a reason to drop the series; a
-::  DAILY with BYMONTHDAY keeps it (Friday the 13th)
+::  DAILY with BYDAY and BYMONTHDAY (Friday the 13th) is monthly, so the
+::  fourteen months between two of them are fourteen slots, not 427
+::  days past the walk's run of dead ones
 ++  test-parse-x-parts-and-daily-by
+  =/  f13  (rule 'FREQ=DAILY;BYDAY=FR;BYMONTHDAY=13')
   ;:  weld
     (expect !>(?=(^ (parse:rr 'FREQ=WEEKLY;BYDAY=MO;X-EVOLUTION-ENDDATE=20261231T000000Z'))))
-    (expect-eq !>(%daily) !>(freq:(rule 'FREQ=DAILY;BYDAY=FR;BYMONTHDAY=13')))
+    (expect-eq !>(%monthly) !>(freq.f13))
     (expect-eq !>(%weekly) !>(freq:(rule 'FREQ=DAILY;BYDAY=FR')))
+    (expect-eq !>(`~2027.8.13..10.00.00) !>((occurrence:rr f13 ~2027.8.13..10.00.00 0)))
+    (expect-eq !>(~) !>((occurrence:rr f13 ~2027.8.13..10.00.00 1)))
+    (expect-eq !>(`~2028.10.13..10.00.00) !>((occurrence:rr f13 ~2027.8.13..10.00.00 14)))
   ==
 ::
 ++  test-occurrences

@@ -130,6 +130,9 @@ function loadCals() {
       sel.value = 'default'; tsel.value = 'default'; isel.value = 'default';
     })
     .catch(function() {});
+  // the views wait on this: a request that never answers holds them 4 s,
+  // and they draw without calendar colors
+  calsReady = Promise.race([calsReady, new Promise(function(r) { setTimeout(r, 4000); })]);
   return calsReady;
 }
 
@@ -171,7 +174,9 @@ function fetchWindow(fromMs, toMs, cb) {
 // address kept beside its words. Parsed, never put in the page as HTML
 function noteText(s) {
   if (typeof s !== 'string') return '';
-  if (!/<[a-z\/!][^>]*>/i.test(s)) return s;
+  // a link or address in angle brackets (Outlook, Teams) is text, not a tag
+  s = s.replace(/<((?:https?|mailto):[^<>\s]+|[^<>\s@]+@[^<>\s]+)>/gi, ' $1 ');
+  if (!/<[a-z\/!][^>]*>/i.test(s)) return s.trim();
   var doc = new DOMParser().parseFromString(s.replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|div|li)>/gi, '$&\n'), 'text/html');
   doc.querySelectorAll('a[href]').forEach(function(a) {
     var href = a.getAttribute('href');
@@ -601,6 +606,8 @@ function renderMonth(rows) {
     if (ser === today) cell.setAttribute('aria-current', 'date');
     cell.onclick = function(e) {
       if (e.target !== cell) return;
+      // the second tap of a double tap on Save lands here after the form
+      if (Date.now() - modalClosedAt < 400) return;
       // a phone's cells are too small for their chips: a tap opens the day
       if (narrow.matches) { state.view = 'day'; state.y = c.y; state.m = c.m; state.d = c.d; load(); return; }
       openModal({ date: c, kind: 'once' });
@@ -1368,7 +1375,10 @@ function keptZoneOption(z) {
 function loadZones() {
   getJSON('/zones.json')
     .then(function(zs) {
+      // an open form keeps its zone (one the list lacks included)
+      var was = zoneSel.value;
       fillZoneSelect(zoneSel, zs, true);
+      if (was) { keptZoneOption(was); zoneSel.value = was; }
       fillZoneSelect(dispSel, zs, false);
       dispSel.value = CFG.zone || 'none';
       // a calendar still on UTC offers the browser's zone, once

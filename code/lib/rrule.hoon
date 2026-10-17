@@ -70,10 +70,13 @@
   ?~  fr  ~
   =/  interval=@ud  (max 1 (fall (bind (get 'INTERVAL') |=(v=@t (fall (rush v dem) 1))) 1))
   ::  DAILY limited by BYDAY (Thunderbird's "every weekday") is WEEKLY on
-  ::  those days, every slot a live one; with an INTERVAL or a BYMONTHDAY
-  ::  (Friday the 13th) it stays DAILY, both limits (+occurrence)
-  =/  daily-by=?  &(=(%daily u.fr) ?=(^ (get 'BYDAY')) =(1 interval) ?=(~ (get 'BYMONTHDAY')))
-  =/  =freq  ?:(daily-by %weekly u.fr)
+  ::  those days, every slot a live one; with a BYMONTHDAY too (Friday the
+  ::  13th) it is MONTHLY on those days, BYDAY a limit: a slot a day would
+  ::  pass a year of dead ones between two. With an INTERVAL it stays
+  ::  DAILY, BYDAY a limit (+occurrence)
+  =/  daily-by=?  &(=(%daily u.fr) ?=(^ (get 'BYDAY')) =(1 interval))
+  =/  daily-md=?  &(daily-by ?=(^ (get 'BYMONTHDAY')))
+  =/  =freq  ?:(daily-md %monthly ?:(daily-by %weekly u.fr))
   =/  count=(unit @ud)  (bind (get 'COUNT') |=(v=@t (fall (rush v dem) 0)))
   =/  until=(unit @da)  (bind (get 'UNTIL') parse-until)
   ::  each BY-list once (MO,MO is one Monday), in a set's order: the

@@ -366,14 +366,15 @@
 ::
 ++  test-alarm-offsets
   ;:  weld
-    ::  after the start, from the start
-    %+  expect-eq  !>(~[['standup' 'starting now' 'cal-e-2-0']])
+    ::  after the start, from the start: it says how long ago
+    %+  expect-eq  !>(~[['standup' 'started 5 min ago' 'cal-e-2-0']])
     !>((pushes ~[[[%off | & ~m5] '']] (add at ~m4) (add at ~m5)))
-    ::  before the end
-    %+  expect-eq  !>(~[['standup' 'starting now' 'cal-e-2-0']])
+    ::  before the end: how soon it ends
+    %+  expect-eq  !>(~[['standup' 'ends in 5 min' 'cal-e-2-0']])
     !>((pushes ~[[[%off & | ~m5] '']] (add at ~m54) (add at ~m55)))
     ::  after the end
-    (expect-eq !>(1) !>((lent (pushes ~[[[%off & & ~m5] '']] (add at ~m64) (add at ~m65)))))
+    %+  expect-eq  !>(~[['standup' 'ended 5 min ago' 'cal-e-2-0']])
+    !>((pushes ~[[[%off & & ~m5] '']] (add at ~m64) (add at ~m65)))
     ::  before the start
     (expect-eq !>(1) !>((lent (pushes ~[[[%off | | ~m5] '']] (sub at ~m6) (sub at ~m5)))))
     ::  an absolute alarm belongs to the entry: -a-

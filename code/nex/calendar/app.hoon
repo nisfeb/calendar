@@ -542,11 +542,11 @@
         =/  c=calendar:cal  (cal-of view)
         =/  ver=@uv  (cache-ver:cal c)
         ;<  have=@uv  bind:m  (read-cache-ver './')
-        ::  current already (a request built it): nothing to key. last
-        ::  stays as it was, so the next change at worst refreshes
+        ::  current already (a request built it): nothing to key, and last
+        ::  is forgotten, so the next change at worst refreshes
         ?:  =(ver have)
           ;<  *  bind:m  (take-news:io /cal)
-          $
+          $(last ~)
         =/  key=(unit [(map eid:cal event:cal) @dr (unit @t)])  `[(keyed-events c) horizon.c zone.c]
         ?:  =(last key)
           ;<  ~  bind:m  (write-cache-ver './' ver)
@@ -600,8 +600,13 @@
         ;<  ~  bind:m  (cancel-timer:io /tick)
         =/  pull=?  =(%poke what)
         ;<  c0=calendar:cal  bind:m  (read-cal './')
-        =/  ver=@uv  (cache-ver:cal c0)
+        ::  the events (cache-ver) and each calendar's props (a rename, a
+        ::  share's mode, which change no seq)
+        =/  ver=@uv  (sham [(cache-ver:cal c0) (~(run by cals.c0) |=(k=cal:cal props.k))])
         ?:  &(?=([%news [%cal *]] what) =(ver seen))  $
+        ::  refusal news when none is queued is send-refusals' own write
+        ;<  rq=json  bind:m  ?.(?=([%news [%refusals *]] what) (pure:(fiber:fiber:nexus ,json) [%a [~ ~]]) (read-json-grub './' 'refusals.json'))
+        ?:  &(?=([%news [%refusals *]] what) |(?=(~ rq) =([%a ~] rq)))  $
         =.  seen  ver
         ;<  ~  bind:m  (sync-pass %google pull)
         ;<  ~  bind:m  (sync-pass %caldav pull)
@@ -650,29 +655,40 @@
           =/  ikey=@t  (crip "{(scow %p u.src)}/{(trip u)}")
           ::  the clock first: from the read to the write nothing waits
           ;<  now=@da  bind:m  get-time:io
+          ;<  rj=json  bind:m  (read-json-grub './' 'invite-routes.json')
           ;<  ij=json  bind:m  (read-json-grub './' 'invites.json')
           =/  cur=(map @t json)  (omap ij)
           =/  old=json  (fall (~(get by cur) ikey) (pairs:enjs:format ~[['status' s+''] ['cal' s+'']]))
           ::  the same invitation again changes nothing, and writes nothing
           ::  (its DTSTAMP, the moment it was sent, always differs)
           ?:  &(=((sans-stamp txt) (sans-stamp (gs old 'ics'))) =(nm (gs old 'name')) =(`ships (~(get by (omap old)) 'ships')))  $
-          ::  any ship can send them: one host keeps ten unanswered at most,
-          ::  and a full inbox gives up a declined one, else its oldest
-          ::  unanswered. One whose copy is placed is never given up (nor
-          ::  counted): its host's changes and cancel must find it.
+          ::  any ship can send them. A host at ten unanswered gives up its
+          ::  own oldest for the new one (a real host's ignored invitations
+          ::  do not stop its next), and a full inbox gives up a declined
+          ::  one, else the oldest unanswered from a ship never accepted
+          ::  from (invite-routes.json), else the oldest unanswered: a run of
+          ::  strangers churns strangers. One whose copy is placed is never
+          ::  given up (nor counted): its host's changes and cancel must
+          ::  find it.
           =/  new=?  !(~(has by cur) ikey)
           =/  open  |=(r=json =('' (gs r 'status')))
-          =/  mine  |=(r=json &((open r) =((gs r 'host') (scot %p u.src))))
-          ?:  &(new (gte (lent (skim ~(val by cur) mine)) 10))  $
+          =/  oldest
+            |=  l=(list [@t json])
+            ^-  (unit @t)
+            ?~  l  ~
+            `-:(snag 0 (sort l |=([a=[@t json] b=[@t json]] (lth (fall (gn +.a 'at_ms') 0) (fall (gn +.b 'at_ms') 0)))))
+          =/  theirs=(list [@t json])  (skim ~(tap by cur) |=([* r=json] &((open r) =((gs r 'host') (scot %p u.src)))))
+          =?  cur  &(new (gte (lent theirs) 10))  (~(del by cur) (need (oldest theirs)))
           =/  loose=(list [@t json])  (skip ~(tap by cur) |=([* r=json] &(!(open r) !=('' (gs r 'cal')))))
           =/  full=?  &(new (gte (lent loose) invite-cap))
-          =/  oldest=(unit @t)
+          =/  victim=(unit @t)
             =/  gone=(list [@t json])  (skip loose |=([* r=json] (open r)))
-            =/  pool=(list [@t json])  ?^(gone gone loose)
-            ?~  pool  ~
-            `-:(snag 0 (sort pool |=([a=[@t json] b=[@t json]] (lth (fall (gn +.a 'at_ms') 0) (fall (gn +.b 'at_ms') 0)))))
-          ?:  &(full ?=(~ oldest))  $
-          =?  cur  full  (~(del by cur) (need oldest))
+            ?^  gone  (oldest gone)
+            =/  strange=(list [@t json])  (skip loose |=([* r=json] (~(has by (omap rj)) (gs r 'host'))))
+            ?^  strange  (oldest strange)
+            (oldest loose)
+          ?:  &(full ?=(~ victim))  $
+          =?  cur  full  (~(del by cur) (need victim))
           =/  row=json
             %+  row-put  old
             :~  ['host' s+(scot %p u.src)]
@@ -799,7 +815,8 @@
           ::  about an object we hold or the host had, or it is no edit of
           ::  ours: a host naming made-up UIDs would push real conflicts
           ::  out of the log
-          ?.  |(?=(^ local) !=('' (gs (obj:gcal row.i.hit 'pulled') u)) !=('' (gs (obj:gcal row.i.hit 'etags') u)))  $
+          =/  held  |=(f=@t !=('' (gs (obj:gcal row.i.hit f) u)))
+          ?.  |(?=(^ local) (held 'pulled') (held 'etags') (~(has by (omap (obj:gcal row.i.hit 'sent'))) u))  $
           =/  why=@t  (crip "the host refused this edit: {(trip (end [3 512] (gs jon 'why')))}")
           ::  the object as we sent it, when the host says it: a pull may
           ::  have put the host's copy over ours before this notice came
@@ -861,13 +878,17 @@
         ;<  ca=cache:cal  bind:m  (fresh-cache './' c (add now (add lead ~d31)))
         ::  the lead window goes on from where the last one ended
         ::  (thru_ms), so a longer lead skips no starts and a shorter
-        ::  one sends none twice. Never before now: a start missed while
-        ::  the ship slept has begun, and is past a heads-up
+        ::  one sends none twice. Never before the last tick (from, at
+        ::  most 15 minutes back): a start missed while the ship slept has
+        ::  begun, and is past a heads-up, while one on this tick's mark
+        ::  with a lead under a tick still gets its "starting now"
         =/  hi=@da  (add now lead)
         =/  lo=@da
           =/  t=(unit @ud)  (gn st 'thru_ms')
-          ?~(t (add from lead) (max now (ms-to-da u.t)))
+          ?~(t (add from lead) (max from (ms-to-da u.t)))
+        ::  a lead just shortened leaves lo past hi: nothing is due yet
         =/  due=(list ref:cal)
+          ?:  (gte lo hi)  ~
           %+  skim  ~(tap in (window:cal order.ca lo hi))
           |=  r=ref:cal
           &((gth l.span.r lo) (lte l.span.r hi))
@@ -878,7 +899,9 @@
         ::  ceiling for a relative lead, and back as far as the longest
         ::  alarm set after a start or an end: its occurrence is over
         ::  by the time it fires.
-        =/  back=@dr  (late-reach c)
+        ::  (a day more: an all-day event's alarm counts from local
+        ::  midnight, hours past its naive end west of UTC)
+        =/  back=@dr  (add ~d1 (late-reach c))
         =/  ahead=(list ref:cal)
           ~(tap in (window:cal order.ca (sub from (min back (sub from *@da))) (add now ~d31)))
         ;<  ~  bind:m  (send-pushes (alarm-pushes ahead (keyed c) from now zone.c))
@@ -1684,7 +1707,12 @@
     $(idx +(idx))
   ?~  first  e
   =/  rc2=recur:cal  recur.ev(start at.u.first)
-  =/  down  |=(d=@ud (dom-of:ics rc2 (count-of:ics recur.ev d)))
+  ::  the first index live: the indices line up, and the bound stands
+  =/  down
+    |=  d=@ud
+    ^-  @ud
+    ?:  =(0 idx.u.first)  d
+    (dom-of:ics rc2 (count-of:ics recur.ev d))
   ?-  -.ev
     %timed   e(event ev(start.recur at.u.first, dom.bound (bind dom.bound.ev down)))
     %allday  e(event ev(start.recur at.u.first, dom.bound (bind dom.bound.ev down)))
@@ -1847,11 +1875,7 @@
     ^-  @t
     =/  p=(unit prop:ics)  (get-prop:ics props.e 'X-GRUBBERY-UID')
     ?~(p key v.u.p)
-  ?:  (lien ~(tap by entries.u.k) |=([key=@t e=entry:cal] &(!=(key u) !(dav-is-child e) =(new-uid (own-uid key e)))))
-    (send-text eyre-id 403 'calendar: another object here has this UID (no-uid-conflict)')
   =/  existing=(unit entry:cal)  (~(get by entries.u.k) u)
-  ?:  &(?=(^ existing) !(dav-is-child u.existing) !=(new-uid (own-uid u u.existing)))
-    (send-text eyre-id 403 'calendar: a PUT cannot change an object\'s UID (no-uid-conflict)')
   =/  hs  header-list.request.req
   =/  if-none=(unit @t)  (get-header:http 'if-none-match' hs)
   =/  if-match=(unit @t)  (get-header:http 'if-match' hs)
@@ -1864,6 +1888,12 @@
           ==
       ==
     (send-text eyre-id 412 'calendar: the object changed; fetch it again')
+  ::  after the preconditions: a client editing a stale copy hears 412,
+  ::  and fetches again
+  ?:  (lien ~(tap by entries.u.k) |=([key=@t e=entry:cal] &(!=(key u) !(dav-is-child e) =(new-uid (own-uid key e)))))
+    (send-text eyre-id 403 'calendar: another object here has this UID (no-uid-conflict)')
+  ?:  &(?=(^ existing) !(dav-is-child u.existing) !=(new-uid (own-uid u u.existing)))
+    (send-text eyre-id 403 'calendar: a PUT cannot change an object\'s UID (no-uid-conflict)')
   =/  put=(unit [k=cal:cal =uid:cal])
     (fall (mole |.((put-object u.k ves.aliased zone.c u extra.aliased))) ~)
   ?~  put  (send-text eyre-id 400 'calendar: could not read the VEVENT')
@@ -1934,6 +1964,13 @@
   =?  uid.e  =('' uid.e)  uid-hint
   =/  existing=(unit entry:cal)  (~(get by entries.k) uid.e)
   =?  e  ?=(^ existing)  e(seq seq.u.existing, event (keep-meta event.u.existing event.e))
+  ::  an object kept under another name than its UID stays so when the
+  ::  caller names no alias (a Google pull of it)
+  =/  alias=(unit [@t @t])
+    ?~  existing  ~
+    ?:  (lien extra |=([k=@t *] =('X-GRUBBERY-UID' k)))  ~
+    (get-prop:ics props.u.existing 'X-GRUBBERY-UID')
+  =?  extra  ?=(^ alias)  [u.alias extra]
   =.  props.e  (with-extra props.e extra)
   =.  e  (with-exdates e exdates.u.got)
   ::  the parent's existing skips survive a re-put (an override's moment
@@ -1981,19 +2018,28 @@
   ?~  chs  k
   ::  a child for the same moment under another RECURRENCE-ID form (Z
   ::  against TZID=UTC, one zone against another) is the same instance:
-  ::  it goes, so the moved one is not there twice
+  ::  it goes, so the moved one is not there twice. Moments compare as
+  ::  instants in the series' zone: in a spring-forward gap one side
+  ::  names the rule's 02:30 and the other the clock's 03:30
   =/  pe=(unit entry:cal)  (~(get by entries.k) parent)
   =.  k
     ?~  pe  k
+    =/  z=(unit @t)  ?.(?=(%timed -.event.u.pe) ~ zone.event.u.pe)
+    =/  instant
+      |=  m=(unit @da)
+      ^-  (unit @da)
+      ?~  m  ~
+      ?~  z  m
+      `(fall (place:rules z u.m) u.m)
     =/  olds=(list entry:cal)  (kids-of:cal k parent)
     %+  roll  `(list [ve=vevent:ics ch=entry:cal])`chs
     |=  [[* ch=entry:cal] acc=_k]
-    =/  mo=(unit @da)  (props-rid-moment props.ch event.u.pe)
+    =/  mo=(unit @da)  (instant (props-rid-moment props.ch event.u.pe))
     ?~  mo  acc
     %+  roll  olds
     |=  [o=entry:cal a2=_acc]
     ?:  =(uid.o uid.ch)  a2
-    ?.  =(mo (props-rid-moment props.o event.u.pe))  a2
+    ?.  =(mo (instant (props-rid-moment props.o event.u.pe)))  a2
     (del-entry:cal a2 uid.o)
   =.  k  (skip-instances k parent (turn chs |=([ve=vevent:ics *] extra.ve)))
   ::  a cancelled instance (STATUS:CANCELLED) is the skip alone
@@ -2853,7 +2899,8 @@
       =/  next=@t  (gs res 'nextPageToken')
       ?:  |(=('' next) (gte pages 9))  (pure:n &+acc)
       $(page next, pages +(pages))
-    ?:  ?=(%| -.got)  (send-text eyre-id p.got (crip "calendar: google answered {(a-co:co p.got)}"))
+    ::  status 0 (no answer, or no token to send) is no HTTP status
+    ?:  ?=(%| -.got)  (send-text eyre-id ?:(=(0 p.got) 502 p.got) (crip "calendar: google answered {(a-co:co p.got)}"))
     ;<  sync=json  bind:m  (google-sync '../')
     =/  linked=(map @t @t)
       %-  ~(gas by *(map @t @t))
@@ -3245,11 +3292,14 @@
   =.  ids  ids.res2
   =.  seen  (~(uni in seen) seen.res2)
   =.  had-insts  |(had-insts ?=(^ insts))
+  ::  only for what was applied: one this side could not read is read
+    ::  again by a later full listing, not taken for seen
   =.  stamps
     %+  roll  items
     |=  [g=gitem:gcal acc=_stamps]
-    ?:  cancelled.g  (~(del by acc) (item-uid g))
+    ?:  cancelled.g  (drop-stamps acc (item-uid g))
     ?:  =('' updated.g)  acc
+    ?.  (~(has by entries.k) (item-uid g))  acc
     (~(put by acc) (item-uid g) s+updated.g)
   =/  next-page=@t  (gs res 'nextPageToken')
   =/  next-tok=@t  (gs res 'nextSyncToken')
@@ -3261,19 +3311,22 @@
     %+  murn  ~(tap by entries.k)
     |=  [u=uid:cal e=entry:cal]
     ?:  |((dav-is-child e) (~(has in seen) u))  ~
+    ::  a task is never on Google (one that was an event there was taken
+    ::  off by +google-push), so a listing without it says nothing of it
+    ?:  ?=(%todo -.event.e)  ~
     ?.  (lien props.e |=([key=@t *] =('X-GOOGLE-ID' key)))  ~
     `u
   =/  gone-rows=(list [uid:cal (unit entry:cal) @t])
     (murn gone |=(u=uid:cal ?.((~(has in pending) u) ~ `[u (~(get by entries.k) u) ''])))
   =.  k  (roll gone |=([u=uid:cal acc=_k] (del-object acc u)))
-  =.  stamps  (roll gone |=([u=uid:cal acc=_stamps] (~(del by acc) u)))
+  =.  stamps  (roll gone |=([u=uid:cal acc=_stamps] (drop-stamps acc u)))
   ::  an instance that came before its parent (on an earlier page) skips
   ::  it now
   =?  k  &(last |(full had-insts))  (reskip k)
   ::  what this pull wrote is not for pushing back, nor is the local
   ::  change a clash replaced
   =/  won=(set uid:cal)
-    (~(gas in (~(gas in *(set uid:cal)) (turn clashes |=(g=gitem:gcal uid.ve.g)))) gone)
+    (~(gas in (~(gas in *(set uid:cal)) (turn clashes item-uid))) gone)
   =/  sup2=(set [@t @ud])
     (~(uni in (~(uni in sup) (wrote-between k seq-at-peek seq.k))) (rows-of k since won))
   =/  row2=json
@@ -3303,6 +3356,15 @@
   ;<  ~  bind:m  (unfault pre (cat 3 'google-pages/' id))
   (pure:m row2)
 ++  google-stop  google-stop:core
+::  +drop-stamps: a uid's Google stamp gone, and its instances' (u#...)
+++  drop-stamps
+  |=  [s=(map @t json) u=@t]
+  ^-  (map @t json)
+  =/  pre=tape  (weld (trip u) "#")
+  =/  n=@ud  (lent pre)
+  =/  kept=(map @t json)
+    (malt (skip ~(tap by s) |=([key=@t *] =(pre (scag n (trip key))))))
+  (~(del by kept) u)
 ::  +push-kids: a series' instances changed since the watermark, out as
 ::  edits of their Google instances: a pulled one's own id, else Google's
 ::  <series id>_<original start in UTC>. pgid is the series' Google id.
@@ -3391,6 +3453,7 @@
   ::  mails them; a per-edit choice if that is too chatty
   =/  q=tape  "?conferenceDataVersion=1&sendUpdates=all"
   =/  stopped=?  |
+  =|  untie=(list uid:cal)
   |-
   ?^  changes
     =/  [u=uid:cal what=?(%put %del)]  i.changes
@@ -3413,7 +3476,17 @@
       ;<  ~  bind:m
         ?:  |((lth status 300) =(404 status) =(410 status))  (pure:(fiber:fiber:nexus ,~) ~)
         (google-conflict pre id u ~ '' (crip "google refused the delete ({(a-co:co status)})"))
-      $(changes t.changes, ids (~(del by ids) u), stamps (~(del by stamps) u))
+      %=  $
+        changes  t.changes
+        ids      (~(del by ids) u)
+        stamps   (drop-stamps stamps u)
+        ::  a task that was an event there loses its Google ids, so a later
+        ::  turn back into an event goes up anew, and a listing leaves it
+        untie
+          =/  e=(unit entry:cal)  (~(get by entries.u.k) u)
+          ?.  &(?=(^ e) ?=(%todo -.event.u.e) |((lth status 300) =(404 status) =(410 status)))  untie
+          [u untie]
+      ==
     =/  e=(unit entry:cal)  (~(get by entries.u.k) u)
     ?~  e  $(changes t.changes)
     ?:  ?=(%todo -.event.u.e)  $(changes t.changes)
@@ -3509,7 +3582,8 @@
     ?~  e  acc
     ::  guests edited here while the push waited are the newer: Google's
     ::  answer does not replace them
-    =?  guests  !=(`seq.u.e (bind (~(get by entries.u.k) u) |=(b=entry:cal seq.b)))  ~
+    ::  (the event, not the seq: a kid's stamp moves its parent's seq)
+    =?  guests  !=(`event.u.e (bind (~(get by entries.u.k) u) |=(b=entry:cal event.b)))  ~
     ::  the Meet Google made is the event's join link now; a request it
     ::  left pending comes back with a later pull
     =?  u.e  !=('' join)
@@ -3534,8 +3608,14 @@
       =/  now-sent=@t  (scot %uv (sham (json-of:gcal (anchored u.e) (object-exdates u.e (kids-of:cal acc u)))))
       [['X-GOOGLE-SENT' now-sent] (skip props.u.e |=([key=@t *] =('X-GOOGLE-SENT' key)))]
     (put-entry:cal acc u.e)
+  =.  kk
+    %+  roll  untie
+    |=  [u=uid:cal acc=_kk]
+    =/  e=(unit entry:cal)  (~(get by entries.acc) u)
+    ?~  e  acc
+    (put-entry:cal acc u.e(props (skip props.u.e |=([key=@t *] =("X-GOOGLE-" (scag 9 (trip key)))))))
   ;<  ~  bind:m
-    ?~  results  (pure:(fiber:fiber:nexus ,~) ~)
+    ?:  &(?=(~ results) ?=(~ untie))  (pure:(fiber:fiber:nexus ,~) ~)
     (dav-write pre c(cals (~(put by cals.c) id kk)))
   ;<  ~  bind:m  ?:(stopped (pure:(fiber:fiber:nexus ,~) ~) (unfault pre (cat 3 'google-push/' id)))
   =/  mark=@ud  ?:(stopped since seq-before)
@@ -4126,6 +4206,19 @@
       ?~  s  |
       &(!(~(has by want) key) (~(has in wanted) [(uid-of key) u.s]))
     ?:(=(~ keep) ~ `[key [%o keep]])
+  ::  a row from before the tag holds the entry's etag then: what it
+  ::  names is what the guest has, so it takes the tag without a resend
+  =.  sent
+    %-  ~(urn by sent)
+    |=  [key=@t v=json]
+    =/  w  (~(get by want) key)
+    ?~  w  v
+    ?.  ?=([%o *] v)  v
+    :-  %o
+    %-  ~(run by p.v)
+    |=  row=json
+    ?.  =(etag.e.u.w (gs row 'etag'))  row
+    (row-put row ~[['etag' s+tag.u.w]])
   ::  every (event, ship) to tell: an invite, or a cancel
   =/  jobs=(list [key=@t to=@p cancel=?])
     %+  weld
@@ -4156,6 +4249,9 @@
     ?:  (waiting row)  ~
     `[key u.s &]
   =/  left=(list [key=@t to=@p cancel=?])  jobs
+  ::  a guest that did not answer is not tried again this pass: each
+  ::  try would wait 30 s
+  =|  down=(set @p)
   |-
   ?~  left
     ?:  =(sent (omap sj))  (pure:m ~)
@@ -4189,9 +4285,12 @@
       "the event {(trip (gs body 'name'))} is too big to send as an invitation"
       "take some of its moved occurrences or its note out; it is sent when it changes"
     ==
+  ;<  ~  bind:m  ?:(too-big (pure:(fiber:fiber:nexus ,~) ~) (unfault './' (cat 3 'invite/' uid)))
   ;<  ok=?  bind:m
     ?:  too-big  (pure:(fiber:fiber:nexus ,?) &)
+    ?:  (~(has in down) to.j)  (pure:(fiber:fiber:nexus ,?) |)
     (remote-poke-wait to.j [%& cal-instance %'shares.sig'] body)
+  =?  down  !ok  (~(put in down) to.j)
   =/  rows=(map @t json)  (omap (fall (~(get by sent) key.j) [%o ~]))
   =/  stamp  |=(et=@t (pairs:enjs:format ~[['etag' s+et] ['ok' b+ok] ['at_ms' (numb:enjs:format now-ms)]]))
   =.  rows
@@ -4212,8 +4311,10 @@
     =/  mt=meta:cal  (meta-of:cal event.x)
     =?  mt  (~(has by mt) 'ships')
       (~(put by mt) 'ships' [%a (turn (invite-ships mt) |=(s=@p s+(scot %p s)))])
+    ::  less the Google stamps, and the kids' hash (their props and
+    ::  alarms move with every push): the kids are hashed themselves
     :-  (put-meta:cal event.x mt)
-    (skip props.x |=([key=@t *] =("X-GOOGLE-" (scag 9 (trip key)))))
+    (skip props.x |=([key=@t *] |(=("X-GOOGLE-" (scag 9 (trip key))) =('X-GRUBBERY-KIDS' key))))
   (scot %uv (sham [(bare e) (turn (kids-of:cal k uid.e) bare)]))
 ::  +scag-json: the first n of a json array
 ++  scag-json
@@ -4294,11 +4395,14 @@
   =/  dir=path  /sys/gall/subs/(scot %p our)/trunk/app/grubbery/calendar
   ::  rooms to close first: one poke ends the room and its link. One
   ::  trunk did not take stays, to be closed on the next pass
+  ::  A nack is final (trunk will not take it); one not answered stops
+  ::  the closing for this pass (trunk is suspended: each would wait 30 s)
   =/  close=(list @t)  ends
   |-
   ?^  close
     ;<  done=trunk-res  bind:m  (trunk-poke [%app-room-close-as 'calendar' i.close])
-    $(close t.close, rooms ?.(?=(%sent done) rooms (~(del by rooms) i.close)))
+    =?  rooms  ?=(?(%sent %nacked) done)  (~(del by rooms) i.close)
+    $(close ?:(?=(%late done) ~ t.close))
   ?~  want
     (write-json-grub './' 'talon-rooms.json' [%o rooms])
   ::  trunk's answers come as facts kept under /sys/gall/subs: the road
@@ -4372,13 +4476,13 @@
   ;<  our=@p  bind:m  get-our:io
   ;<  now=@da  bind:m  get-time:io
   =/  w=wire  /talon-watch
+  ::  30 s at most, the timer set first, as +trunk-poke
+  ;<  ~  bind:m  (set-timer:io /trunk (add now ~s30))
   ;<  ~  bind:m
     %-  send-dart:io
     :*  %node  w  &+&+[/sys/gall %'main.sig']  %poke
         [/ %gall-poke]  [[our %grubbery] gall-watch+[our %trunk /app/grubbery/calendar]]
     ==
-  ::  30 s at most, as +trunk-poke
-  ;<  ~  bind:m  (set-timer:io /trunk (add now ~s30))
   ;<  ok=?  bind:m
     |=  input:fiber:nexus
     :+  ~  q.state
@@ -4670,11 +4774,14 @@
     ::  not one another ship shares with us: the copy would go on to it
     ?:(&((~(has by cals.c) pick) !(kind-is c pick %ship)) pick %default)
   ::  declined, or moved to another calendar: the old copy goes
+  ::  (the host's copy only, wherever the owner moved it)
   ;<  ~  bind:m
     ?:  |(=('' was) &(!=('declined' st) =(was want)))  (pure:(fiber:fiber:nexus ,~) ~)
-    =/  k=(unit cal:cal)  (~(get by cals.c) was)
-    ?~  k  (pure:(fiber:fiber:nexus ,~) ~)
-    (dav-write '../' c(cals (~(put by cals.c) was (del-object u.k (gs u.row 'uid')))))
+    =/  hit=(unit [cid=@ta e=entry:cal])  (host-copy c was (gs u.row 'uid') u.host)
+    ?~  hit  (pure:(fiber:fiber:nexus ,~) ~)
+    ?:  &(!=('declined' st) =(cid.u.hit want))  (pure:(fiber:fiber:nexus ,~) ~)
+    =/  k=cal:cal  (~(got by cals.c) cid.u.hit)
+    (dav-write '../' c(cals (~(put by cals.c) cid.u.hit (del-object k (gs u.row 'uid')))))
   =/  new=json  (row-put u.row ~[['status' s+st] ['cal' s+?:(=('declined' st) '' want)]])
   ;<  ~  bind:m  (write-json-grub '../' 'invites.json' [%o (~(put by cur) key new)])
   ;<  placed=?  bind:m
@@ -4837,7 +4944,15 @@
     ;<  offers=json  bind:m  (read-json-grub '../' 'share-offers.json')
     ;<  ~  bind:m  (write-json-grub '../' 'share-offers.json' [%o (~(del by ?:(?=([%o *] offers) p.offers ~)) key)])
     (send-json eyre-id (pairs:enjs:format ~[['ok' b+&]]))
+  ::  the owner asking is reason to ask every host again now, a host
+  ::  backed off (+back-off) included
   ?:  &(post ?=([%sync ~] rest))
+    ;<  rows=json  bind:m  (read-json-grub '../' 'ship-remotes.json')
+    ;<  ~  bind:m
+      ?:  =(~ (skim ~(val by (omap rows)) |=(r=json !=(0 (fall (gn r 'retry_ms') 0)))))
+        (pure:(fiber:fiber:nexus ,~) ~)
+      %^  write-json-grub  '../'  'ship-remotes.json'
+      [%o (~(run by (omap rows)) |=(r=json (row-put r ~[['retry_ms' (numb:enjs:format 0)]])))]
     ;<  ~  bind:m  (google-prod '../')
     (send-json eyre-id (pairs:enjs:format ~[['ok' b+&]]))
   (send-text eyre-id 404 'calendar: no such share route')
@@ -4879,7 +4994,7 @@
 ::  +queue-refusal: a refused share edit, to be said back to the peer
 ::  with the object it sent (the peer logs that, whatever its own copy is
 ::  by the time the notice comes). One row per peer, calendar and uid, the
-::  newest; at most 100, ten to a peer, the object only when it is no
+::  newest; at most 100, fifty to a peer, the object only when it is no
 ::  bigger than an invitation: a flood of refusals stays small.
 ++  queue-refusal
   |=  [to=@p cid=@ta u=@t why=@t mode=@t ics=@t]
@@ -4889,7 +5004,7 @@
   =/  same  |=(r=json &(=((gs r 'to') (scot %p to)) =((gs r 'cal') cid) =((gs r 'uid') u)))
   =/  rows=(list json)  (skip ?:(?=([%a *] q) p.q ~) same)
   =/  theirs=@ud  (lent (skim rows |=(r=json =((gs r 'to') (scot %p to)))))
-  =?  rows  (gte theirs 10)
+  =?  rows  (gte theirs 50)
     ::  the peer's oldest goes (rows run newest first)
     =/  last=(unit json)  (rear-of (skim rows |=(r=json =((gs r 'to') (scot %p to)))))
     ?~(last rows (skip rows |=(r=json =(r u.last))))
@@ -4944,11 +5059,12 @@
   ;<  w=wire  bind:m  (nonce:io /share-poke)
   ::  the /sys/gall grub consumes the request first (%pack on our wire);
   ::  the far ship's ack comes back later as a [/ %poke-ack] poke keyed
-  ::  by the same wire. A veto or our timer ends the wait with %.n.
+  ::  by the same wire. A veto or our timer ends the wait with %.n. The
+  ::  timer is set before the poke goes (+trunk-poke says why)
+  ;<  ~  bind:m  (set-timer:io /remote (add now ~s30))
   ;<  ~  bind:m
     %-  send-dart:io
     [%node w &+&+[/sys/gall %'main.sig'] %poke [[/ %gall-poke] [[target %grubbery] grubbery-load+req]]]
-  ;<  ~  bind:m  (set-timer:io /remote (add now ~s30))
   ;<  ok=?  bind:m
     |=  input:fiber:nexus
     :+  ~  q.state
@@ -5185,6 +5301,12 @@
   ::  look unchanged against the etag of our last pull and be skipped
   =/  etags=(map @t json)  (omap (obj:gcal row 'etags'))
   =/  pulled=json  (obj:gcal row 'pulled')
+  ::  what went to the host in the last day: a refusal of one is ours to
+  ::  log even when a pull has taken our copy away since
+  =/  sent=(map @t json)
+    %-  malt
+    %+  skim  ~(tap by (omap (obj:gcal row 'sent')))
+    |=([* v=json] (gth (add (fall (ni:dejs-soft:format v) 0) 86.400.000) (da-to-ms now)))
   |-
   ?^  changes
     =/  [u=uid:cal what=?(%put %del)]  i.changes
@@ -5210,7 +5332,7 @@
       ?:  =(%del what)  (~(del by etags) u)
       =/  e=(unit entry:cal)  (~(get by entries.u.k) u)
       ?~(e etags (~(put by etags) u s+etag.u.e))
-    $(changes t.changes)
+    $(changes t.changes, sent (~(put by sent) u (numb:enjs:format (da-to-ms now))))
   ;<  ~  bind:m  ?:(stopped (pure:(fiber:fiber:nexus ,~) ~) (unfault pre (cat 3 'share-push/' id)))
   =/  mark=@ud  ?:(stopped since seq.u.k)
   %-  pure:m
@@ -5218,6 +5340,7 @@
   :~  ['pushed_seq' (numb:enjs:format mark)]
       ['suppressed' (suppress-json sup mark)]
       ['etags' [%o etags]]
+      ['sent' [%o sent]]
   ==
 ::  +google-prod: wake the sync fiber (every backend) now
 ++  google-prod
@@ -5341,9 +5464,12 @@
 ::  +trunk-poke: one trunk-action poke to %trunk on this ship through the
 ::  kernel's /sys/gall service, as +remote-poke-wait. The service takes
 ::  the request (%pack on our wire) and trunk's ack comes back as a
-::  [/ %poke-ack] poke on the same wire. The wire is fixed: a nonce would
-::  ask /sys/bowl.sig. A local agent answers at once, but gall holds a
-::  poke to a suspended one, so 30 s at most: %late.
+::  [/ %poke-ack] poke on the same wire, which names the moment (a nonce
+::  would ask /sys/bowl.sig), so an ack that comes after a wait gave up is
+::  no answer to the next. A local agent answers at once, but gall holds a
+::  poke to a suspended one, so 30 s at most: %late. The timer is set
+::  before the poke goes: setting one asks /sys/behn and takes the first
+::  %pack or veto that comes, which would be the poke's.
 +$  trunk-res  ?(%sent %refused %nacked %late)
 ++  trunk-poke
   |=  act=*
@@ -5351,11 +5477,11 @@
   ^-  form:m
   ;<  our=@p  bind:m  get-our:io
   ;<  now=@da  bind:m  get-time:io
-  =/  w=wire  /trunk-notice
+  =/  w=wire  /trunk-notice/(scot %da now)
+  ;<  ~  bind:m  (set-timer:io /trunk (add now ~s30))
   ;<  ~  bind:m
     %-  send-dart:io
     [%node w &+&+[/sys/gall %'main.sig'] %poke [[/ %gall-poke] [[our %trunk] trunk-action+act]]]
-  ;<  ~  bind:m  (set-timer:io /trunk (add now ~s30))
   ;<  res=trunk-res  bind:m
     |=  input:fiber:nexus
     :+  ~  q.state

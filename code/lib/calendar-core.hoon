@@ -799,9 +799,20 @@
       ==
     ?~  fire  rest
     ?.  (in-win u.fire)  rest
+    ::  one set after the start or near the end says so, not "starting
+    ::  now"
+    =/  said=@t
+      ?:  (gth at u.fire)  body
+      ?:  (lte end u.fire)
+        ?:  =(end u.fire)  'ending now'
+        (crip "ended {(scow %ud (div (sub u.fire end) ~m1))} min ago")
+      ?:  =(at u.fire)  'starting now'
+      ?:  &(?=(%off -.trigger.i.als) end.trigger.i.als)
+        (crip "ends in {(scow %ud (div (sub end u.fire) ~m1))} min")
+      (crip "started {(scow %ud (div (sub u.fire at) ~m1))} min ago")
     :_  rest
     :+  name
-      ?:(=('' desc.i.als) body desc.i.als)
+      ?:(=('' desc.i.als) said desc.i.als)
     (crip "cal-{(trip eid.r)}-{(scow %ud idx.r)}-{(scow %ud n)}")
   =/  abs=(list [name=@t body=@t tag=@t])
     %-  zing

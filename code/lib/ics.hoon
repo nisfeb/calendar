@@ -879,13 +879,14 @@
       ?^  due.ve  `(abs u.due.ve)
       ?:  &(?=(^ start.ve) ?=(^ duration.ve))  `(add (abs u.start.ve) u.duration.ve)
       ~
-    ::  ponytail: a due with a time of day that lands on 00:00 UTC (19:00
-    ::  in New York in winter) would read as a date-only due, which this
-    ::  app keeps on UTC midnight; it is moved one second on. A flag on
-    ::  the task if a second ever matters
+    ::  ponytail: a zoned due that lands on 00:00 UTC (19:00 in New York
+    ::  in winter) would read as a date-only due, which this app keeps on
+    ::  UTC midnight; it is moved one second on. One already in UTC is
+    ::  left (this app writes a date-only due that way beside a timed
+    ::  DTSTART). A flag on the task if a second ever matters
     =/  timed=?
-      ?^  due.ve  !?=(%day -.u.due.ve)
-      &(?=(^ start.ve) !?=(%day -.u.start.ve))
+      ?^  due.ve  ?=(%local -.u.due.ve)
+      &(?=(^ start.ve) ?=(%local -.u.start.ve))
     =?  due  &(timed ?=(^ due) =(u.due (day-floor:rules u.due)))  `(add (need due) ~s1)
     =/  done=(unit @da)
       ?^  completed.ve  completed.ve
