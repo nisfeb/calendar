@@ -300,7 +300,12 @@ check('an edit without alarms keeps them', wait(lambda: alarm_ev()['meta']['name
 poke(dict(SHAPE, action='edit-event', id='edge-alarms@test', meta={'name': 'edge alarms 3'}, alarms=[{'kind': 'snooze'}]))
 poke(dict(SHAPE, action='edit-event', id='edge-alarms@test', meta={'name': 'edge alarms 4'}, alarms=[{'kind': 'before', 's': -5}]))
 poke(dict(SHAPE, action='edit-event', id='edge-alarms@test', meta={'name': 'edge alarms 5'}, alarms=[{'kind': 'at', 'desc': 'no at_ms'}]))
-time.sleep(3)
+# the last edit's refusal on record says all three were taken in, so the
+# event is read after it rather than after a fixed sleep
+def last_why():
+    out = curl('/outcomes.json')
+    return ([r['why'] for r in (out.get('refusals', []) if isinstance(out, dict) else []) if r.get('id') == 'edge-alarms@test'] or [''])[-1]
+wait(lambda: 'at_ms' in last_why())
 check('a malformed alarm refuses the whole edit', alarm_ev()['meta']['name'] == 'edge alarms 2' and alarm_ev().get('alarms') == AL, alarm_ev())
 # a refusal's reason has no way back through the poke, so it is recorded (docs/logging.md)
 out = curl('/outcomes.json')
