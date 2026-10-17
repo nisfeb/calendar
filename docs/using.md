@@ -21,50 +21,15 @@ Every event or task's form has a **Reminders** list: presets before the start (o
 
 ## Tasks
 
-The **Tasks** view (or `k`) lists what is to do in groups: Overdue, Today,
-Tomorrow, This week, Later and Undated, each with its count and folding
-(the fold is remembered in this browser). Done tasks sit underneath, the
-last week's by default; **Show all** brings the older ones back, and
-**Delete done older than a week** removes them, after a confirmation, from
-the ship and so from every CalDAV client and share. Tick a task there or in
-its popup; type at the top to add one. The last words typed can be `#tags`
-and a date: `today`, `tomorrow`, a weekday (`fri` is the coming Friday),
-`in 3 days`, `next week`, `oct 12`, `2026-10-12`; the line under the box
-shows what was read, and the date picker still works when nothing is typed.
-Keys in the view: `j`/`k` or the arrows move along the rows, `x` ticks the
-one in focus, `n` goes to the box. A task can carry a **priority** (High,
-Medium, Low in the form; `!high`, `!med`, `!low` or `!1` to `!9` in the
-box): a badge on the row, and the order inside each group, highest first.
-It is iCalendar `PRIORITY` (1 highest, 9 lowest), so Thunderbird and
-Tasks.org show the same thing.
-A task with a due date also sits on that day in the month, week and day views,
-with a box that shows whether it is done. The event form has a **Task** kind
-with the same two fields, so a task can carry a note, tags and a color like
-any event.
+The **Tasks** view (or `k`) lists what is to do in groups: Overdue, Today, Tomorrow, This week, Later and Undated, each with its count and folding (the fold is remembered in this browser). Done tasks sit underneath, the last week's by default; **Show all** brings the older ones back, and **Delete done older than a week** removes them, after a confirmation, from the ship and so from every CalDAV client and share. Tick a task there or in its popup; type at the top to add one. The last words typed can be `#tags` and a date: `today`, `tomorrow`, a weekday (`fri` is the coming Friday), `in 3 days`, `next week`, `oct 12`, `2026-10-12`; the line under the box shows what was read, and the date picker still works when nothing is typed. Keys in the view: `j`/`k` or the arrows move along the rows, `x` ticks the one in focus, `n` goes to the box. A task can carry a **priority** (High, Medium, Low in the form; `!high`, `!med`, `!low` or `!1` to `!9` in the box): a badge on the row, and the order inside each group, highest first. It is iCalendar `PRIORITY` (1 highest, 9 lowest), so Thunderbird and Tasks.org show the same thing. A task with a due date also sits on that day in the month, week and day views, with a box that shows whether it is done. The event form has a **Task** kind with the same two fields, so a task can carry a note, tags and a color like any event.
 
-Tasks are iCalendar `VTODO` (RFC 5545): `DUE` (a zoned one becomes absolute),
-`DTSTART`+`DURATION` as the due when there is no `DUE`, `STATUS` and
-`COMPLETED` in and out. A start date alone, a repeat rule (`RRULE`),
-`STATUS:IN-PROCESS` with a percent, `PRIORITY` and the rest ride verbatim and
-go back out as they came; here such a task is one item, placed by its due
-(a recurring task's per-instance overrides are not kept). A relative alarm
-on a task counts from its due moment. A calendar shared with you read-only
-refuses edits from every side: the app, CalDAV clients, and import. Over CalDAV the calendar
-advertises `VTODO` in its component set, `calendar-query` honours a
-`comp-filter` for `VTODO` or `VEVENT`, and so Thunderbird's task list, Tasks.org
-and DAVx5 see them as tasks. Google Calendar has no tasks (they live in Google
-Tasks, a separate API), so a task in a Google-linked calendar stays on this
-ship. Sharing with ships and following over CalDAV carry tasks like events.
+Tasks are iCalendar `VTODO` (RFC 5545): `DUE` (a zoned one becomes absolute), `DTSTART`+`DURATION` as the due when there is no `DUE`, `STATUS` and `COMPLETED` in and out. A due with a time of day that falls exactly on 00:00 UTC (19:00 in New York in winter) is moved one second on, since a due at UTC midnight is a date-only due here. `PRIORITY` is the task's priority: a client that leaves it out clears it. A start date alone, a repeat rule (`RRULE`), `STATUS:IN-PROCESS` with a percent and the rest ride verbatim and go back out as they came; here such a task is one item, placed by its due (a recurring task's per-instance overrides are not kept). A relative alarm on a task counts from its due moment. A calendar shared with you read-only refuses edits from every side: the app, CalDAV clients, and import. Over CalDAV the calendar advertises `VTODO` in its component set, `calendar-query` honours a `comp-filter` for `VTODO` or `VEVENT`, and so Thunderbird's task list, Tasks.org and DAVx5 see them as tasks. Google Calendar has no tasks (they live in Google Tasks, a separate API), so a task in a Google-linked calendar stays on this ship, and an event made a task is taken off Google. Sharing with ships and following over CalDAV carry tasks like events.
 
 API: `add-event` takes an optional `id`, the new event's id, chosen by the caller: a poke answers only with its ack, so a client that needs the id names it. It must not be in use and must hold no `/`, `#` or control character (at most 255 bytes); otherwise the add is refused. Without one, the ship makes an id.
 
 API: every event object (`window.json`, `events.json`, `event.json`) carries `alarms`, `[]` when there are none: `{"kind":"before","s":900,"desc":""}`, `{"kind":"at","at_ms":…,"desc":""}` or `{"kind":"offset","from":"start"|"end","after":true|false,"s":600,"desc":""}` (`s` whole seconds; `desc` verbatim, Google's method lands there). `add-event` and `edit-event` take an optional `alarms` list in the same shape: absent keeps the entry's, a list replaces them, `[]` clears them, and one that cannot be read (an unknown kind, a negative `s`, `at` without `at_ms`) refuses the whole poke, with the reason in `outcomes.json` (below). A change moves the etag and seq like any edit, so CalDAV clients and Google (which takes `before` alarms) hear of it. `config.json` carries `lead_min`, the heads-up sent before every timed event (30 by default), and `{"action":"config","lead_min":N}` sets it; `0` turns it off and leaves the alarms events carry. Gate: `scripts/edge-matrix.py`.
 
-API: every task object (`events.json`, `event.json`, `window.json` rows
-with `cat: "todo"`) carries `priority`, 0 to 9, always present (0 = none,
-1 highest). `add-event` and `edit-event` on a task take an optional
-`priority`: absent keeps it, 1 to 9 sets it, 0 clears it, anything else
-refuses the poke. It is the task's `PRIORITY` over CalDAV.
+API: every task object (`events.json`, `event.json`, `window.json` rows with `cat: "todo"`) carries `priority`, 0 to 9, always present (0 = none, 1 highest). `add-event` and `edit-event` on a task take an optional `priority`: absent keeps it, 1 to 9 sets it, 0 clears it, anything else refuses the poke. It is the task's `PRIORITY` over CalDAV.
 
 API: `outcomes.json` is the ship's record of what went wrong (`docs/logging.md`). `refusals` holds the last twenty refused pokes, newest last: `{at_ms, action, id, from, why}`, with `why` in words (an unknown alarm kind, a priority out of range, an id taken) and `from` the ship when it was a peer's share edit. A poke is acknowledged before it is read, so this is where a client reads why a change did not take. `faults` is a map of the conditions that stand now, by key (`google-auth`, `google-push/<calendar>`, `caldav-list/<calendar>`, `road/behn`, ...): `{since_ms, last_ms, count, level, said, what, remedy}`; a key is removed when its condition clears. Settings shows both under Faults and refusals.
 
@@ -107,7 +72,7 @@ A timed or all-day event has **Location** and **Guests**, and a timed one **Vide
 - **Video call**: Talon call asks this ship's trunk for a link anyone can open in a browser, with no account. The link becomes the event's join link and goes into its note, so guests who read only the note have it too. Taking the call off, or deleting the event, ends the link. Google Meet (a calendar linked to Google) asks Google for a Meet on the next sync instead. Keep the current link leaves the one the event has.
 - **What a Talon call needs** (trunk wire 19): trunk with a call server and the ship's public address set, "calendar (through grubbery)" switched on at /apps/trunk, a grubbery whose trunk mark carries app links, and the peek road `/sys/gall/subs/~your-ship/trunk/app/grubbery/calendar/` granted at /apps/grubbery/permits. Grant that road alone, not `/sys/gall/subs/`, which would let the calendar read every app's call links. Until each is in place, a fault under Settings → Faults and refusals (`talon` or `road/talon`) says which one is missing.
 
-Invitations other ships send you wait under **Settings → Invitations**; the header shows how many. Going or Maybe puts the event on the calendar you pick there, at first the one you picked for that ship last time, and tells the host. No takes it off. The host's later changes follow the copy, and your answer stays. An answer the host did not hear (it was down) is sent again an hour later, and the list says so until it is heard. A copy never sends invitations of its own nor its guests to Google, and never lands on an event of yours. The list keeps 100 invitations. When it is full, the oldest one you answered goes; when all 100 are unanswered, a new invitation is dropped.
+Invitations other ships send you wait under **Settings → Invitations**; the header shows how many. Going or Maybe puts the event on the calendar you pick there, at first the one you picked for that ship last time, and tells the host. No takes it off. The host's later changes follow the copy, and your answer stays. An answer the host did not hear (it was down) is sent again an hour later, and the list says so until it is heard. A copy never sends invitations of its own nor its guests to Google, and never lands on an event of yours. Any ship can send one, so one ship has ten unanswered at most, and the list keeps 100 that are not on a calendar. When it is full, a declined one goes, else the oldest unanswered; one you said Going or Maybe to is never dropped (its host's changes and cancel must find it), and moving its copy to another calendar keeps it tied to its host. An invitation cannot go on a calendar another ship shares with you.
 
 API: guests ride in an event's meta: `guests` (by email, each `{email, name, status, self}`, the file's and Google's), `ships` (by ship, each `{ship, status, self}`), `organizer`, `conference` (the join link), `call` (`meet` or `talon` to ask for one) and `talon_room` (the trunk room of a Talon call). `rsvp {id, status}` sets your own answer on a Google invitation. `GET /apps/calendar/invites.json` lists the invitations other ships sent, and `POST /apps/calendar/invites/answer {key, status, cal}` answers one (`accepted`, `tentative` or `declined`).
 
@@ -123,13 +88,13 @@ Settings → Calendars → **Make local** on a followed or Google calendar. It p
 
 Settings → Calendars → **Share…** on a calendar of yours (local, Google, or followed; not one another ship shared with you): name the ship (`~sampel-palnet`) and choose read-only or edit. The other ship sees an offer under Settings → Sharing with ships, and accepts or declines it. An accepted calendar appears there as a calendar of its own, marked *shared with you*; it is pulled every few minutes and on demand. With edit, their changes reach this ship within seconds and are merged like any other sync (conflicts land in the Google/CalDAV conflict list).
 
-Sharing a Google or followed calendar onward works the same way, with one thing to know: a peer with edit rights writes into that calendar on your ship, and your sync carries those edits up to Google or the source as if you made them. Two syncs in a row also means a hiccup on either can leave the peer with a stale copy until the next pass.
+Sharing a Google or followed calendar onward works the same way, with one thing to know: a peer with edit rights writes into that calendar on your ship, and your sync carries those edits up to Google or the source as if you made them. On a Google calendar the guests and organizer stay yours: a peer's edit cannot make your Google account mail anyone new. A peer's delete still cancels the meeting for its guests. Two syncs in a row also means a hiccup on either can leave the peer with a stale copy until the next pass.
 
 No passwords: the host lays two usergroups per shared calendar, `cal-<id>-read` and `cal-<id>-edit`, and grubbery's cross-ship permissions decide who may read the share and who may poke edits in. The peer keeps its own copy; a host that is down just means a stale copy until it is back.
 
 What the peer reads each pass stays small as the calendar grows. The host publishes each shared calendar twice: whole, as `shares/<id>.json` (every event's text), and as a folder, `shares/<id>/` (an `index.json` with each event's version tag and file, and one file per event). A pull reads the index, then fetches only the events whose tag moved. It reads the whole file instead on a first pull, when more than 40 events moved, or when the host has no folder it may read (a host on older code). Each accepted row in `GET /apps/calendar/share/shares.json` says how the last pull that changed something read the host (`via`: `index` or `whole`, and `fetched`). A share made before the folder existed gets it, and its groups the road to it, on the host's next pass.
 
-Sharing again with the same ship changes its mode (read to edit, or back) in place; the peer's row follows without a new offer. An edit the host refuses (the calendar became read-only, or the event could not be read) is said back to the peer, which keeps its copy in the conflict list, takes the host's copy back at once (or drops the object the host never took) and, told the calendar is read-only, stops offering edits. **Revoke** on the host stops the sync and drops the groups. The peer's copy stays, as a local calendar of theirs (the same flip as *migrate*); nothing here ever deletes a calendar for anyone.
+Sharing again with the same ship changes its mode (read to edit, or back) in place; the peer's row follows without a new offer. An edit the host refuses (the calendar became read-only, or the event could not be read) is said back to the peer, which keeps its copy in the conflict list, takes the host's copy back at once (or drops the object the host never took) and, told the calendar is read-only, stops offering edits. **Revoke** on the host stops the sync and drops the groups; revoking the last ship also takes down what was published for peers. Any ship can send offers, so one ship has 20 waiting at most. Two calendar ids that differ only in `.`, `~` or `_` against `-` would name one sharing group, so the second of them cannot be shared. The peer's copy stays, as a local calendar of theirs (the same flip as *migrate*); nothing here ever deletes a calendar for anyone.
 
 The offer rides through the ship's `/public` usergroup, so a peer must have approved the calendar's `/sys/ames/*` roads in grubbery permits, once. Refuse them and everything else still works; sharing with ships is just unavailable.
 

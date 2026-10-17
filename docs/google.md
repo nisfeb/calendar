@@ -35,9 +35,7 @@ A meeting's guests, their answers and its Meet or Zoom link come across too (bel
 ## What syncs
 
 - Every `tick_min` minutes (default 5), on **Sync now**, and right after a local change: the linked calendar is pulled with a sync token (a full listing when Google says the token expired) and local changes since the last push go out.
-- Events map by iCalendar UID. Timed, all-day, recurring (RRULE, EXDATE),
-  reminders (popup/email minutes ↔ alarms), a modified instance of a series
-  (kept as the parent plus a child; the ship shows the moved one).
+- Events map by iCalendar UID. Timed, all-day, recurring (RRULE, EXDATE), reminders (popup/email minutes ↔ alarms), a modified instance of a series (kept as the parent plus a child; the ship shows the moved one). A series made single ends the series on Google, and an event switched between all-day and timed loses the other kind's time there. Optional guests stay optional.
 - A local change goes out as one insert, patch or delete. What was pulled is never pushed back, and neither is a local change Google's copy won over in a conflict. A patch sends only what the ship models, so visibility and colors set on Google stay as they are, and a body the same as the one last sent is not sent again.
 - Guests: Google's attendees and organizer come in as the event's guests, with each one's answer and the calendar's owner marked. Guests added in the form go out as attendees. A patch names attendees only when the event names guests, since Google replaces the whole list then; an event pulled before this version has Google's list fetched and merged in first. Your own answer (Going, Maybe, No in the popup) goes back the same way.
 - Every insert, patch and delete asks `sendUpdates=all`, so Google mails the guests an invitation, a change or a cancellation, as Google's own page does when told to. Every change of a meeting you organize mails its guests.
@@ -47,17 +45,11 @@ A meeting's guests, their answers and its Meet or Zoom link come across too (bel
 
 ## Conflicts
 
-Changed on both sides between two syncs, or a push Google refused: Google's
-copy wins and the local copy is kept as ICS in the conflict log (the panel
-shows the count; Settings → Conflicts lists them with each local copy to
-download, and clears the log; `GET /apps/calendar/google/conflicts.json`
-and `POST /apps/calendar/google/conflicts/clear` do the same). The pull
-knows its own push when it comes back (Google's `updated` stamp is the one
-the push kept), so a local edit made since is not taken for a clash.
+Changed on both sides between two syncs, or a push Google refused: Google's copy wins and the local copy is kept as ICS in the conflict log (the panel shows the count; Settings → Conflicts lists them with each local copy to download, and clears the log; `GET /apps/calendar/google/conflicts.json` and `POST /apps/calendar/google/conflicts/clear` do the same). The log keeps the three newest per event. A moved instance changed on both sides is logged like its series. The pull knows what it has seen (Google's `updated` stamp, kept per event as the last push or pull left it), so its own push coming back is no clash, a local edit made since is not taken for one, and a delete whose push failed is sent again rather than brought back. An edit Google answers with a 404 (the event was deleted or moved there) is logged, not put again, and the next full pull settles it. A peer's edit to a shared calendar linked to Google keeps your guests and organizer, since Google mails whoever an event names from your account; a peer's delete still mails the guests a cancellation.
 
 ## Not synced
 
-Calendar sharing and ACLs, Google Tasks (a task in a Google-linked calendar stays on the ship; Google Calendar has no VTODO), colors beyond the calendar's own, removing a Meet link from an event, and guests on an invitation another ship sent you (a copy never sends its guests to Google).
+Calendar sharing and ACLs, moving an event between two linked Google calendars as a move (it goes as a delete and an insert, so guests get a cancellation and a new invitation), Google Tasks (a task in a Google-linked calendar stays on the ship; Google Calendar has no VTODO), colors beyond the calendar's own, removing a Meet link from an event, and guests on an invitation another ship sent you (a copy never sends its guests to Google).
 
 ## The gate
 

@@ -27,10 +27,11 @@ The set's snapshots are `golden`, `v33` and `pre-trunk` (Talon calls, below). St
 
 ## Offline tests (no ship)
 
-The Google panel's setup checks run in Node, with no ship:
+The page's checks (the Google panel's setup, and page logic such as all-day, quick-add and the call line) run in Node, with no ship:
 
 ```sh
 node tests/js/google-setup.test.cjs
+node tests/js/page-logic.test.cjs
 ```
 
 ```sh

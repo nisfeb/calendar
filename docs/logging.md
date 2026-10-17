@@ -31,9 +31,11 @@ A refused road that parks nothing is the calendar's to say, since the kernel is 
 | `google-conflicts.json` | Edits the other side won, with this ship's copy. | 500 rows, one per calendar and object. | Settings, Conflicts; `GET /apps/calendar/google/conflicts.json`. |
 | The kernel's bang on a grub | A fiber the kernel parked: a dart refused by the weir on a road the calendar does not ask softly (`/sys/push/`, `/sys/iris/`, `/sys/eyre/`), or a nexus that did not build. | One per grub. | The instance's `?info=1`; the explorer. |
 
-Fault keys: `google-auth`, `google-pull/<cal>`, `google-pages/<cal>`, `google-push/<cal>`, `caldav-list/<cal>`, `caldav-get/<cal>`, `caldav-push/<cal>`, `share-push/<cal>`, `road/behn`, `road/eyre`, `road/inbox`, `road/scry`, `road/gall`, `road/code`, `trunk-marc`, `trunk-notice`, `talon`, `road/talon`. There is no `road/bowl`: a refused clock parks the calendar before it can write one.
+Fault keys: `google-auth`, `google-pull/<cal>`, `google-pages/<cal>`, `google-push/<cal>`, `caldav-list/<cal>`, `caldav-get/<cal>`, `caldav-push/<cal>`, `share-push/<cal>`, `invite/<uid>`, `road/behn`, `road/eyre`, `road/inbox`, `road/scry`, `road/gall`, `road/code`, `trunk-marc`, `trunk-notice`, `talon`, `road/talon`. There is no `road/bowl`: a refused clock parks the calendar before it can write one.
 
 The trunk keys are the phone side of a reminder (`+trunk-wire` and `+trunk-notice`): the scry road, the gall road and the peek road to the kernel's marks asked softly, the kernel's mark for trunk missing, and a notice trunk nacked. Each is a warning, said once by the calendar (the kernel parks nothing, since no dart is hard), and cleared when the next reminder goes through. A ship with no trunk, or one older than wire 12, records nothing: that is not a fault.
+
+`invite/<uid>` is an event of yours too big to send as an invitation (over 128 KiB as ICS): a warning, said once, standing until the event changes. `google-auth` is a warning, not said, when Google could not be reached to renew the sign-in, and an error saying to reconnect when Google refused it. A trunk poke not answered in 30 s (trunk suspended) is `trunk-notice` or `talon` with that reason.
 
 The Talon keys are the call side (`+talon-pass`, trunk wire 19). `talon` is a call trunk gave no link for: trunk too old, a grubbery whose trunk mark cannot carry app links, or trunk refusing the calendar. `road/talon` is the peek road to trunk's answers refused. Each is a warning, said once with its remedy, and cleared on the next pass that gets past it.
 
