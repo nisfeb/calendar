@@ -224,7 +224,10 @@
     ==
   =/  ev=event:cal  [%timed [[/lib/rules %once] ~ ~2026.11.2..10.00.00] ~ [%dur ~h1] [~ ~] w]
   =/  out=tape  (write-entry:ics [ev 'w@test' '' 0 ~ ~] ~ ~2026.11.1)
+  ::  a line an older version kept verbatim gives way to meta's
+  =/  old=tape  (write-entry:ics [ev 'w@test' '' 0 ~ ~[['ATTENDEE;CN=Old' 'mailto:old@x.test']]] ~ ~2026.11.1)
   ;:  weld
+    (expect !>(?=(~ (find "old@x.test" old))))
     %+  expect-eq
       !>(`[%a ~[(pairs:enjs:format ~[['email' s+'doe@x.test'] ['name' s+'Doe: J'] ['status' s+'tentative']])]])
     !>((~(get by m) 'guests'))

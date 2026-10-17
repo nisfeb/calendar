@@ -669,6 +669,10 @@
           =('X-GRUBBERY-UID' k.p)
           ::  the Google ids are this ship's bookkeeping, not the event's
           =("X-GOOGLE-" (scag 9 (trip k.p)))
+          ::  a line an older version kept verbatim, now written from meta
+          &(=('ATTENDEE' (base-key k.p)) (~(has by m) 'guests'))
+          &(=('ORGANIZER' (base-key k.p)) (~(has by m) 'organizer'))
+          &(=('CONFERENCE' (base-key k.p)) (~(has by m) 'conference'))
           ::  a task's STATUS is written in its place above, done or not
           &(?=(%todo -.ev) =('STATUS' (base-key k.p)))
           ?&  ?=(%todo -.ev)  ?=(^ done.ev)
