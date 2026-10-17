@@ -2,7 +2,7 @@
 """The Google gate: both directions against scripts/fake-google.py.
 
     usage: google-matrix.py SHIP_URL COOKIE_JAR FAKE_URL
-    e.g.   google-matrix.py http://127.0.0.1:8081 wex.jar http://127.0.0.1:8092
+    e.g.   google-matrix.py http://localhost:8121 /tmp/rux.jar http://127.0.0.1:8092
 
 Configures the nexus to the fake, connects, links the fake's primary
 calendar, then: remote add (timed, all-day, weekly with a moved instance,

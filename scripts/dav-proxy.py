@@ -6,7 +6,7 @@ PROPPATCH, MKCALENDAR), so this proxy forwards those as POST with
 X-HTTP-Method-Override, the way the production nginx does. It also answers
 /.well-known/caldav with a redirect to the principal, for DAVx5 and iOS.
 
-    usage: dav-proxy.py LISTEN_PORT SHIP_URL      e.g. 8091 http://127.0.0.1:8081
+    usage: dav-proxy.py LISTEN_PORT SHIP_URL      e.g. 8091 http://localhost:8121
 """
 import sys, urllib.request, urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer

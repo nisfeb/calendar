@@ -10,7 +10,7 @@ the second case, and the next pull takes the refused object back out.
 Then how a peer reads: a big calendar comes whole the first time, and a
 change after that by the host's index and the one object that moved.
 Last, writes into another calendar while pulls land are all kept.
-PEERNAME is the peer's @p as the host names it (e.g. ~feb)."""
+PEERNAME is the peer's @p as the host names it (e.g. ~reb)."""
 import json, subprocess, sys, time
 HOST, HJ, PEER, PJ, PEERNAME = sys.argv[1:6]
 P = '/apps/shell.shell/desks/calendar.desk/desk/data/calendar.calendar_app'

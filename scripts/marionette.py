@@ -3,8 +3,8 @@ with notifications allowed and push on, the length-prefixed JSON protocol,
 and a login from a curl cookie jar. Needs firefox on the PATH.
 
     with Firefox() as ff:
-        ff.login('http://localhost:8085', 'nec.jar')
-        ff.goto('http://localhost:8085/apps/calendar')
+        ff.login('http://localhost:8121', '/tmp/rux.jar')
+        ff.goto('http://localhost:8121/apps/calendar')
         ff.js('return document.title')
 """
 import json, shutil, socket, subprocess, tempfile, time

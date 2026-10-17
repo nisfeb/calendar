@@ -10,9 +10,10 @@
 #   1. interrupts the spinning event with ^C every time the serf has been
 #      pegged for 2 s. Nothing legitimate can finish while the roads are
 #      missing, so every long event in this phase is the loop;
-#   2. in the gaps, logs in and grants every road the calendar declares
-#      (code/nex/calendar/app.hoon +weir-json) through the explorer's
-#      add-weir-road form, which sands the path without the app's help;
+#   2. in the gaps, logs in and grants the roads versions 18 and 19
+#      declared (listed below; roads added since, such as /sys/scry/, are
+#      left to the Permits page) through the explorer's add-weir-road
+#      form, which sands the path without the app's help;
 #   3. stops interrupting, so the next retransmit of the update builds and
 #      rises clean, and waits until the desk reports version 20 or later.
 #

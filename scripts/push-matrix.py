@@ -7,7 +7,7 @@ ship's reminders fiber to push it, and checks the worker showed it with the
 event's name and the alarm's text. Then turns notifications off and deletes
 the event.
 
-    usage: push-matrix.py SHIP_URL COOKIE_JAR      (e.g. http://localhost:8085 nec.jar)
+    usage: push-matrix.py SHIP_URL COOKIE_JAR      (e.g. http://localhost:8121 /tmp/rux.jar)
 
 Needs firefox on the PATH and a route to Mozilla's push service. Takes up
 to eight minutes: the fiber ticks on 5-minute marks. Exits 1 on a failure.
