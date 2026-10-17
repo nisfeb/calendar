@@ -105,8 +105,11 @@ function postJSON(path, body) {
   });
 }
 
+// the calendars as last asked for: the views wait on them, so a row
+// takes its calendar's color and read-only flag
+var calsReady = Promise.resolve();
 function loadCals() {
-  getJSON('/calendars.json')
+  calsReady = getJSON('/calendars.json')
     .then(function(list) {
       CALS = {};
       var sel = document.getElementById('f-cal'), tsel = document.getElementById('task-cal'), isel = document.getElementById('imp-cal');
@@ -124,6 +127,7 @@ function loadCals() {
       sel.value = 'default'; tsel.value = 'default'; isel.value = 'default';
     })
     .catch(function() {});
+  return calsReady;
 }
 
 // a failed load says so in the header rather than drawing an empty
@@ -133,8 +137,9 @@ function loadFailed(e) {
 }
 
 function fetchWindow(fromMs, toMs, cb) {
-  getJSON('/window.json?from=' + fromMs + '&to=' + toMs + (state.tag ? '&tag=' + encodeURIComponent(state.tag) : ''))
-    .then(function(res) {
+  Promise.all([getJSON('/window.json?from=' + fromMs + '&to=' + toMs + (state.tag ? '&tag=' + encodeURIComponent(state.tag) : '')), calsReady])
+    .then(function(got) {
+      var res = got[0];
       var rows = res.rows || [];
       CAPS = (res.caps || []).map(function(cp) {
         var m = cp.meta || {};
@@ -147,7 +152,7 @@ function fetchWindow(fromMs, toMs, cb) {
         r.note = m.note || '';
         r.location = m.location || '';
         r.conference = m.conference || '';
-        r.guests = (m.guests || []).concat(m.ships || []);
+        r.guests = objs(m.guests).concat(objs(m.ships));
         r.host = m.host || '';
         r.organizer = m.organizer || null;
         r.color = safeColor(m.color) || calColor(r.cal) || '';
@@ -231,7 +236,11 @@ function busy(btn, promise) {
 // moment the day it falls on in the calendar's zone
 function dueParts(ms) { return ms % MS_DAY === 0 ? msToUTC(ms) : parts(ms); }
 
-function isAllDay(ev) { return ev.all || (ev.r - ev.l) >= MS_DAY; }
+// the ship's flag: all-day, birthday and task rows; a timed event keeps
+// its times however long it runs
+function isAllDay(ev) { return !!ev.all; }
+// guests from another ship or a feed: only the objects in a list
+function objs(l) { return (Array.isArray(l) ? l : []).filter(function(g) { return g && typeof g === 'object'; }); }
 // all-day events live in date-space: UTC parts, no zone projection
 function evParts(ev, ms) { return ev.all ? msToUTC(ms) : parts(ms); }
 
@@ -498,7 +507,9 @@ function renderMonth(rows) {
     };
     pressable(cell, 'New event on ' + fmtDate(c));
     (byDay[ser] || [])
-      .sort(function(a, b) { return (a.cont ? 0 : a.ev.l) - (b.cont ? 0 : b.ev.l); })
+      // carried-over days first, then all-day ones, then by start: an
+      // all-day event's midnight is UTC, not this zone's
+      .sort(function(a, b) { return (b.cont - a.cont) || (b.ev.all - a.ev.all) || (a.ev.l - b.ev.l); })
       .forEach(function(en) { cell.appendChild(chipEl(en.ev, en.cont)); });
     capsOn(ser).forEach(function(cp) { cell.appendChild(capChip(cp)); });
     grid.appendChild(cell);
@@ -616,7 +627,9 @@ function renderTimeGrid(rows, n) {
   // place events
   var perDay = sers.map(function() { return []; });
   rows.forEach(function(ev) {
-    if (isAllDay(ev)) {
+    // a timed event a day or longer rides in the lane too, its chip
+    // showing its start time, not as blocks filling every column
+    if (isAllDay(ev) || ev.r - ev.l >= MS_DAY) {
       var s = pserial(evParts(ev, ev.l));
       var e = pserial(evParts(ev, Math.max(ev.l, ev.r - 1)));
       sers.forEach(function(ser, i) {
@@ -801,8 +814,9 @@ document.getElementById('v-tasks').onclick = function() { state.view = 'tasks'; 
 
 function loadTasks(cb) {
   // only the tasks: the ship filters, so a big calendar is not sent whole
-  getJSON('/events.json?cat=todo' + (state.tag ? '&tag=' + encodeURIComponent(state.tag) : ''))
-    .then(function(rows) {
+  Promise.all([getJSON('/events.json?cat=todo' + (state.tag ? '&tag=' + encodeURIComponent(state.tag) : '')), calsReady])
+    .then(function(got) {
+      var rows = got[0];
       cb((rows || []).filter(function(r) { return r.cat === 'todo'; }).map(function(r) {
         var m = r.meta || {};
         return { id: r.id, cal: r.cal, name: m.name || '', note: m.note || '', tags: m.tags || [],
@@ -927,13 +941,16 @@ document.getElementById('task-done-clear').onclick = function() {
 // quick-add: the trailing words of what was typed can be #tags and a
 // date (today, tomorrow, a weekday, "in 3 days", "next week", "oct 12",
 // 2026-10-12); the rest is the name. today is a day serial in the
-// calendar's zone. Nothing parsed = the whole text is the name.
+// calendar's zone. Nothing parsed = the whole text is the name. Words
+// that are names or plain words too ("tom", "sun", "sat") are not dates:
+// "Call Tom" stays a name, and Saturday is spelled out.
 var WDL = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+var NOT_DAYS = ['sun', 'sat'];
 var PRI_WORDS = { high: 1, h: 1, med: 5, medium: 5, m: 5, low: 9, l: 9 };
 function parseQuickTask(text, today) {
   var words = text.trim().split(/\s+/).filter(Boolean), tags = [], due = null, pri = 0;
   var dow = function(s) { return (s + 3) % 7; };   // serial 0 (1970-01-01) was a Thursday
-  var wd = function(w) { return w.length < 3 ? -1 : WDL.findIndex(function(n) { return n.indexOf(w) === 0; }); };
+  var wd = function(w) { return w.length < 3 || NOT_DAYS.indexOf(w) >= 0 ? -1 : WDL.findIndex(function(n) { return n.indexOf(w) === 0; }); };
   var mon = function(w) { return w.length < 3 ? -1 : MN.findIndex(function(n) { return n.toLowerCase().indexOf(w) === 0; }); };
   var monthDay = function(a, b) {
     var m = mon(a), dm = /^(\d{1,2})(st|nd|rd|th)?$/.exec(b);
@@ -949,8 +966,8 @@ function parseQuickTask(text, today) {
     }
     if (due !== null) break;
     var d = null, take = 1, v = words.length > 2 ? words[words.length - 2].toLowerCase() : '';
-    if (w === 'today' || w === 'tod') d = today;
-    else if (w === 'tomorrow' || w === 'tmr' || w === 'tom') d = today + 1;
+    if (w === 'today') d = today;
+    else if (w === 'tomorrow' || w === 'tmr') d = today + 1;
     else if (/^\d{4}-\d{2}-\d{2}$/.test(w)) { var p = w.split('-'); d = serial(+p[0], +p[1], +p[2]); }
     else if (wd(w) >= 0) d = today + ((wd(w) - dow(today) + 7) % 7 || 7);
     else if (v === 'next' && w === 'week') { d = today + 7; take = 2; }
@@ -1211,6 +1228,17 @@ function fillZoneSelect(sel, zs, withDefault) {
     o.textContent = z;
     sel.appendChild(o);
   });
+}
+
+// an event's zone the list lacks (not loaded, or not known here) gets an
+// option of its own, so an edit keeps it rather than the calendar's
+function keptZoneOption(z) {
+  var o = zoneSel.querySelector('option[data-kept]');
+  if (o) o.remove();
+  if (!z || [].some.call(zoneSel.options, function(x) { return x.value === z; })) return;
+  o = document.createElement('option');
+  o.value = z; o.dataset.kept = '1'; o.textContent = z === 'none' ? 'UTC' : z;
+  zoneSel.appendChild(o);
 }
 
 function loadZones() {
@@ -2011,6 +2039,7 @@ function openModal(opts) {
   var w = WD[(new Date(pserial(p) * MS_DAY).getUTCDay() + 6) % 7];
   daysDiv.querySelectorAll('.day-tog').forEach(function(t) { setTog(t, t.dataset.d === w); });
   dowSel.value = w;
+  keptZoneOption('');
   zoneSel.value = '';
   if (!calReadonly('default')) fCal.value = 'default';
   fColor.value = hex6(calColor(fCal.value));
@@ -2045,7 +2074,7 @@ function openEdit(d, target) {
   document.getElementById('f-name').value = dm.name || '';
   document.getElementById('f-note').value = dm.note || '';
   document.getElementById('f-loc').value = dm.location || '';
-  document.getElementById('f-guests').value = guestText((dm.guests || []).concat(dm.ships || []));
+  document.getElementById('f-guests').value = guestText(objs(dm.guests).concat(objs(dm.ships)));
   setCallSelect(dm);
   document.getElementById('f-tags').value = (dm.tags || []).join(', ');
   if (d.cal) fCal.value = d.cal;
@@ -2094,7 +2123,8 @@ function openEdit(d, target) {
   editCtx.startDate = ymd(sp);
   document.getElementById('f-date').value = ymd(sp);
   var atMin = (a.at !== undefined) ? a.at : (sp.hh * 60 + sp.mm);
-  document.getElementById('f-time').value = pad2(Math.floor(atMin / 60)) + ':' + pad2(atMin % 60);
+  editCtx.startTime = pad2(Math.floor(atMin / 60)) + ':' + pad2(atMin % 60);
+  document.getElementById('f-time').value = editCtx.startTime;
   // an event with a fixed end (every single one from Google, CalDAV or
   // an import) shows its length; both ends are wall clock in one zone
   document.getElementById('f-dur').value = d.fin === 'to'
@@ -2113,7 +2143,9 @@ function openEdit(d, target) {
     document.getElementById('f-yday').value = a.day || 1;
   }
   daysDiv.querySelectorAll('.day-tog').forEach(function(t) { setTog(t, (a.days || []).indexOf(t.dataset.d) >= 0); });
-  zoneSel.value = d.zone === 'none' ? 'none' : (d.zone || '');
+  var z = d.zone === 'none' ? 'none' : (d.zone || '');
+  keptZoneOption(z);
+  zoneSel.value = z;
   setCat(d.cat);
   back.classList.add('open');
 }
@@ -2212,8 +2244,8 @@ fSave.onclick = function() {
   // ships go under meta ships, which the calendar sends as invitations
   // itself; emails under meta guests, which Google mails
   var gText = document.getElementById('f-guests').value;
-  var oldGuests = (editCtx && editCtx.meta.guests) || [];
-  var oldShips = (editCtx && editCtx.meta.ships) || [];
+  var oldGuests = objs(editCtx && editCtx.meta.guests);
+  var oldShips = objs(editCtx && editCtx.meta.ships);
   if (cat !== 'todo' && cat !== 'date' && gText.split(',').map(function(x) { return x.trim(); }).filter(Boolean).join(', ') !== guestText(oldGuests.concat(oldShips))) {
     var names = gText.split(',').map(function(x) { return x.trim(); }).filter(Boolean);
     var ships = names.filter(function(x) { return x.charAt(0) === '~'; });
@@ -2384,11 +2416,17 @@ fSave.onclick = function() {
 
 // the date field follows the scope: the series' first day for all of
 // it, the tapped occurrence's day for one or from one on, so moving one
-// occurrence to another day is a change of the date
+// occurrence to another day is a change of the date. A kind whose start
+// holds the time of day (every N minutes, a kept rule) takes the
+// occurrence's time too; the others take theirs from the args
 document.querySelectorAll('input[name="scope"]').forEach(function(r) {
   r.onchange = function() {
     if (!editCtx || !editCtx.series) return;
-    document.getElementById('f-date').value = r.value === 'all' ? editCtx.startDate : ymd(editCtx.occ);
+    var all = r.value === 'all';
+    document.getElementById('f-date').value = all ? editCtx.startDate : ymd(editCtx.occ);
+    if (cat === 'timed' && timedStart(kindSel.value)) {
+      document.getElementById('f-time').value = all ? editCtx.startTime : pad2(editCtx.occ.hh) + ':' + pad2(editCtx.occ.mm);
+    }
   };
 });
 
