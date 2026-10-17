@@ -150,6 +150,8 @@
 ++  attendees-of
   |=  m=meta:cal
   ^-  (list [@t json])
+  ::  a copy of another ship's invitation is never this account's to send
+  ?:  (~(has by m) 'host')  ~
   =/  gs=(unit json)  (~(get by m) 'guests')
   ?.  ?=([~ %a *] gs)  ~
   :_  ~

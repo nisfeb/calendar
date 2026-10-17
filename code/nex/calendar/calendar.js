@@ -147,7 +147,8 @@ function fetchWindow(fromMs, toMs, cb) {
         r.note = m.note || '';
         r.location = m.location || '';
         r.conference = m.conference || '';
-        r.guests = m.guests || [];
+        r.guests = (m.guests || []).concat(m.ships || []);
+        r.host = m.host || '';
         r.organizer = m.organizer || null;
         r.color = safeColor(m.color) || calColor(r.cal) || '';
         r.tags = m.tags || [];
@@ -308,6 +309,8 @@ function showPop(ev, x, y) {
   gl.textContent = others.length ? 'Guests: ' + others.map(function(g) {
     return (g.name || g.email || g.ship) + ' (' + (GUEST_ST[g.status] || 'no answer') + ')';
   }).join(', ') : '';
+  if (ev.host) gl.textContent = 'From ' + ev.host + (gl.textContent ? '. ' + gl.textContent : '');
+  gl.style.display = gl.textContent ? '' : 'none';
   gl.style.display = others.length ? '' : 'none';
   var me = (ev.guests || []).filter(function(g) { return g.self; })[0];
   var rs = document.getElementById('pop-rsvp');
@@ -339,6 +342,12 @@ document.querySelectorAll('#pop-rsvp button').forEach(function(b) {
   b.onclick = function() {
     var t = popTarget;
     if (!t) return;
+    // a copy of another ship's invitation answers its host
+    if (t.host) {
+      postJSON('/invites/answer', { key: t.host + '/' + t.id, status: b.dataset.st, cal: t.cal })
+        .then(function(r) { if (r.ok) { hidePop(); setTimeout(refresh, 400); } });
+      return;
+    }
     poke({ action: 'rsvp', id: t.id, home: t.cal, status: b.dataset.st }, function(ok) {
       if (ok) { hidePop(); setTimeout(refresh, 400); }
     });
@@ -346,7 +355,7 @@ document.querySelectorAll('#pop-rsvp button').forEach(function(b) {
 });
 // the guests field shows the guests with an email, the owner left out
 function guestText(gs) {
-  return (gs || []).filter(function(g) { return g.email && !g.self; }).map(function(g) { return g.email; }).join(', ');
+  return (gs || []).filter(function(g) { return (g.email || g.ship) && !g.self; }).map(function(g) { return g.email || g.ship; }).join(', ');
 }
 // a recurring series: timed or all-day with a repeating kind
 function isSeries(ev) { return (ev.cat === 'timed' || ev.cat === 'allday') && ev.kind !== 'once'; }
@@ -1521,7 +1530,7 @@ function openSettings() {
   document.getElementById('dav-url').textContent = location.origin + CAL + '/dav/';
   document.getElementById('dav-new').classList.add('hidden');
   document.getElementById('google-redirect').textContent = location.origin + CAL + '/google/callback';
-  loadCalsList(); loadShares(); loadDav(); loadCdav(); loadGoogle(); loadFeeds(); loadConflicts(); loadOutcomes();
+  loadCalsList(); loadShares(); loadInvites(); loadDav(); loadCdav(); loadGoogle(); loadFeeds(); loadConflicts(); loadOutcomes();
   settingsBack.classList.add('open');
 }
 // after a save: had the ship refused it, say why. The record's times are
@@ -1706,6 +1715,44 @@ function loadShares() {
     if (!anyO) ol.innerHTML = '<div class="feed-row empty">No calendar has been shared with you.</div>';
   }).catch(function() {});
 }
+
+// invitations from other ships: answer each, picking the calendar for it
+function loadInvites() {
+  getJSON('/invites.json').then(function(rows) {
+    var list = document.getElementById('invites-list');
+    var btn = document.getElementById('invites-btn');
+    var pending = rows.filter(function(r) { return !r.status; }).length;
+    btn.textContent = pending + (pending === 1 ? ' invitation' : ' invitations');
+    btn.classList.toggle('hidden', !pending);
+    list.innerHTML = '';
+    if (!rows.length) { list.innerHTML = '<div class="feed-row empty">No invitations.</div>'; return; }
+    rows.sort(function(a, b) { return (a.start_ms || 0) - (b.start_ms || 0); }).forEach(function(r) {
+      var row = document.createElement('div'); row.className = 'feed-row';
+      var nm = document.createElement('span'); nm.className = 'fn';
+      nm.textContent = (r.name || r.uid) + ' from ' + r.host + (r.start_ms ? ', ' + fmtDate(msToUTC(r.start_ms)) : '');
+      var u = document.createElement('span'); u.className = 'fu'; u.textContent = r.status ? GUEST_ST[r.status] : 'no answer yet';
+      var sel = document.createElement('select'); sel.setAttribute('aria-label', 'Calendar for ' + (r.name || r.uid));
+      Object.keys(CALS).filter(function(id) { return !calReadonly(id); }).forEach(function(id) {
+        var o = document.createElement('option'); o.value = id; o.textContent = CALS[id].name; sel.appendChild(o);
+      });
+      sel.value = r.cal || r.route || 'default';
+      row.appendChild(nm); row.appendChild(u); row.appendChild(sel);
+      [['accepted', 'Going'], ['tentative', 'Maybe'], ['declined', 'No']].forEach(function(a) {
+        var b = document.createElement('button'); b.className = 'fx'; b.style.fontSize = '12px'; b.textContent = a[1];
+        if (r.status === a[0]) b.style.color = '#eee';
+        b.onclick = function() {
+          busy(b, postJSON('/invites/answer', { key: r.key, status: a[0], cal: sel.value }))
+            .then(function() { loadInvites(); setTimeout(refresh, 400); });
+        };
+        row.appendChild(b);
+      });
+      list.appendChild(row);
+    });
+  }).catch(function() {});
+}
+document.getElementById('invites-btn').onclick = function() {
+  openSettings(); document.getElementById('invites-sect').open = true; document.getElementById('invites-sect').scrollIntoView();
+};
 
 // following: a remote CalDAV calendar
 function loadCdav() {
@@ -1998,7 +2045,7 @@ function openEdit(d, target) {
   document.getElementById('f-name').value = dm.name || '';
   document.getElementById('f-note').value = dm.note || '';
   document.getElementById('f-loc').value = dm.location || '';
-  document.getElementById('f-guests').value = guestText(dm.guests);
+  document.getElementById('f-guests').value = guestText((dm.guests || []).concat(dm.ships || []));
   setCallSelect(dm);
   document.getElementById('f-tags').value = (dm.tags || []).join(', ');
   if (d.cal) fCal.value = d.cal;
@@ -2162,12 +2209,24 @@ fSave.onclick = function() {
   // guests, only when the field changed: an untouched field leaves meta's
   // list (and so Google's) alone. A guest kept keeps their answer; the
   // owner and guests without an email (ships) stay
+  // ships go under meta ships, which the calendar sends as invitations
+  // itself; emails under meta guests, which Google mails
   var gText = document.getElementById('f-guests').value;
   var oldGuests = (editCtx && editCtx.meta.guests) || [];
-  if (cat !== 'todo' && cat !== 'date' && gText.split(',').map(function(x) { return x.trim(); }).filter(Boolean).join(', ') !== guestText(oldGuests)) {
-    var emails = gText.split(',').map(function(x) { return x.trim(); }).filter(Boolean);
+  var oldShips = (editCtx && editCtx.meta.ships) || [];
+  if (cat !== 'todo' && cat !== 'date' && gText.split(',').map(function(x) { return x.trim(); }).filter(Boolean).join(', ') !== guestText(oldGuests.concat(oldShips))) {
+    var names = gText.split(',').map(function(x) { return x.trim(); }).filter(Boolean);
+    var ships = names.filter(function(x) { return x.charAt(0) === '~'; });
+    var emails = names.filter(function(x) { return x.charAt(0) !== '~'; });
+    var badShip = ships.filter(function(x) { return !/^~[a-z]{3,6}(-{1,2}[a-z]{6})*$/.test(x); });
+    if (badShip.length) { st.textContent = 'not a ship name: ' + badShip[0]; return; }
     var bad = emails.filter(function(e) { return !/^[^\s@,;:"<>]+@[^\s@,;:"<>]+\.[^\s@,;:"<>]+$/.test(e); });
-    if (bad.length) { st.textContent = 'not an email: ' + bad[0]; return; }
+    if (bad.length) { st.textContent = 'not an email or ship: ' + bad[0]; return; }
+    var byShip = {};
+    oldShips.forEach(function(g) { if (g.ship) byShip[g.ship] = g; });
+    var nextShips = oldShips.filter(function(g) { return g.self; });
+    ships.forEach(function(x) { var had = byShip[x]; if (!(had && had.self)) nextShips.push(had || { ship: x, status: 'needs-action' }); });
+    if (nextShips.length || oldShips.length) meta.ships = nextShips;
     if (emails.length && !(CALS[fCal.value] && CALS[fCal.value].kind === 'google')) {
       st.textContent = 'Email guests need a calendar linked to Google'; return;
     }
@@ -2179,7 +2238,7 @@ fSave.onclick = function() {
       if (had && had.self) return;
       next.push(had || { email: e, status: 'needs-action' });
     });
-    meta.guests = next;
+    if (emails.length || oldGuests.length) meta.guests = next;
   }
   // a call asked for: the calendar's sync makes it (Google makes a Meet on
   // the push). Keep leaves the link the event has
@@ -2340,6 +2399,7 @@ function boot() {
   var dt = (q.get('date') || '').split('-');
   if (v === 'month' || v === 'week' || v === 'day' || v === 'tasks') state.view = v;
   loadTags();
+  loadInvites();
   if (dt.length === 3 && +dt[0] > 1970 && +dt[1] >= 1 && +dt[1] <= 12 && +dt[2] >= 1 && +dt[2] <= 31) {
     state.y = +dt[0]; state.m = +dt[1]; state.d = +dt[2];
     load();
