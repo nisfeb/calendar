@@ -648,6 +648,9 @@
     =/  tags=(list @t)  (meta-tags:cal m)
     ?~(tags ~ ~[(line "CATEGORIES" (sep-join:rr "," (turn tags |=(t=@t (escape t)))))])
     ?:(=('' (ms 'color')) ~ ~[(line "COLOR" (escape (ms 'color')))])
+    ::  a URI, not text: no escaping, but no control characters either
+    =/  conf=tape  (skip (trip (ms 'conference')) |=(c=@t (lth c 32)))
+    ?~(conf ~ ~[(line "CONFERENCE;VALUE=URI;FEATURE=VIDEO" conf)])
     =/  pri=@ud  (meta-priority:cal m)
     ?:(=(0 pri) ~ ~[(line "PRIORITY" (a-co:co pri))])
     timing
@@ -702,8 +705,10 @@
   ?~  wall  rc
   rc(args (~(put by args.rc) 'until_naive' (numb:enjs:format (da-to-ms:cal u.wall))))
 ::  +read-meta: name, note, location, tags, color of a read component.
-::  CATEGORIES (RFC 5545) are the tags and COLOR (RFC 7986) the color;
-::  they ride in meta, not props
+::  CATEGORIES (RFC 5545) are the tags, COLOR (RFC 7986) the color and
+::  the first CONFERENCE (RFC 7986) the join link; they ride in meta, not
+::  props. ponytail: one join link; a second CONFERENCE (a dial-in, say)
+::  is not kept, keep them all in props if clients send several
 ++  read-meta
   |=  ve=vevent
   ^-  meta:cal
@@ -712,6 +717,7 @@
     %+  turn  (skim extra.ve |=(p=prop =('CATEGORIES' (base-key k.p))))
     |=(p=prop (split-categories v.p))
   =/  color=(unit prop)  (get-prop extra.ve 'COLOR')
+  =/  conf=(unit prop)  (get-prop extra.ve 'CONFERENCE')
   ::  PRIORITY (RFC 5545): 1 highest to 9 lowest; 0 or unreadable is none
   =/  pri=@ud  (fall (biff (get-prop extra.ve 'PRIORITY') |=(p=prop (rush v.p dem))) 0)
   %-  ~(gas by *(map @t json))
@@ -728,10 +734,12 @@
     ^-  (list [@t json])
     ?~(color ~ ~[['color' s+(unescape v.u.color)]])
     ^-  (list [@t json])
+    ?~(conf ~ ~[['conference' s+v.u.conf]])
+    ^-  (list [@t json])
     ?:(|(=(0 pri) (gth pri 9)) ~ ~[['priority' (numb:enjs:format pri)]])
   ==
 ::  +meta-prop: a prop read into meta, so not kept verbatim as well
-++  meta-prop  |=(p=prop ?=(?(%'CATEGORIES' %'COLOR' %'PRIORITY') (base-key k.p)))
+++  meta-prop  |=(p=prop ?=(?(%'CATEGORIES' %'COLOR' %'PRIORITY' %'CONFERENCE') (base-key k.p)))
 ::  +to-entry: a read VEVENT as an entry (uid kept, etag and seq left for
 ::  +put-entry) plus its EXDATEs as naive moments of the series (for the
 ::  caller to map to indices through the kind). ~ when there is no usable

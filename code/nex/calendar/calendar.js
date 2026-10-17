@@ -145,6 +145,8 @@ function fetchWindow(fromMs, toMs, cb) {
         var m = r.meta || {};
         r.name = m.name || '';
         r.note = m.note || '';
+        r.location = m.location || '';
+        r.conference = m.conference || '';
         r.color = safeColor(m.color) || calColor(r.cal) || '';
         r.tags = m.tags || [];
         r.alarms = r.alarms || [];
@@ -289,6 +291,15 @@ function showPop(ev, x, y) {
   var note = document.getElementById('pop-note');
   note.textContent = ev.note || '';
   note.style.display = ev.note ? '' : 'none';
+  var where = document.getElementById('pop-where');
+  where.textContent = ev.location || '';
+  where.style.display = ev.location ? '' : 'none';
+  // the join link: the event's conference, else a location that is a
+  // link. Only http(s), since a peer's share or a feed can carry anything
+  var join = [ev.conference, ev.location].filter(function(u) { return /^https?:\/\/\S+$/i.test(u || ''); })[0];
+  var pj = document.getElementById('pop-join');
+  pj.style.display = join ? '' : 'none';
+  if (join) pj.href = join;
   var pt = document.getElementById('pop-tags');
   pt.textContent = '';
   (ev.tags || []).forEach(function(t) { var sp = document.createElement('span'); sp.textContent = '#' + t; pt.appendChild(sp); });

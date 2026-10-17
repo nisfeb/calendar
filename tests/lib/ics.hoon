@@ -159,6 +159,38 @@
     (expect !>(!(meta-prop:ics ['X-KEEP' 'k'])))
   ==
 ::
+::  the join link: the first CONFERENCE (RFC 7986) read into meta, not
+::  kept verbatim as well, and written back out as a URI with no control
+::  characters, so a link cannot smuggle in a line of its own
+++  test-conference-in-and-out
+  =/  m=meta:cal  (malt `(list [@t json])`~[['name' s+'x'] ['conference' s+'https://meet.google.com/abc-defg-hij']])
+  =/  ev=event:cal  [%timed [[/lib/rules %once] ~ ~2026.11.2..10.00.00] ~ [%dur ~h1] [~ ~] m]
+  =/  out=tape  (write-entry:ics [ev 'x@test' '' 0 ~ ~] ~ ~2026.11.1)
+  =/  bad=event:cal  [%timed [[/lib/rules %once] ~ ~2026.11.2..10.00.00] ~ [%dur ~h1] [~ ~] (~(put by m) 'conference' s+'https://x.test/\0d\0aX-EVIL:1')]
+  =/  evil=tape  (write-entry:ics [bad 'x@test' '' 0 ~ ~] ~ ~2026.11.1)
+  =/  body=@t
+    %-  crip
+    %-  zing
+    %+  turn
+      :~  "BEGIN:VCALENDAR"
+          "BEGIN:VEVENT"
+          "UID:c@test"
+          "SUMMARY:c"
+          "DTSTART:20261102T100000Z"
+          "CONFERENCE;VALUE=URI;FEATURE=VIDEO;LABEL=Join:https://zoom.us/j/1"
+          "END:VEVENT"
+          "END:VCALENDAR"
+      ==
+    |=(l=tape (weld l crlf:ics))
+  =/  ves=(list vevent:ics)  (events:ics body)
+  ;:  weld
+    (expect !>(?=(^ (find "CONFERENCE;VALUE=URI;FEATURE=VIDEO:https://meet.google.com/abc-defg-hij" out))))
+    (expect !>(?=(~ (find "\0d\0aX-EVIL" evil))))
+    (expect-eq !>(1) !>((lent ves)))
+    (expect-eq !>(`s+'https://zoom.us/j/1') !>((~(get by (read-meta:ics (snag 0 ves))) 'conference')))
+    (expect !>((meta-prop:ics ['CONFERENCE;VALUE=URI' 'https://zoom.us/j/1'])))
+  ==
+::
 ::  an open task's STATUS, typed or kept from a file, is written before
 ::  its alarms either way, so an export is the same through an import
 ++  test-open-task-status-in-place

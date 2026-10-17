@@ -154,6 +154,13 @@
     ?:  =('' (str item 'recurringEventId'))  ~
     (rid-of (obj item 'originalStartTime'))
   =/  tags=@t  (str (obj (obj item 'extendedProperties') 'private') 'tags')
+  ::  the join link: the conference's video entry point (Meet, or Zoom and
+  ::  the like through their add-ons), else the bare Meet link
+  =/  join=@t
+    =/  vid=(list json)
+      %+  skim  (arr (obj item 'conferenceData') 'entryPoints')
+      |=(e=json =('video' (str e 'entryPointType')))
+    ?^(vid (str i.vid 'uri') (str item 'hangoutLink'))
   =/  extra=(list [@t @t])
     ;:  weld
       ^-  (list [@t @t])
@@ -168,6 +175,8 @@
       ==
       ^-  (list [@t @t])
       ?:(=('' tags) ~ ~[['CATEGORIES' tags]])
+      ^-  (list [@t @t])
+      ?:(=('' join) ~ ~[['CONFERENCE;VALUE=URI;FEATURE=VIDEO' join]])
       ^-  (list [@t @t])
       ?~(rid ~ ~[[key.u.rid val.u.rid]])
     ==

@@ -217,8 +217,10 @@
       (lien extra |=([x=@t *] =(x key)))
   ==
 ::  +keep-meta: a re-read event keeps what the file has no word for: meta
-::  keys ICS does not carry, and a color a client that knows no COLOR
-::  left out. Name, note, location and tags are the file's.
+::  keys ICS does not carry, and a color or join link a client that knows
+::  no COLOR or CONFERENCE left out. Name, note, location and tags are
+::  the file's. ponytail: so a join link removed at the source stays
+::  here until edited; make it the file's once clients all carry it
 ++  keep-meta
   |=  [old=event:cal new=event:cal]
   ^-  event:cal
