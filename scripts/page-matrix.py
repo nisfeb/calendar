@@ -11,7 +11,7 @@ waits on the ship before it shows: a click opens the form, a save closes
 it with a toast, a tick moves the row and a quick-add shows its row, all
 in the same turn of the page; a save the ship refuses says why. Cleans up.
 
-    usage: page-matrix.py SHIP_URL COOKIE_JAR      (e.g. http://localhost:8085 nec.jar)
+    usage: page-matrix.py SHIP_URL COOKIE_JAR      (e.g. http://localhost:8121 /tmp/rux.jar)
 """
 import sys, os, json, time, subprocess, datetime, zoneinfo
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

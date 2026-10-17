@@ -11,7 +11,7 @@ Endpoints (a subset of the real ones, same shapes):
   POST /calendar/v3/calendars/<cid>/events
   GET/PUT/PATCH/DELETE /calendar/v3/calendars/<cid>/events/<eid>   (PATCH merges; If-Match
                                                    against a newer etag is a 412)
-  POST /__control  {op: put|delete|gone|reset|state, ...}   the test's hand on the remote
+  POST /__control  {op: put|delete|gone|fail|reset|state, ...}   the test's hand on the remote
 """
 import sys, json, uuid, time, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer

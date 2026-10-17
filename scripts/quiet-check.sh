@@ -33,9 +33,10 @@ pier=$(cd "$1" && pwd); B=${2%/}; JAR=$3; shift 3
 here=$(cd "$(dirname "$0")" && pwd)
 I=/grubbery/ball/apps/shell.shell/desks/calendar.desk/desk/data/calendar.calendar_app
 WAIT=${QUIET_WAIT:-60}
-# the console pane: QUIET_PANE (e.g. 0:ryc) when the king was not started
-# with the pier as its last argument, else found by the king's tty
-king=$(pgrep -f "vere.* $(basename "$pier")/?\$" | head -1)
+# the console pane: QUIET_PANE (e.g. fleet:rux) when it is not found by the
+# king's tty. The king: the runtime, then the pier (a path, or a name in
+# its cwd), then its flags (vere-v4.6 rux --http-port 8121 --loom 32)
+king=$(pgrep -f "vere[^ ]* ([^ ]*/)?$(basename "$pier")/?( |\$)" | head -1)
 pane=${QUIET_PANE:-$(tmux list-panes -a -F '#{pane_tty} #{session_name}:#{window_index}.#{pane_index}' |
   awk -v t="$(readlink "/proc/$king/fd/0" 2>/dev/null)" '$1==t{print $2}')}
 [[ -n "$pane" ]] || { echo "no tmux pane found for $pier" >&2; exit 2; }

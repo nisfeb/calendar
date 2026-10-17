@@ -62,9 +62,11 @@ try:
   poke({'action': 'edit-event', 'id': uid, 'cat': 'todo', 'meta': {'name': 'gate urgent 2'}})
   check('edit without priority keeps it', wait(lambda: todos().get('gate urgent 2', {}).get('priority') == 1), todos().get('gate urgent 2'))
   poke({'action': 'edit-event', 'id': uid, 'cat': 'todo', 'meta': {'name': 'gate urgent 3'}, 'priority': 12})
-  time.sleep(2)
+  # its refusal on record says the edit was taken in: read the task after it
+  def refused(): return [r for r in json.loads(curl('/apps/calendar/outcomes.json')).get('refusals', []) if r.get('id') == uid]
+  wait(refused)
   check('priority 12 refuses the whole edit', 'gate urgent 2' in todos() and 'gate urgent 3' not in todos())
-  rf = [r for r in json.loads(curl('/apps/calendar/outcomes.json')).get('refusals', []) if r.get('id') == uid]
+  rf = refused()
   check('the refusal is recorded with its reason', bool(rf) and rf[-1]['why'] == 'priority is 0 to 9', rf[-1:])
   ex = curl('/apps/calendar/export.ics?cal=default')
   check('export: PRIORITY written from priority', 'PRIORITY:1' in ex[ex.find('UID:' + uid):ex.find('UID:' + uid) + 400], ex[ex.find('UID:' + uid):ex.find('UID:' + uid) + 400])

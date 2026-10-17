@@ -14,9 +14,17 @@ poke() { curl -s -m 60 -b "$J" -X POST -H 'content-type: application/json' -d "$
 has() { curl -s -m 60 -b "$J" "$B/calendars.json" | grep -q "\"id\":\"$1\""; }
 delcal() { poke "{\"action\":\"del-calendar\",\"id\":\"$1\"}"; }
 rc=0
-delcal roundtrip; delcal roundtrip-fx; sleep 3
+delcal roundtrip; delcal roundtrip-fx; delcal roundtrip-seed; sleep 3
 curl -s -m 120 -b "$J" "$B/export.ics" > "$T/a.ics"
-n=$(grep -cE '^BEGIN:(VEVENT|VTODO)' "$T/a.ics"); echo "export: $n events and tasks, $(wc -c < "$T/a.ics") bytes"; [ "$n" -gt 0 ] || { echo "ROUNDTRIP FAILED: nothing to round-trip"; exit 1; }
+n=$(grep -cE '^BEGIN:(VEVENT|VTODO)' "$T/a.ics")
+# a ship with nothing on it (a fresh snapshot) gets the fixture to round-trip
+if [ "$n" -eq 0 ]; then
+  echo "seed: $(curl -s -m 120 -b "$J" -X POST --data-binary "@$D/fixtures/roundtrip.ics" "$B/import?cal=roundtrip-seed")"
+  sleep 4
+  curl -s -m 120 -b "$J" "$B/export.ics" > "$T/a.ics"
+  n=$(grep -cE '^BEGIN:(VEVENT|VTODO)' "$T/a.ics")
+fi
+echo "export: $n events and tasks, $(wc -c < "$T/a.ics") bytes"; [ "$n" -gt 0 ] || { echo "ROUNDTRIP FAILED: nothing to round-trip"; exit 1; }
 poke '{"action":"add-calendar","id":"roundtrip","name":"roundtrip","color":"#888888"}'
 sleep 3
 # the import would make the calendar itself; a poke that did not land
@@ -36,7 +44,7 @@ curl -s -m 120 -b "$J" "$B/export.ics?cal=roundtrip-fx" | tr -d '\r' > "$T/fx.ic
 for want in 'LOCATION:Room 4' 'X-FOREIGN-PROP;LANG=en:kept verbatim' 'DESCRIPTION:two days\, with a comma' 'TRIGGER:-PT15M' 'DTSTART;TZID=America/New_York:20260921T100000' 'EXDATE:20260917T120000Z' 'COUNT=5' 'DTEND;VALUE=DATE:20260922'; do
   grep -qF "$want" "$T/fx.ics" || { echo "FAIL fixture lost: $want"; rc=1; }
 done
-delcal roundtrip; delcal roundtrip-fx; sleep 3
-if has roundtrip || has roundtrip-fx; then echo "FAIL cleanup: a roundtrip calendar is left"; rc=1; fi
+delcal roundtrip; delcal roundtrip-fx; delcal roundtrip-seed; sleep 3
+if has roundtrip || has roundtrip-fx || has roundtrip-seed; then echo "FAIL cleanup: a roundtrip calendar is left"; rc=1; fi
 [ $rc = 0 ] && echo "ROUNDTRIP PASSED" || echo "ROUNDTRIP FAILED"
 exit $rc

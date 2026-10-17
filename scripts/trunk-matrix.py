@@ -9,7 +9,7 @@ trunk's event, the event's tag, name and alarm text. Then checks the
 calendar's outcomes.json recorded no trunk fault, and cleans up.
 
     usage: trunk-matrix.py SHIP_URL COOKIE_JAR [LISTEN_PORT]
-           (e.g. http://localhost:8085 ryc.jar 8195)
+           (e.g. http://localhost:8121 /tmp/rux.jar 8195)
 
 Needs %trunk at wire 12 or later on the ship, with its notices switch on,
 and the kernel's mark for trunk. Takes up to eight minutes: the fiber ticks
@@ -91,8 +91,13 @@ if got:
           and n.get('title') == name and n.get('body') == 'e2e alarm' and got['ttl'] == '3600' and got['urgency'] == 'high')
     print('checks:', 'event', n.get('event'), '| tag', n.get('tag'), '| title ok', n.get('title') == name,
           '| body ok', n.get('body') == 'e2e alarm', '| ttl', got['ttl'], '| urgency', got['urgency'])
-faults = json.loads(curl([BASE + '/grubbery/ball' + APP + '/outcomes.json?raw=1']) or '{}').get('faults') or {}
-bad = [k for k in faults if k in ('road/scry', 'road/gall', 'road/code', 'trunk-marc', 'trunk-notice')]
+# the calendar's own route, as talon-matrix reads it; one that does not
+# answer JSON is a failure, not an empty record
+try:
+    faults = json.loads(curl([BASE + '/apps/calendar/outcomes.json'])).get('faults') or {}
+    bad = [k for k in faults if k in ('road/scry', 'road/gall', 'road/code', 'trunk-marc', 'trunk-notice')]
+except ValueError:
+    bad = ['outcomes.json unreadable']
 print('trunk faults recorded:', bad or 'none')
 ok = ok and not bad
 poke({'action': 'del-event', 'id': eid})
