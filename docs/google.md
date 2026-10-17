@@ -50,9 +50,7 @@ allows.
   CalDAV does not work: Google's CalDAV needs an OAuth sign-in, and the
   follower signs in with a password.
 
-Attendees, invitations and Meet links do not come across (see below), so a
-meeting shows without its video link unless the link is in its
-description.
+A meeting's guests, their answers and its Meet or Zoom link come across too (below).
 
 ## What syncs
 
@@ -63,7 +61,11 @@ description.
 - Events map by iCalendar UID. Timed, all-day, recurring (RRULE, EXDATE),
   reminders (popup/email minutes ↔ alarms), a modified instance of a series
   (kept as the parent plus a child; the ship shows the moved one).
-- A local change goes out as one insert, patch or delete. What was pulled is never pushed back, and neither is a local change Google's copy won over in a conflict. A patch sends only what the ship models, so guests, visibility and colors set on Google stay as they are.
+- A local change goes out as one insert, patch or delete. What was pulled is never pushed back, and neither is a local change Google's copy won over in a conflict. A patch sends only what the ship models, so visibility and colors set on Google stay as they are, and a body the same as the one last sent is not sent again.
+- Guests: Google's attendees and organizer come in as the event's guests, with each one's answer and the calendar's owner marked. Guests added in the form go out as attendees. A patch names attendees only when the event names guests, since Google replaces the whole list then; an event pulled before this version has Google's list fetched and merged in first. Your own answer (Going, Maybe, No in the popup) goes back the same way.
+- Every insert, patch and delete asks `sendUpdates=all`, so Google mails the guests an invitation, a change or a cancellation, as Google's own page does when told to. Every change of a meeting you organize mails its guests.
+- Video calls: a pulled event's Meet link (or a Zoom link and the like, through Google's add-ons) is its join link, shown as Join in the popup and carried as CONFERENCE in exports. Choosing Google Meet under Video call asks Google for a Meet on the next push (`conferenceDataVersion=1`); the link it makes comes back onto the event.
+- One occurrence moved with **Only this one** goes out as an edit of that Google instance (`<series id>_<original start in UTC>`, or the date alone for an all-day series), with its guests, and the series is not sent again.
 - A calendar Google will not let you write (a holiday calendar, one shared with you read-only) logs each refused change as a conflict and moves on; later changes still go out.
 
 ## Conflicts
@@ -78,7 +80,7 @@ the push kept), so a local edit made since is not taken for a clash.
 
 ## Not synced
 
-Attendees, invitations and Meet or other conference links (they stay on Google untouched), calendar sharing and ACLs, Google Tasks (a task in a Google-linked calendar stays on the ship; Google Calendar has no VTODO), colors beyond the calendar's own, and a local edit of a single instance of a Google series (the parent goes; the override child stays local).
+Calendar sharing and ACLs, Google Tasks (a task in a Google-linked calendar stays on the ship; Google Calendar has no VTODO), colors beyond the calendar's own, removing a Meet link from an event, and guests on an invitation another ship sent you (a copy never sends its guests to Google).
 
 ## The gate
 

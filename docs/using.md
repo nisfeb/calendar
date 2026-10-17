@@ -163,6 +163,20 @@ A count ("Ends after") is how many times the event happens, as COUNT is: a month
 
 Skipping one occurrence from its popup leaves a note with **Undo** for a few seconds (`unskip-at`, the same fields as `skip-at`). **This and following** is one action on the ship (`split-event`): the series ends before the occurrence, a new one starts on it with the form's fields, and the skips that fall after it carry over. Its count, left as it was, is what remained of the old one.
 
+**Only this one** moves or changes one occurrence. The form's date follows the choice: the series' first day for all of it, the tapped occurrence's day for one or from one on, so moving Monday's meeting to Tuesday is a change of the date. It is one action on the ship (`edit-at`: `id`, `at_ms` the occurrence's start as `skip-at` names it, and `add-event`'s fields for the new one). The occurrence becomes the series' own exception, a RECURRENCE-ID, as CalDAV clients and Google model it, so on a Google calendar the meeting moves for its guests too (docs/google.md).
+
+## Meetings
+
+A timed or all-day event has **Location** and **Guests**, and a timed one **Video call**. The popup shows the location, a **Join** button for the event's join link (or for a location that is a link), the guests with their answers, and Going, Maybe and No when you are a guest yourself.
+
+- **Guests by email** need a calendar linked to Google: Google mails the invitations and collects the answers (docs/google.md).
+- **Guests by ship** (`~sampel-palnet`) work on any calendar. The calendar sends each one an invitation over Urbit, again whenever the event changes, and a cancel when a ship is taken off or the event is deleted. A ship that is down is tried again an hour later. A ship on an older calendar takes the invitation and drops it, so an answer that never comes may mean that.
+- **Video call**: Google Meet (a calendar linked to Google) asks Google for a Meet on the next sync, and its link becomes the event's join link. Keep the current link leaves the one the event has.
+
+Invitations other ships send you wait under **Settings → Invitations**; the header shows how many. Going or Maybe puts the event on the calendar you pick there, at first the one you picked for that ship last time, and tells the host. No takes it off. The host's later changes follow the copy, and your answer stays. A copy never sends invitations of its own nor its guests to Google.
+
+API: guests ride in an event's meta: `guests` (by email, each `{email, name, status, self}`, the file's and Google's), `ships` (by ship, each `{ship, status, self}`), `organizer`, `conference` (the join link) and `call` (`meet` to ask for one). `rsvp {id, status}` sets your own answer on a Google invitation. `GET /apps/calendar/invites.json` lists the invitations other ships sent, and `POST /apps/calendar/invites/answer {key, status, cal}` answers one (`accepted`, `tentative` or `declined`).
+
 ## The same event in two calendars
 
 The same UID can live in two calendars (a meeting in your Google calendar and in a calendar a peer shares with you). Each shows as its own event. Pokes that name an event by `id` take an optional `home` (the calendar id) to say which copy; without it the first found is used. `event.json` takes `?cal=` the same way.
