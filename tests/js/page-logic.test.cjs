@@ -37,3 +37,17 @@ test('quick-add leaves names and plain words alone', () => {
   assert.equal(q('Pay rent fri').due, today + 6);
   assert.deepEqual(q('Book flights oct 20 #travel !high'), { name: 'Book flights', due: c.serial(2026, 10, 20), tags: ['travel'], priority: 1 });
 });
+
+test('a call taken off drops the join line the ship wrote, and only that', () => {
+  const url = 'https://ship.example/apps/trunk/call/e-1a2b';
+  const line = 'Join the call in any browser: ' + url;
+  assert.equal(c.dropJoinLine(line), '');
+  assert.equal(c.dropJoinLine('Agenda\n\n' + line), 'Agenda');
+  assert.equal(c.dropJoinLine('Agenda\r\n\r\n' + line), 'Agenda');
+  assert.equal(c.dropJoinLine('Agenda\n\n' + line + '\n\nBring notes'), 'Agenda\n\nBring notes');
+  assert.equal(c.dropJoinLine(line + '\n\nBring notes'), 'Bring notes');
+  assert.equal(c.dropJoinLine('Agenda\n\n' + line + '\n\n' + line.replace('1a2b', '9f')), 'Agenda');
+  assert.equal(c.dropJoinLine('Join the call in any browser: soon'), 'Join the call in any browser: soon');
+  assert.equal(c.dropJoinLine('See ' + line), 'See ' + line);
+  assert.equal(c.dropJoinLine(undefined), '');
+});

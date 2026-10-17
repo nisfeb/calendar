@@ -268,6 +268,14 @@ function pack(items) {
   });
 }
 
+// the line the ship adds to a note when trunk makes a Talon call's link
+// (app.hoon +talon-link-into), with the blank line before it. A call
+// taken off or asked for again drops it, so a note never keeps a dead
+// link or gains a second one
+function dropJoinLine(note) {
+  return (note || '').replace(/[\r\n]*^Join the call in any browser: https?:\/\/\S+$/gm, '').replace(/^[\r\n]+/, '');
+}
+
 // ---- shared chrome ------------------------------------------------
 
 var label = document.getElementById('month-label');
@@ -352,12 +360,13 @@ document.querySelectorAll('#pop-rsvp button').forEach(function(b) {
     if (!t) return;
     // a copy of another ship's invitation answers its host
     if (t.host) {
-      postJSON('/invites/answer', { key: t.host + '/' + t.id, status: b.dataset.st, cal: t.cal })
-        .then(function(r) { if (r.ok) { hidePop(); setTimeout(refresh, 400); } });
+      answerInvite({ key: t.host + '/' + t.id, status: b.dataset.st, cal: t.cal })
+        .then(function() { hidePop(); afterChange(); }, function() {});
       return;
     }
     poke({ action: 'rsvp', id: t.id, home: t.cal, status: b.dataset.st }, function(ok) {
-      if (ok) { hidePop(); setTimeout(refresh, 400); }
+      if (!ok) { toast('The ship did not answer: your answer to "' + t.name + '" was not sent'); return; }
+      hidePop(); afterChange();
     });
   };
 });
@@ -369,12 +378,26 @@ function guestText(gs) {
 function isSeries(ev) { return (ev.cat === 'timed' || ev.cat === 'allday') && ev.kind !== 'once'; }
 // after a change: the view and the tag list (a change may add a tag)
 function refresh() { loadTags(); load(); }
+// a poke is acknowledged before the ship reads it: look soon, and again
+// once a busy ship has caught up
+function afterChange() { setTimeout(load, 400); setTimeout(refresh, 2000); }
+// an answer to another ship's invitation. The ship says whether the
+// copy went on the calendar
+function answerInvite(body) {
+  return postJSON('/invites/answer', body)
+    .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(function(d) { if (!d.ok) toast('Answer kept, but the event could not go on that calendar'); return d; },
+          function(e) { toast('Could not answer (' + e.message + ')'); throw e; });
+}
 
 document.getElementById('pop-done').onclick = function() {
   if (!popTarget) return;
-  poke({ action: 'done-event', id: popTarget.id, home: popTarget.cal, done: !popTarget.done });
+  var t = popTarget;
+  poke({ action: 'done-event', id: t.id, home: t.cal, done: !t.done }, function(ok) {
+    if (!ok) toast('The ship did not answer: "' + t.name + '" is unchanged');
+    afterChange();
+  });
   hidePop();
-  setTimeout(refresh, 400);
 };
 
 document.getElementById('pop-close').onclick = hidePop;
@@ -384,13 +407,13 @@ document.getElementById('pop-skip').onclick = function() {
   // cannot skip the wrong occurrence
   var t = popTarget;
   poke({ action: 'skip-at', id: t.id, home: t.cal, start_ms: t.l }, function(ok) {
-    if (!ok) return;
+    if (!ok) { toast('The ship did not answer: "' + t.name + '" is unchanged'); return; }
     toast('Skipped "' + t.name + '" on ' + fmtDate(evParts(t, t.l)) + '.', function() {
-      poke({ action: 'unskip-at', id: t.id, home: t.cal, start_ms: t.l }, function() { setTimeout(refresh, 400); });
+      poke({ action: 'unskip-at', id: t.id, home: t.cal, start_ms: t.l }, afterChange);
     });
+    afterChange();
   });
   hidePop();
-  setTimeout(refresh, 400);
 };
 
 // a note at the foot of the page, with an undo for the change it names
@@ -411,9 +434,12 @@ document.getElementById('pop-del').onclick = function() {
     ? 'Delete "' + popTarget.name + '"?'
     : 'Delete "' + popTarget.name + '" and all its occurrences?';
   if (!confirm(q)) return;
-  poke({ action: 'del-event', id: popTarget.id, home: popTarget.cal });
+  var t = popTarget;
+  poke({ action: 'del-event', id: t.id, home: t.cal }, function(ok) {
+    if (!ok) toast('The ship did not answer: "' + t.name + '" was not deleted');
+    afterChange();
+  });
   hidePop();
-  setTimeout(refresh, 400);
 };
 document.getElementById('pop-edit').onclick = function() {
   if (!popTarget) return;
@@ -840,7 +866,7 @@ function taskRow(t) {
     renderTasks(lastTasks);
     poke({ action: 'done-event', id: t.id, home: t.cal, done: t.done }, function(ok) {
       if (!ok) toast('The ship did not answer: "' + t.name + '" is unchanged there');
-      setTimeout(load, 400);
+      afterChange();
     });
   };
   var dot = document.createElement('span'); dot.className = 't-dot'; dot.style.background = t.color || '#4a6a8a';
@@ -933,7 +959,7 @@ document.getElementById('task-done-clear').onclick = function() {
   if (!confirm('Delete ' + old.length + ' done task' + (old.length > 1 ? 's' : '') + ' finished more than a week ago? CalDAV clients and shared calendars lose them too.')) return;
   var btn = this; btn.disabled = true;
   (function next(i) {
-    if (i >= old.length) { btn.disabled = false; setTimeout(refresh, 400); return; }
+    if (i >= old.length) { btn.disabled = false; afterChange(); return; }
     poke({ action: 'del-event', id: old[i].id, home: old[i].cal }, function() { next(i + 1); });
   })(0);
 };
@@ -1016,7 +1042,7 @@ taskSave.onclick = function() {
       toast('The ship did not answer: "' + q.name + '" was not added');
       return;
     }
-    setTimeout(refresh, 400);
+    afterChange();
   });
 };
 document.getElementById('task-name').addEventListener('keydown', function(e) { if (e.key === 'Enter') taskSave.onclick(); });
@@ -1025,7 +1051,7 @@ document.getElementById('task-name').addEventListener('keydown', function(e) { i
 document.addEventListener('keydown', function(e) {
   if (e.key !== 'Escape') return;
   if (!pop.classList.contains('hidden')) { hidePop(); return; }
-  if (back.classList.contains('open')) back.classList.remove('open');
+  if (back.classList.contains('open')) closeModal();
   else if (settingsBack.classList.contains('open')) closeSettings();
 });
 
@@ -1566,7 +1592,7 @@ var saidRefusalAt = 0;
 function sayRefusal(id, since) {
   getJSON('/outcomes.json').then(function(o) {
     var r = (o.refusals || []).filter(function(x) {
-      return x.at_ms > saidRefusalAt && x.at_ms >= since - 60000 && (!id || x.id === id);
+      return x.at_ms > saidRefusalAt && x.at_ms >= since - 60000 && x.id === id;
     }).pop();
     if (!r) return;
     saidRefusalAt = r.at_ms;
@@ -1760,17 +1786,20 @@ function loadInvites() {
       var u = document.createElement('span'); u.className = 'fu';
       u.textContent = (r.status ? GUEST_ST[r.status] : 'no answer yet') + (r.status && r.told === false ? ', the host has not heard yet' : '');
       var sel = document.createElement('select'); sel.setAttribute('aria-label', 'Calendar for ' + (r.name || r.uid));
-      Object.keys(CALS).filter(function(id) { return !calReadonly(id); }).forEach(function(id) {
+      // not a calendar another ship shares with us: the ship takes no
+      // invitation onto one
+      Object.keys(CALS).filter(function(id) { return !calReadonly(id) && CALS[id].kind !== 'ship'; }).forEach(function(id) {
         var o = document.createElement('option'); o.value = id; o.textContent = CALS[id].name; sel.appendChild(o);
       });
       sel.value = r.cal || r.route || 'default';
+      if (sel.selectedIndex < 0) sel.value = 'default';
       row.appendChild(nm); row.appendChild(u); row.appendChild(sel);
       [['accepted', 'Going'], ['tentative', 'Maybe'], ['declined', 'No']].forEach(function(a) {
         var b = document.createElement('button'); b.className = 'fx'; b.style.fontSize = '12px'; b.textContent = a[1];
         if (r.status === a[0]) b.style.color = '#eee';
         b.onclick = function() {
-          busy(b, postJSON('/invites/answer', { key: r.key, status: a[0], cal: sel.value }))
-            .then(function() { loadInvites(); setTimeout(refresh, 400); });
+          busy(b, answerInvite({ key: r.key, status: a[0], cal: sel.value }))
+            .then(function() { loadInvites(); afterChange(); }, function() {});
         };
         row.appendChild(b);
       });
@@ -2007,7 +2036,21 @@ function setPriSelect(p) {
   sel.value = String(p || 0);
 }
 
+// the editor opens and closes through these. A click just after it
+// closed (the second of a double-clicked Save) lands on the grid, and
+// must not open a blank one there
+var modalClosedAt = 0;
+function showModal() {
+  fSave.disabled = false;
+  back.classList.add('open');
+}
+function closeModal() {
+  back.classList.remove('open');
+  modalClosedAt = Date.now();
+}
+
 function openModal(opts) {
+  if (Date.now() - modalClosedAt < 400) return;
   opts = opts || {};
   editCtx = null;
   fAlarms = [];
@@ -2048,7 +2091,7 @@ function openModal(opts) {
   document.getElementById('f-done').checked = false;
   document.getElementById('f-status').textContent = '';
   setCat(opts.cat || 'timed');
-  back.classList.add('open');
+  showModal();
 }
 
 function msToUTC(ms) {
@@ -2103,14 +2146,14 @@ function openEdit(d, target) {
     document.getElementById('f-days-n').value = 1;
     document.getElementById('f-count').value = 0;
     setCat('todo');
-    back.classList.add('open');
+    showModal();
     return;
   }
   if (d.cat === 'date') {
     document.getElementById('f-bmonth').value = d.month || 1;
     document.getElementById('f-bday').value = d.day || 1;
     setCat('date');
-    back.classList.add('open');
+    showModal();
     return;
   }
   // a rule the form can build shows in its fields; any other rides as is
@@ -2147,7 +2190,7 @@ function openEdit(d, target) {
   keptZoneOption(z);
   zoneSel.value = z;
   setCat(d.cat);
-  back.classList.add('open');
+  showModal();
 }
 
 document.getElementById('add-btn').onclick = function() { openModal(); };
@@ -2155,8 +2198,8 @@ document.getElementById('add-btn').onclick = function() { openModal(); };
 // the other
 document.getElementById('f-until').addEventListener('input', function(e) { if (e.target.value) document.getElementById('f-count').value = 0; });
 document.getElementById('f-count').addEventListener('input', function(e) { if (+e.target.value) document.getElementById('f-until').value = ''; });
-document.getElementById('modal-close').onclick = function() { back.classList.remove('open'); };
-backdropClose(back, function() { back.classList.remove('open'); });
+document.getElementById('modal-close').onclick = function() { closeModal(); };
+backdropClose(back, function() { closeModal(); });
 
 // an RRULE as the form's own repeat, when it is one the form builds:
 // daily, weekly on days, monthly on a day or an nth weekday, yearly on a
@@ -2282,6 +2325,8 @@ fSave.onclick = function() {
     }
     if (call) meta.call = call; else delete meta.call;
     delete meta.conference; delete meta.talon_room;
+    meta.note = dropJoinLine(meta.note);
+    if (!meta.note) delete meta.note;
   }
   var tags = parseTags(document.getElementById('f-tags').value);
   if (tags.length) meta.tags = tags; else delete meta.tags;
@@ -2338,8 +2383,12 @@ fSave.onclick = function() {
     }
   }
 
-  var savedId = editCtx ? editCtx.id : '', savedAt = Date.now();
+  // a new event's id is made here, so a refusal on record can be matched
+  // to it and not to someone else's change
+  if (!editCtx) body.id = Date.now().toString(36) + Math.random().toString(36).slice(2, 10) + '@' + (CFG.ship || 'calendar');
+  var savedId = editCtx ? editCtx.id : body.id, savedAt = Date.now();
   var finish = function(ok) {
+    fSave.disabled = false;
     if (!ok) {
       // the ship did not take it. The form comes back as it was left,
       // unless another edit has been opened since
@@ -2353,13 +2402,15 @@ fSave.onclick = function() {
     }
     st.textContent = '';
     toast('Saved "' + name + '"');
-    setTimeout(refresh, 400);
+    afterChange();
     // a poke is acknowledged before it is read; had the ship refused it,
     // the reason is in its record
     setTimeout(function() { sayRefusal(savedId, savedAt); }, 1500);
   };
-  // the form closes and says so at once; the ship is told behind it
-  back.classList.remove('open');
+  // the form closes and says so at once; the ship is told behind it.
+  // Save stays off until the ship has the change
+  fSave.disabled = true;
+  closeModal();
   toast('Saving "' + name + '"…');
   if (cat === 'todo' && state.view === 'tasks') {
     var cur = editCtx && lastTasks.filter(function(t) { return t.id === editCtx.id && t.cal === editCtx.home; })[0];
@@ -2429,6 +2480,17 @@ document.querySelectorAll('input[name="scope"]').forEach(function(r) {
     }
   };
 });
+
+// the page stays current while it is open: changes from Google, CalDAV
+// and peers, new invitations, a new day. Not while something is open
+// that a redraw would disturb
+function wake() {
+  if (!state.y || document.hidden || !pop.classList.contains('hidden') ||
+      back.classList.contains('open') || settingsBack.classList.contains('open')) return;
+  refresh(); loadInvites();
+}
+document.addEventListener('visibilitychange', wake);
+setInterval(wake, 5 * 60000);
 
 // ---- boot ---------------------------------------------------------
 
