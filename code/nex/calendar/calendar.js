@@ -69,6 +69,9 @@ function fmtDate(p) {
   return WDS[dow] + ', ' + MN[p.m - 1].slice(0, 3) + ' ' + p.d;
 }
 
+// a moment as Settings shows it: in the calendar's zone, like the views
+function stamp(ms) { var p = parts(ms); return fmtDate(p) + ', ' + fmtTime(p); }
+
 // ISO 8601 week number: the week of its Thursday, weeks start Monday
 function isoWeek(ser) {
   var dow = (new Date(ser * MS_DAY).getUTCDay() + 6) % 7;
@@ -105,8 +108,11 @@ function postJSON(path, body) {
   });
 }
 
+// the calendars as last asked for: the views wait on them, so a row
+// takes its calendar's color and read-only flag
+var calsReady = Promise.resolve();
 function loadCals() {
-  getJSON('/calendars.json')
+  calsReady = getJSON('/calendars.json')
     .then(function(list) {
       CALS = {};
       var sel = document.getElementById('f-cal'), tsel = document.getElementById('task-cal'), isel = document.getElementById('imp-cal');
@@ -124,6 +130,7 @@ function loadCals() {
       sel.value = 'default'; tsel.value = 'default'; isel.value = 'default';
     })
     .catch(function() {});
+  return calsReady;
 }
 
 // a failed load says so in the header rather than drawing an empty
@@ -133,8 +140,9 @@ function loadFailed(e) {
 }
 
 function fetchWindow(fromMs, toMs, cb) {
-  getJSON('/window.json?from=' + fromMs + '&to=' + toMs + (state.tag ? '&tag=' + encodeURIComponent(state.tag) : ''))
-    .then(function(res) {
+  Promise.all([getJSON('/window.json?from=' + fromMs + '&to=' + toMs + (state.tag ? '&tag=' + encodeURIComponent(state.tag) : '')), calsReady])
+    .then(function(got) {
+      var res = got[0];
       var rows = res.rows || [];
       CAPS = (res.caps || []).map(function(cp) {
         var m = cp.meta || {};
@@ -144,10 +152,10 @@ function fetchWindow(fromMs, toMs, cb) {
       rows.forEach(function(r) {
         var m = r.meta || {};
         r.name = m.name || '';
-        r.note = m.note || '';
+        r.note = noteText(m.note);
         r.location = m.location || '';
         r.conference = m.conference || '';
-        r.guests = (m.guests || []).concat(m.ships || []);
+        r.guests = objs(m.guests).concat(objs(m.ships));
         r.host = m.host || '';
         r.organizer = m.organizer || null;
         r.color = safeColor(m.color) || calColor(r.cal) || '';
@@ -157,6 +165,29 @@ function fetchWindow(fromMs, toMs, cb) {
       cb(rows);
     })
     .catch(function(e) { loadFailed(e); cb(null); });
+}
+
+// a note from Google is often HTML: its text for display, a link's
+// address kept beside its words. Parsed, never put in the page as HTML
+function noteText(s) {
+  if (typeof s !== 'string') return '';
+  if (!/<[a-z\/!][^>]*>/i.test(s)) return s;
+  var doc = new DOMParser().parseFromString(s.replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|div|li)>/gi, '$&\n'), 'text/html');
+  doc.querySelectorAll('a[href]').forEach(function(a) {
+    var href = a.getAttribute('href');
+    if (/^https?:\/\//i.test(href) && a.textContent.trim() !== href) a.textContent += ' (' + href + ')';
+  });
+  return doc.body.textContent.trim();
+}
+// text with its http(s) links made links, built node by node
+function linkify(el, text) {
+  el.textContent = '';
+  text.split(/(https?:\/\/[^\s<>"()]*[^\s<>"().,;:!?])/i).forEach(function(bit, i) {
+    if (!(i % 2)) { if (bit) el.appendChild(document.createTextNode(bit)); return; }
+    var a = document.createElement('a');
+    a.href = bit; a.textContent = bit; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    el.appendChild(a);
+  });
 }
 
 function capsOn(ser) {
@@ -231,7 +262,11 @@ function busy(btn, promise) {
 // moment the day it falls on in the calendar's zone
 function dueParts(ms) { return ms % MS_DAY === 0 ? msToUTC(ms) : parts(ms); }
 
-function isAllDay(ev) { return ev.all || (ev.r - ev.l) >= MS_DAY; }
+// the ship's flag: all-day, birthday and task rows; a timed event keeps
+// its times however long it runs
+function isAllDay(ev) { return !!ev.all; }
+// guests from another ship or a feed: only the objects in a list
+function objs(l) { return (Array.isArray(l) ? l : []).filter(function(g) { return g && typeof g === 'object'; }); }
 // all-day events live in date-space: UTC parts, no zone projection
 function evParts(ev, ms) { return ev.all ? msToUTC(ms) : parts(ms); }
 
@@ -259,13 +294,35 @@ function pack(items) {
   });
 }
 
+// text on a color: near-black on a light one, white on a dark one, by
+// WCAG luminance (Google's pale colors fail with white)
+function ink(c) {
+  var h = safeColor(c).slice(1);
+  if (h.length < 6) h = h.replace(/./g, '$&$&');
+  var l = [0, 2, 4].map(function(i) {
+    var v = parseInt(h.substr(i, 2), 16) / 255;
+    return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * l[0] + 0.7152 * l[1] + 0.0722 * l[2] > 0.19 ? '#111' : '#fff';
+}
+
+// the line the ship adds to a note when trunk makes a Talon call's link
+// (app.hoon +talon-link-into), with the blank line before it. A call
+// taken off or asked for again drops it, so a note never keeps a dead
+// link or gains a second one
+function dropJoinLine(note) {
+  return (note || '').replace(/[\r\n]*^Join the call in any browser: https?:\/\/\S+$/gm, '').replace(/^[\r\n]+/, '');
+}
+
 // ---- shared chrome ------------------------------------------------
 
 var label = document.getElementById('month-label');
 var pop = document.getElementById('pop');
 var popTarget = null;
 
+var popOpener = null;
 function showPop(ev, x, y) {
+  if (!pop.contains(document.activeElement)) popOpener = document.activeElement;
   popTarget = ev;
   document.getElementById('pop-name').textContent = ev.name;
   document.getElementById('pop-dot').style.background = ev.color || '#4a6a8a';
@@ -289,10 +346,13 @@ function showPop(ev, x, y) {
     text = fmtDate(s) + ' ' + fmtTimeLong(s) + ' – ' + fmtDate(e) + ' ' + fmtTimeLong(e);
   }
   document.getElementById('pop-time').textContent = text;
+  var pc = document.getElementById('pop-cal');
+  pc.textContent = CALS[ev.cal] ? CALS[ev.cal].name || ev.cal : '';
+  pc.style.display = pc.textContent ? '' : 'none';
   document.getElementById('pop-alarms').textContent =
     (ev.alarms || []).length ? 'Reminders: ' + ev.alarms.map(function(a) { return alarmText(a, ev.cat); }).join(', ') : '';
   var note = document.getElementById('pop-note');
-  note.textContent = ev.note || '';
+  linkify(note, ev.note || '');
   note.style.display = ev.note ? '' : 'none';
   var where = document.getElementById('pop-where');
   where.textContent = ev.location || '';
@@ -300,9 +360,13 @@ function showPop(ev, x, y) {
   // the join link: the event's conference, else a location that is a
   // link. Only http(s), since a peer's share or a feed can carry anything
   var join = [ev.conference, ev.location].filter(function(u) { return /^https?:\/\/\S+$/i.test(u || ''); })[0];
+  // it says where it goes: a peer's link can name any host
   var pj = document.getElementById('pop-join');
   pj.style.display = join ? '' : 'none';
-  if (join) pj.href = join;
+  if (join) {
+    pj.href = join; pj.title = join;
+    try { pj.textContent = 'Join (' + new URL(join).hostname + ')'; } catch (e) { pj.textContent = 'Join'; }
+  }
   // the guests and their answers, the owner's own answer as buttons
   var gl = document.getElementById('pop-guests');
   var others = (ev.guests || []).filter(function(g) { return !g.self; });
@@ -331,11 +395,31 @@ function showPop(ev, x, y) {
   pdel.style.display = ro ? 'none' : '';
   pdel.textContent = series ? 'Delete series' : 'Delete';
   pop.classList.remove('hidden');
-  var pw = 290, ph = 170;
-  pop.style.left = Math.min(x, window.innerWidth - pw - 8) + 'px';
-  pop.style.top = Math.min(y, window.innerHeight - ph - 8) + 'px';
+  // its real size: guests, answers and a note make it tall (CSS caps it
+  // at the window and lets it scroll)
+  pop.style.left = Math.max(8, Math.min(x, window.innerWidth - pop.offsetWidth - 8)) + 'px';
+  pop.style.top = Math.max(8, Math.min(y, window.innerHeight - pop.offsetHeight - 8)) + 'px';
+  pop.focus({ preventScroll: true });
 }
-function hidePop() { pop.classList.add('hidden'); popTarget = null; }
+// focus goes back to the chip that opened it, unless it has moved on
+function hidePop() {
+  var inside = pop.contains(document.activeElement);
+  pop.classList.add('hidden'); popTarget = null;
+  if (inside && popOpener && document.contains(popOpener)) popOpener.focus();
+}
+// Tab stays inside an open dialog
+function trapTab(box) {
+  box.addEventListener('keydown', function(e) {
+    if (e.key !== 'Tab') return;
+    var f = [].filter.call(box.querySelectorAll('button, input, select, textarea, a[href], summary, [tabindex="0"]'),
+      function(el) { return !el.disabled && el.offsetParent !== null; });
+    if (!f.length) return;
+    var first = f[0], last = f[f.length - 1];
+    if (e.shiftKey && (document.activeElement === first || document.activeElement === box)) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  });
+}
+trapTab(pop);
 var GUEST_ST = { accepted: 'going', tentative: 'maybe', declined: 'not going', 'needs-action': 'no answer' };
 document.querySelectorAll('#pop-rsvp button').forEach(function(b) {
   b.onclick = function() {
@@ -343,12 +427,13 @@ document.querySelectorAll('#pop-rsvp button').forEach(function(b) {
     if (!t) return;
     // a copy of another ship's invitation answers its host
     if (t.host) {
-      postJSON('/invites/answer', { key: t.host + '/' + t.id, status: b.dataset.st, cal: t.cal })
-        .then(function(r) { if (r.ok) { hidePop(); setTimeout(refresh, 400); } });
+      answerInvite({ key: t.host + '/' + t.id, status: b.dataset.st, cal: t.cal })
+        .then(function() { hidePop(); afterChange(); }, function() {});
       return;
     }
     poke({ action: 'rsvp', id: t.id, home: t.cal, status: b.dataset.st }, function(ok) {
-      if (ok) { hidePop(); setTimeout(refresh, 400); }
+      if (!ok) { toast('The ship did not answer: your answer to "' + t.name + '" was not sent'); return; }
+      hidePop(); afterChange();
     });
   };
 });
@@ -360,12 +445,28 @@ function guestText(gs) {
 function isSeries(ev) { return (ev.cat === 'timed' || ev.cat === 'allday') && ev.kind !== 'once'; }
 // after a change: the view and the tag list (a change may add a tag)
 function refresh() { loadTags(); load(); }
+// a poke is acknowledged before the ship reads it: look soon, and again
+// once a busy ship has caught up.
+// ponytail: fixed timers; poll the calendar's seq in calendars.json if a
+// busy ship still shows stale after 2 s
+function afterChange() { setTimeout(load, 400); setTimeout(refresh, 2000); }
+// an answer to another ship's invitation. The ship says whether the
+// copy went on the calendar
+function answerInvite(body) {
+  return postJSON('/invites/answer', body)
+    .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(function(d) { if (!d.ok) toast('Answer kept, but the event could not go on that calendar'); return d; },
+          function(e) { toast('Could not answer (' + e.message + ')'); throw e; });
+}
 
 document.getElementById('pop-done').onclick = function() {
   if (!popTarget) return;
-  poke({ action: 'done-event', id: popTarget.id, home: popTarget.cal, done: !popTarget.done });
+  var t = popTarget;
+  poke({ action: 'done-event', id: t.id, home: t.cal, done: !t.done }, function(ok) {
+    if (!ok) toast('The ship did not answer: "' + t.name + '" is unchanged');
+    afterChange();
+  });
   hidePop();
-  setTimeout(refresh, 400);
 };
 
 document.getElementById('pop-close').onclick = hidePop;
@@ -375,22 +476,23 @@ document.getElementById('pop-skip').onclick = function() {
   // cannot skip the wrong occurrence
   var t = popTarget;
   poke({ action: 'skip-at', id: t.id, home: t.cal, start_ms: t.l }, function(ok) {
-    if (!ok) return;
-    toast('Skipped "' + t.name + '" on ' + fmtDate(evParts(t, t.l)) + '.', function() {
-      poke({ action: 'unskip-at', id: t.id, home: t.cal, start_ms: t.l }, function() { setTimeout(refresh, 400); });
+    if (!ok) { toast('The ship did not answer: "' + t.name + '" is unchanged'); return; }
+    toast('Deleted "' + t.name + '" on ' + fmtDate(evParts(t, t.l)) + '.', function() {
+      poke({ action: 'unskip-at', id: t.id, home: t.cal, start_ms: t.l }, afterChange);
     });
+    afterChange();
   });
   hidePop();
-  setTimeout(refresh, 400);
 };
 
 // a note at the foot of the page, with an undo for the change it names
 var toastTimer = null;
-function toast(text, undo) {
+function toast(text, undo, label) {
   var el = document.getElementById('toast');
   document.getElementById('toast-text').textContent = text;
   var b = document.getElementById('toast-undo');
   b.style.display = undo ? '' : 'none';
+  b.textContent = label || 'Undo';
   b.onclick = function() { el.classList.add('hidden'); if (undo) undo(); };
   el.classList.remove('hidden');
   clearTimeout(toastTimer);
@@ -402,9 +504,12 @@ document.getElementById('pop-del').onclick = function() {
     ? 'Delete "' + popTarget.name + '"?'
     : 'Delete "' + popTarget.name + '" and all its occurrences?';
   if (!confirm(q)) return;
-  poke({ action: 'del-event', id: popTarget.id, home: popTarget.cal });
+  var t = popTarget;
+  poke({ action: 'del-event', id: t.id, home: t.cal }, function(ok) {
+    if (!ok) toast('The ship did not answer: "' + t.name + '" was not deleted');
+    afterChange();
+  });
   hidePop();
-  setTimeout(refresh, 400);
 };
 document.getElementById('pop-edit').onclick = function() {
   if (!popTarget) return;
@@ -426,6 +531,7 @@ function chipEl(ev, cont) {
   var chip = document.createElement('div');
   chip.className = 'chip' + (cont ? ' cont' : '') + (ev.cat === 'todo' && ev.done ? ' todo-done' : '');
   chip.style.background = ev.color || '#4a6a8a';
+  chip.style.color = ink(ev.color || '#4a6a8a');
   var nm = ev.cat === 'todo' ? (ev.done ? '☑ ' : '☐ ') + (ev.priority && ev.priority <= 4 ? '! ' : '') + ev.name : ev.name;
   chip.textContent = cont ? '· ' + nm
     : ev.all ? nm : fmtTime(parts(ev.l)) + ' ' + nm;
@@ -440,6 +546,7 @@ function chipEl(ev, cont) {
 // ---- month view ---------------------------------------------------
 
 var grid = document.getElementById('grid');
+var narrow = window.matchMedia('(max-width: 600px)');
 document.getElementById('dow-row').innerHTML =
   '<div class="dow wk-stub"></div>' +
   WDS.map(function(d) { return '<div class="dow">' + d + '</div>'; }).join('');
@@ -494,11 +601,15 @@ function renderMonth(rows) {
     if (ser === today) cell.setAttribute('aria-current', 'date');
     cell.onclick = function(e) {
       if (e.target !== cell) return;
+      // a phone's cells are too small for their chips: a tap opens the day
+      if (narrow.matches) { state.view = 'day'; state.y = c.y; state.m = c.m; state.d = c.d; load(); return; }
       openModal({ date: c, kind: 'once' });
     };
-    pressable(cell, 'New event on ' + fmtDate(c));
+    pressable(cell, (narrow.matches ? 'Open ' : 'New event on ') + fmtDate(c));
     (byDay[ser] || [])
-      .sort(function(a, b) { return (a.cont ? 0 : a.ev.l) - (b.cont ? 0 : b.ev.l); })
+      // carried-over days first, then all-day ones, then by start: an
+      // all-day event's midnight is UTC, not this zone's
+      .sort(function(a, b) { return (b.cont - a.cont) || (b.ev.all - a.ev.all) || (a.ev.l - b.ev.l); })
       .forEach(function(en) { cell.appendChild(chipEl(en.ev, en.cont)); });
     capsOn(ser).forEach(function(cp) { cell.appendChild(capChip(cp)); });
     grid.appendChild(cell);
@@ -507,27 +618,44 @@ function renderMonth(rows) {
 }
 
 // a day with more chips than fit hides the last ones behind "+N more",
-// which opens the day
+// which opens the day. Measured all at once, then hidden all at once:
+// a busy month lays out twice, not once per hidden chip
 function clipCells() {
-  grid.querySelectorAll('.cell').forEach(function(cell) {
-    var chips = [].slice.call(cell.querySelectorAll('.chip'));
-    if (!chips.length || cell.scrollHeight <= cell.clientHeight) return;
+  var over = [].filter.call(grid.querySelectorAll('.cell'), function(cell) {
+    return cell.querySelector('.chip') && cell.scrollHeight > cell.clientHeight;
+  });
+  if (!over.length) return;
+  var cs = getComputedStyle(over[0]);
+  var pad = parseFloat(cs.paddingBottom) || 0, gap = parseFloat(cs.rowGap) || 0;
+  var mores = over.map(function(cell) {
     var more = document.createElement('div');
     more.className = 'more';
-    cell.appendChild(more);
-    var hid = 0;
-    while (cell.scrollHeight > cell.clientHeight && hid < chips.length) {
-      chips[chips.length - 1 - hid].style.display = 'none';
-      hid++;
-      more.textContent = '+' + hid + ' more';
-    }
+    more.textContent = '+0 more';   // a line to measure
     more.onclick = function(e) { e.stopPropagation(); cell.querySelector('.dnum').click(); };
-    pressable(more);
+    cell.appendChild(pressable(more));
+    return more;
+  });
+  // the chips that end above the "+N more" line stay
+  var keep = over.map(function(cell, i) {
+    var floor = cell.getBoundingClientRect().top + cell.clientTop + cell.clientHeight - pad - gap - mores[i].offsetHeight;
+    var chips = cell.querySelectorAll('.chip'), n = 0;
+    while (n < chips.length && chips[n].getBoundingClientRect().bottom <= floor + 0.5) n++;
+    return n;
+  });
+  over.forEach(function(cell, i) {
+    var chips = cell.querySelectorAll('.chip');
+    for (var j = keep[i]; j < chips.length; j++) chips[j].style.display = 'none';
+    mores[i].textContent = '+' + (chips.length - keep[i]) + ' more';
   });
 }
 var monthRows = null;
+// a resize (a phone's address bar, a dragged window) redraws once it settles
+var resizeTimer = null;
 window.addEventListener('resize', function() {
-  if (state.view === 'month' && monthRows) renderMonth(monthRows);
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(function() {
+    if (state.view === 'month' && monthRows) renderMonth(monthRows);
+  }, 150);
 });
 
 // ---- week / day view ----------------------------------------------
@@ -616,7 +744,9 @@ function renderTimeGrid(rows, n) {
   // place events
   var perDay = sers.map(function() { return []; });
   rows.forEach(function(ev) {
-    if (isAllDay(ev)) {
+    // a timed event a day or longer rides in the lane too, its chip
+    // showing its start time, not as blocks filling every column
+    if (isAllDay(ev) || ev.r - ev.l >= MS_DAY) {
       var s = pserial(evParts(ev, ev.l));
       var e = pserial(evParts(ev, Math.max(ev.l, ev.r - 1)));
       sers.forEach(function(ser, i) {
@@ -643,6 +773,7 @@ function renderTimeGrid(rows, n) {
       var blk = document.createElement('div');
       blk.className = 'blk';
       blk.style.background = it.ev.color || '#4a6a8a';
+      blk.style.color = ink(it.ev.color || '#4a6a8a');
       blk.style.top = it.s + 'px';
       blk.style.height = Math.max(18, it.e - it.s) + 'px';
       var w = 100 / it.ncols;
@@ -719,6 +850,7 @@ function syncUrl() {
 var loader = document.getElementById('loader');
 var loaderTimer = null;
 var loadSeq = 0;
+var shownAt = '';
 
 function load() {
   syncUrl();
@@ -729,6 +861,9 @@ function load() {
   // must not paint over the one now showing. A failed load (null)
   // leaves the grid as it was.
   var seq = ++loadSeq;
+  // a popup belongs to the view it was opened on; a refresh keeps it
+  var at = state.view + ' ' + state.y + '-' + state.m + '-' + state.d;
+  if (at !== shownAt) { hidePop(); shownAt = at; }
   // a tooltip over a chip that is about to be redrawn would stick
   var tip = document.getElementById('tipbox');
   if (tip) tip.remove();
@@ -801,8 +936,9 @@ document.getElementById('v-tasks').onclick = function() { state.view = 'tasks'; 
 
 function loadTasks(cb) {
   // only the tasks: the ship filters, so a big calendar is not sent whole
-  getJSON('/events.json?cat=todo' + (state.tag ? '&tag=' + encodeURIComponent(state.tag) : ''))
-    .then(function(rows) {
+  Promise.all([getJSON('/events.json?cat=todo' + (state.tag ? '&tag=' + encodeURIComponent(state.tag) : '')), calsReady])
+    .then(function(got) {
+      var rows = got[0];
       cb((rows || []).filter(function(r) { return r.cat === 'todo'; }).map(function(r) {
         var m = r.meta || {};
         return { id: r.id, cal: r.cal, name: m.name || '', note: m.note || '', tags: m.tags || [],
@@ -826,7 +962,7 @@ function taskRow(t) {
     renderTasks(lastTasks);
     poke({ action: 'done-event', id: t.id, home: t.cal, done: t.done }, function(ok) {
       if (!ok) toast('The ship did not answer: "' + t.name + '" is unchanged there');
-      setTimeout(load, 400);
+      afterChange();
     });
   };
   var dot = document.createElement('span'); dot.className = 't-dot'; dot.style.background = t.color || '#4a6a8a';
@@ -919,7 +1055,7 @@ document.getElementById('task-done-clear').onclick = function() {
   if (!confirm('Delete ' + old.length + ' done task' + (old.length > 1 ? 's' : '') + ' finished more than a week ago? CalDAV clients and shared calendars lose them too.')) return;
   var btn = this; btn.disabled = true;
   (function next(i) {
-    if (i >= old.length) { btn.disabled = false; setTimeout(refresh, 400); return; }
+    if (i >= old.length) { btn.disabled = false; afterChange(); return; }
     poke({ action: 'del-event', id: old[i].id, home: old[i].cal }, function() { next(i + 1); });
   })(0);
 };
@@ -927,13 +1063,16 @@ document.getElementById('task-done-clear').onclick = function() {
 // quick-add: the trailing words of what was typed can be #tags and a
 // date (today, tomorrow, a weekday, "in 3 days", "next week", "oct 12",
 // 2026-10-12); the rest is the name. today is a day serial in the
-// calendar's zone. Nothing parsed = the whole text is the name.
+// calendar's zone. Nothing parsed = the whole text is the name. Words
+// that are names or plain words too ("tom", "sun", "sat") are not dates:
+// "Call Tom" stays a name, and Saturday is spelled out.
 var WDL = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+var NOT_DAYS = ['sun', 'sat'];
 var PRI_WORDS = { high: 1, h: 1, med: 5, medium: 5, m: 5, low: 9, l: 9 };
 function parseQuickTask(text, today) {
   var words = text.trim().split(/\s+/).filter(Boolean), tags = [], due = null, pri = 0;
   var dow = function(s) { return (s + 3) % 7; };   // serial 0 (1970-01-01) was a Thursday
-  var wd = function(w) { return w.length < 3 ? -1 : WDL.findIndex(function(n) { return n.indexOf(w) === 0; }); };
+  var wd = function(w) { return w.length < 3 || NOT_DAYS.indexOf(w) >= 0 ? -1 : WDL.findIndex(function(n) { return n.indexOf(w) === 0; }); };
   var mon = function(w) { return w.length < 3 ? -1 : MN.findIndex(function(n) { return n.toLowerCase().indexOf(w) === 0; }); };
   var monthDay = function(a, b) {
     var m = mon(a), dm = /^(\d{1,2})(st|nd|rd|th)?$/.exec(b);
@@ -949,8 +1088,8 @@ function parseQuickTask(text, today) {
     }
     if (due !== null) break;
     var d = null, take = 1, v = words.length > 2 ? words[words.length - 2].toLowerCase() : '';
-    if (w === 'today' || w === 'tod') d = today;
-    else if (w === 'tomorrow' || w === 'tmr' || w === 'tom') d = today + 1;
+    if (w === 'today') d = today;
+    else if (w === 'tomorrow' || w === 'tmr') d = today + 1;
     else if (/^\d{4}-\d{2}-\d{2}$/.test(w)) { var p = w.split('-'); d = serial(+p[0], +p[1], +p[2]); }
     else if (wd(w) >= 0) d = today + ((wd(w) - dow(today) + 7) % 7 || 7);
     else if (v === 'next' && w === 'week') { d = today + 7; take = 2; }
@@ -999,7 +1138,7 @@ taskSave.onclick = function() {
       toast('The ship did not answer: "' + q.name + '" was not added');
       return;
     }
-    setTimeout(refresh, 400);
+    afterChange();
   });
 };
 document.getElementById('task-name').addEventListener('keydown', function(e) { if (e.key === 'Enter') taskSave.onclick(); });
@@ -1008,7 +1147,7 @@ document.getElementById('task-name').addEventListener('keydown', function(e) { i
 document.addEventListener('keydown', function(e) {
   if (e.key !== 'Escape') return;
   if (!pop.classList.contains('hidden')) { hidePop(); return; }
-  if (back.classList.contains('open')) back.classList.remove('open');
+  if (back.classList.contains('open')) closeModal(true);
   else if (settingsBack.classList.contains('open')) closeSettings();
 });
 
@@ -1092,7 +1231,8 @@ function syncFields() {
     mf: rc && k === 'monthly',
     nf: rc && k === 'monthly-nth',
     yf: rc && k === 'yearly',
-    ef: rc && k === 'every'
+    ef: rc && k === 'every',
+    rp: rc && k !== 'once'
   };
   Object.keys(show).forEach(function(c) {
     document.querySelectorAll('.' + c).forEach(function(el) {
@@ -1108,6 +1248,7 @@ kindSel.onchange = syncFields;
 var seg = document.getElementById('cat-seg');
 function setCat(c) {
   cat = c;
+  document.getElementById('modal-title').textContent = (editCtx ? 'Edit ' : 'New ') + (c === 'todo' ? 'Task' : 'Event');
   seg.querySelectorAll('.seg-btn').forEach(function(b) {
     b.classList.toggle('on', b.dataset.cat === c);
   });
@@ -1213,12 +1354,29 @@ function fillZoneSelect(sel, zs, withDefault) {
   });
 }
 
+// an event's zone the list lacks (not loaded, or not known here) gets an
+// option of its own, so an edit keeps it rather than the calendar's
+function keptZoneOption(z) {
+  var o = zoneSel.querySelector('option[data-kept]');
+  if (o) o.remove();
+  if (!z || [].some.call(zoneSel.options, function(x) { return x.value === z; })) return;
+  o = document.createElement('option');
+  o.value = z; o.dataset.kept = '1'; o.textContent = z === 'none' ? 'UTC' : z;
+  zoneSel.appendChild(o);
+}
+
 function loadZones() {
   getJSON('/zones.json')
     .then(function(zs) {
       fillZoneSelect(zoneSel, zs, true);
       fillZoneSelect(dispSel, zs, false);
       dispSel.value = CFG.zone || 'none';
+      // a calendar still on UTC offers the browser's zone, once
+      if (!CFG.zone && browserZone && browserZone !== 'UTC' && zs.indexOf(browserZone) >= 0) {
+        var asked = true;
+        try { asked = localStorage.getItem('cal-zone-asked') === '1'; localStorage.setItem('cal-zone-asked', '1'); } catch (e) {}
+        if (!asked) toast('Times show in UTC. Use your zone, ' + browserZone + '?', function() { globeBtn.onclick(); }, 'Use it');
+      }
     })
     .catch(function() {});
 }
@@ -1372,8 +1530,12 @@ function loadGoogle() {
 
 // the conflict log (every backend writes it): what the other side won
 // over, each local copy downloadable, and a way to clear it
+var conflictUrls = [];
 function loadConflicts() {
   getJSON('/google/conflicts.json').then(function(cs) {
+    // the last list's downloads go with it
+    conflictUrls.forEach(function(u) { URL.revokeObjectURL(u); });
+    conflictUrls = [];
     var gl = document.getElementById('google-conflicts');
     gl.textContent = cs.length ? (cs.length + ' conflict' + (cs.length === 1 ? '' : 's') + ' logged') : '';
     gl.onclick = function(e) { e.preventDefault(); var sect = document.getElementById('conflicts-sect'); sect.open = true; sect.scrollIntoView(); };
@@ -1385,12 +1547,13 @@ function loadConflicts() {
       var nm = document.createElement('span'); nm.className = 'fn';
       nm.textContent = (CALS[c.cal] ? CALS[c.cal].name : c.cal) + ': ' + c.why;
       var u = document.createElement('span'); u.className = 'fu';
-      u.textContent = new Date(c.at_ms).toLocaleString() + ' · ' + c.uid;
+      u.textContent = stamp(c.at_ms) + ' · ' + c.uid;
       row.appendChild(nm); row.appendChild(u);
       if (c.local) {
         var a = document.createElement('a'); a.className = 'fx'; a.style.fontSize = '12px';
         a.textContent = 'Your copy';
         a.href = URL.createObjectURL(new Blob([c.local], { type: 'text/calendar' }));
+        conflictUrls.push(a.href);
         a.download = 'conflict.ics';
         row.appendChild(a);
       }
@@ -1437,7 +1600,7 @@ function loadGoogleCalendars(linked) {
         var nm = document.createElement('span'); nm.className = 'fn'; nm.textContent = c.name + (c.primary ? ' (primary)' : '');
         var u = document.createElement('span'); u.className = 'fu';
         var linkedId = c.linked;
-        u.textContent = linkedId ? ('linked' + (linked[linkedId] && linked[linkedId].last_ms ? ', synced ' + new Date(linked[linkedId].last_ms).toLocaleString() : ', not synced yet')) : '';
+        u.textContent = linkedId ? ('linked' + (linked[linkedId] && linked[linkedId].last_ms ? ', synced ' + stamp(linked[linkedId].last_ms) : ', not synced yet')) : '';
         if (linkedId && linked[linkedId] && linked[linkedId].error) {
           u.textContent += ' · ' + linked[linkedId].error;
           u.classList.add('err');
@@ -1530,15 +1693,19 @@ function openSettings() {
   document.getElementById('dav-new').classList.add('hidden');
   document.getElementById('google-redirect').textContent = location.origin + CAL + '/google/callback';
   loadCalsList(); loadShares(); loadInvites(); loadDav(); loadCdav(); loadGoogle(); loadFeeds(); loadConflicts(); loadOutcomes();
+  if (!settingsBack.classList.contains('open')) settingsOpener = document.activeElement;
   settingsBack.classList.add('open');
+  document.getElementById('settings-close').focus();
 }
+var settingsOpener = null;
+trapTab(document.getElementById('settings-modal'));
 // after a save: had the ship refused it, say why. The record's times are
 // the ship's clock, so a minute's slack, and a refusal is said once.
 var saidRefusalAt = 0;
 function sayRefusal(id, since) {
   getJSON('/outcomes.json').then(function(o) {
     var r = (o.refusals || []).filter(function(x) {
-      return x.at_ms > saidRefusalAt && x.at_ms >= since - 60000 && (!id || x.id === id);
+      return x.at_ms > saidRefusalAt && x.at_ms >= since - 60000 && x.id === id;
     }).pop();
     if (!r) return;
     saidRefusalAt = r.at_ms;
@@ -1553,7 +1720,7 @@ function sayRefusal(id, since) {
 function loadOutcomes() {
   getJSON('/outcomes.json').then(function(o) {
     var fl = document.getElementById('faults-list'), rl = document.getElementById('refusals-list');
-    var when = function(ms) { return ms ? fmtDate(parts(ms)) + ', ' + fmtTime(parts(ms)) : ''; };
+    var when = function(ms) { return ms ? stamp(ms) : ''; };
     var line = function(box, text, cls) {
       var row = document.createElement('div'); row.className = cls || 'alarm-row';
       var t = document.createElement('span'); t.textContent = text; row.appendChild(t); box.appendChild(row);
@@ -1575,8 +1742,10 @@ function loadOutcomes() {
 }
 function closeSettings() {
   // a field still focused has not fired its change yet
-  if (document.activeElement && settingsBack.contains(document.activeElement)) document.activeElement.blur();
+  var inside = document.activeElement && settingsBack.contains(document.activeElement);
+  if (inside) document.activeElement.blur();
   settingsBack.classList.remove('open'); loadCals(); refresh();
+  if (inside && settingsOpener && document.contains(settingsOpener)) settingsOpener.focus();
 }
 document.getElementById('settings-btn').onclick = openSettings;
 document.getElementById('settings-close').onclick = closeSettings;
@@ -1707,7 +1876,7 @@ function loadShares() {
       anyO = true; var r = accepted[id];
       var row = document.createElement('div'); row.className = 'feed-row';
       var nm = document.createElement('span'); nm.className = 'fn'; nm.textContent = (CALS[id] ? CALS[id].name : id) + ' (' + r.key.split('/')[0] + ')';
-      var u = document.createElement('span'); u.className = 'fu'; u.textContent = r.error ? r.error : ((r.mode === 'edit' ? 'read and edit' : 'read only') + (r.last_ms ? ', synced ' + new Date(r.last_ms).toLocaleString() : ', not synced yet'));
+      var u = document.createElement('span'); u.className = 'fu'; u.textContent = r.error ? r.error : ((r.mode === 'edit' ? 'read and edit' : 'read only') + (r.last_ms ? ', synced ' + stamp(r.last_ms) : ', not synced yet'));
       if (r.error) u.style.color = '#f87171';
       row.appendChild(nm); row.appendChild(u); ol.appendChild(row);
     });
@@ -1732,17 +1901,20 @@ function loadInvites() {
       var u = document.createElement('span'); u.className = 'fu';
       u.textContent = (r.status ? GUEST_ST[r.status] : 'no answer yet') + (r.status && r.told === false ? ', the host has not heard yet' : '');
       var sel = document.createElement('select'); sel.setAttribute('aria-label', 'Calendar for ' + (r.name || r.uid));
-      Object.keys(CALS).filter(function(id) { return !calReadonly(id); }).forEach(function(id) {
+      // not a calendar another ship shares with us: the ship takes no
+      // invitation onto one
+      Object.keys(CALS).filter(function(id) { return !calReadonly(id) && CALS[id].kind !== 'ship'; }).forEach(function(id) {
         var o = document.createElement('option'); o.value = id; o.textContent = CALS[id].name; sel.appendChild(o);
       });
       sel.value = r.cal || r.route || 'default';
+      if (sel.selectedIndex < 0) sel.value = 'default';
       row.appendChild(nm); row.appendChild(u); row.appendChild(sel);
       [['accepted', 'Going'], ['tentative', 'Maybe'], ['declined', 'No']].forEach(function(a) {
         var b = document.createElement('button'); b.className = 'fx'; b.style.fontSize = '12px'; b.textContent = a[1];
         if (r.status === a[0]) b.style.color = '#eee';
         b.onclick = function() {
-          busy(b, postJSON('/invites/answer', { key: r.key, status: a[0], cal: sel.value }))
-            .then(function() { loadInvites(); setTimeout(refresh, 400); });
+          busy(b, answerInvite({ key: r.key, status: a[0], cal: sel.value }))
+            .then(function() { loadInvites(); afterChange(); }, function() {});
         };
         row.appendChild(b);
       });
@@ -1763,7 +1935,7 @@ function loadCdav() {
     subs.forEach(function(sub) {
       var row = document.createElement('div'); row.className = 'feed-row';
       var nm = document.createElement('span'); nm.className = 'fn'; nm.textContent = sub.user + ' @ ' + sub.url;
-      var u = document.createElement('span'); u.className = 'fu'; u.textContent = sub.error ? sub.error : (sub.last_ms ? 'synced ' + new Date(sub.last_ms).toLocaleString() : 'not synced yet');
+      var u = document.createElement('span'); u.className = 'fu'; u.textContent = sub.error ? sub.error : (sub.last_ms ? 'synced ' + stamp(sub.last_ms) : 'not synced yet');
       if (sub.error) u.style.color = '#f87171';
       var x = document.createElement('button'); x.className = 'fx'; x.textContent = 'Unfollow'; x.style.fontSize = '12px';
       x.onclick = function() {
@@ -1979,13 +2151,61 @@ function setPriSelect(p) {
   sel.value = String(p || 0);
 }
 
+// the editor opens and closes through these. A click just after it
+// closed (the second of a double-clicked Save) lands on the grid, and
+// must not open a blank one there
+var modalClosedAt = 0, modalOpener = null, formAtOpen = '';
+// what the form holds, to tell a changed one from one left as opened
+function formState() {
+  return JSON.stringify([cat, fAlarms, [].map.call(back.querySelectorAll('input, select, textarea, .day-tog'), function(el) {
+    return el.classList.contains('day-tog') ? el.classList.contains('on')
+      : (el.type === 'checkbox' || el.type === 'radio') ? el.checked : el.value;
+  })]);
+}
+function showModal() {
+  fSave.disabled = false;
+  alarmSel.value = ''; alarmInputs('');
+  syncTimeLabel();
+  modalOpener = document.activeElement;
+  back.classList.add('open');
+  formAtOpen = formState();
+  document.getElementById('f-name').focus();
+}
+// ask: an Escape or a backdrop click, which can be a slip, asks before
+// it throws away a changed form
+function closeModal(ask) {
+  if (ask && formState() !== formAtOpen && !confirm('Discard your changes?')) return;
+  var inside = back.contains(document.activeElement);
+  back.classList.remove('open');
+  modalClosedAt = Date.now();
+  if (inside && modalOpener && document.contains(modalOpener)) modalOpener.focus();
+}
+trapTab(document.getElementById('modal'));
+// the time is a wall clock in the event's own zone: say which, when that
+// is not the calendar's, since the grid shows the calendar's
+function syncTimeLabel() {
+  var z = zoneSel.value, mine = CFG.zone || 'UTC', shown = z === 'none' ? 'UTC' : z || mine;
+  document.getElementById('lbl-time').textContent = shown === mine ? 'At time' : 'At time (' + shown + ')';
+}
+zoneSel.addEventListener('change', syncTimeLabel);
+// Enter in a field saves, Ctrl or Cmd+Enter in the note. Not in a select,
+// a button, or the reminder inputs, which have their own Add
+document.getElementById('modal').addEventListener('keydown', function(e) {
+  if (e.key !== 'Enter' || e.isComposing) return;
+  var t = e.target;
+  if (t.tagName === 'TEXTAREA' ? !(e.ctrlKey || e.metaKey)
+      : t.tagName !== 'INPUT' || /^(button|checkbox|radio|color|file)$/.test(t.type) || t.closest('#f-alarm-custom, #f-alarm-when')) return;
+  e.preventDefault();
+  fSave.click();
+});
+
 function openModal(opts) {
+  if (Date.now() - modalClosedAt < 400) return;
   opts = opts || {};
   editCtx = null;
   fAlarms = [];
   setPriSelect(0);
   keptKindOption('');
-  document.getElementById('modal-title').textContent = 'New Event';
   document.getElementById('edit-scope').classList.remove('on');
   var p = opts.date || parts(Date.now());
   document.getElementById('f-date').value = ymd(p);
@@ -2011,6 +2231,7 @@ function openModal(opts) {
   var w = WD[(new Date(pserial(p) * MS_DAY).getUTCDay() + 6) % 7];
   daysDiv.querySelectorAll('.day-tog').forEach(function(t) { setTog(t, t.dataset.d === w); });
   dowSel.value = w;
+  keptZoneOption('');
   zoneSel.value = '';
   if (!calReadonly('default')) fCal.value = 'default';
   fColor.value = hex6(calColor(fCal.value));
@@ -2019,7 +2240,7 @@ function openModal(opts) {
   document.getElementById('f-done').checked = false;
   document.getElementById('f-status').textContent = '';
   setCat(opts.cat || 'timed');
-  back.classList.add('open');
+  showModal();
 }
 
 function msToUTC(ms) {
@@ -2040,12 +2261,11 @@ function openEdit(d, target) {
   // date space, timed in its zone (UTC when it has none)
   editCtx.occ = d.cat === 'allday' ? msToUTC(target.l)
     : parts(target.l, zoneFmt(d.zone && d.zone !== 'none' ? d.zone : 'UTC'));
-  document.getElementById('modal-title').textContent = 'Edit Event';
   document.getElementById('f-status').textContent = '';
   document.getElementById('f-name').value = dm.name || '';
   document.getElementById('f-note').value = dm.note || '';
   document.getElementById('f-loc').value = dm.location || '';
-  document.getElementById('f-guests').value = guestText((dm.guests || []).concat(dm.ships || []));
+  document.getElementById('f-guests').value = guestText(objs(dm.guests).concat(objs(dm.ships)));
   setCallSelect(dm);
   document.getElementById('f-tags').value = (dm.tags || []).join(', ');
   if (d.cal) fCal.value = d.cal;
@@ -2059,7 +2279,6 @@ function openEdit(d, target) {
   document.querySelector('input[name="scope"][value="all"]').checked = true;
 
   if (d.cat === 'todo') {
-    document.getElementById('modal-title').textContent = 'Edit Task';
     var du = d.due_ms ? dueParts(d.due_ms) : null;
     editCtx.dueDate = du ? ymd(du) : '';
     document.getElementById('f-due').value = editCtx.dueDate;
@@ -2074,14 +2293,14 @@ function openEdit(d, target) {
     document.getElementById('f-days-n').value = 1;
     document.getElementById('f-count').value = 0;
     setCat('todo');
-    back.classList.add('open');
+    showModal();
     return;
   }
   if (d.cat === 'date') {
     document.getElementById('f-bmonth').value = d.month || 1;
     document.getElementById('f-bday').value = d.day || 1;
     setCat('date');
-    back.classList.add('open');
+    showModal();
     return;
   }
   // a rule the form can build shows in its fields; any other rides as is
@@ -2094,7 +2313,8 @@ function openEdit(d, target) {
   editCtx.startDate = ymd(sp);
   document.getElementById('f-date').value = ymd(sp);
   var atMin = (a.at !== undefined) ? a.at : (sp.hh * 60 + sp.mm);
-  document.getElementById('f-time').value = pad2(Math.floor(atMin / 60)) + ':' + pad2(atMin % 60);
+  editCtx.startTime = pad2(Math.floor(atMin / 60)) + ':' + pad2(atMin % 60);
+  document.getElementById('f-time').value = editCtx.startTime;
   // an event with a fixed end (every single one from Google, CalDAV or
   // an import) shows its length; both ends are wall clock in one zone
   document.getElementById('f-dur').value = d.fin === 'to'
@@ -2113,9 +2333,11 @@ function openEdit(d, target) {
     document.getElementById('f-yday').value = a.day || 1;
   }
   daysDiv.querySelectorAll('.day-tog').forEach(function(t) { setTog(t, (a.days || []).indexOf(t.dataset.d) >= 0); });
-  zoneSel.value = d.zone === 'none' ? 'none' : (d.zone || '');
+  var z = d.zone === 'none' ? 'none' : (d.zone || '');
+  keptZoneOption(z);
+  zoneSel.value = z;
   setCat(d.cat);
-  back.classList.add('open');
+  showModal();
 }
 
 document.getElementById('add-btn').onclick = function() { openModal(); };
@@ -2123,8 +2345,8 @@ document.getElementById('add-btn').onclick = function() { openModal(); };
 // the other
 document.getElementById('f-until').addEventListener('input', function(e) { if (e.target.value) document.getElementById('f-count').value = 0; });
 document.getElementById('f-count').addEventListener('input', function(e) { if (+e.target.value) document.getElementById('f-until').value = ''; });
-document.getElementById('modal-close').onclick = function() { back.classList.remove('open'); };
-backdropClose(back, function() { back.classList.remove('open'); });
+document.getElementById('modal-close').onclick = function() { closeModal(); };
+backdropClose(back, function() { closeModal(true); });
 
 // an RRULE as the form's own repeat, when it is one the form builds:
 // daily, weekly on days, monthly on a day or an nth weekday, yearly on a
@@ -2212,8 +2434,8 @@ fSave.onclick = function() {
   // ships go under meta ships, which the calendar sends as invitations
   // itself; emails under meta guests, which Google mails
   var gText = document.getElementById('f-guests').value;
-  var oldGuests = (editCtx && editCtx.meta.guests) || [];
-  var oldShips = (editCtx && editCtx.meta.ships) || [];
+  var oldGuests = objs(editCtx && editCtx.meta.guests);
+  var oldShips = objs(editCtx && editCtx.meta.ships);
   if (cat !== 'todo' && cat !== 'date' && gText.split(',').map(function(x) { return x.trim(); }).filter(Boolean).join(', ') !== guestText(oldGuests.concat(oldShips))) {
     var names = gText.split(',').map(function(x) { return x.trim(); }).filter(Boolean);
     var ships = names.filter(function(x) { return x.charAt(0) === '~'; });
@@ -2250,6 +2472,8 @@ fSave.onclick = function() {
     }
     if (call) meta.call = call; else delete meta.call;
     delete meta.conference; delete meta.talon_room;
+    meta.note = dropJoinLine(meta.note);
+    if (!meta.note) delete meta.note;
   }
   var tags = parseTags(document.getElementById('f-tags').value);
   if (tags.length) meta.tags = tags; else delete meta.tags;
@@ -2306,8 +2530,12 @@ fSave.onclick = function() {
     }
   }
 
-  var savedId = editCtx ? editCtx.id : '', savedAt = Date.now();
+  // a new event's id is made here, so a refusal on record can be matched
+  // to it and not to someone else's change
+  if (!editCtx) body.id = Date.now().toString(36) + Math.random().toString(36).slice(2, 10) + '@' + (CFG.ship || 'calendar');
+  var savedId = editCtx ? editCtx.id : body.id, savedAt = Date.now();
   var finish = function(ok) {
+    fSave.disabled = false;
     if (!ok) {
       // the ship did not take it. The form comes back as it was left,
       // unless another edit has been opened since
@@ -2321,13 +2549,15 @@ fSave.onclick = function() {
     }
     st.textContent = '';
     toast('Saved "' + name + '"');
-    setTimeout(refresh, 400);
+    afterChange();
     // a poke is acknowledged before it is read; had the ship refused it,
     // the reason is in its record
     setTimeout(function() { sayRefusal(savedId, savedAt); }, 1500);
   };
-  // the form closes and says so at once; the ship is told behind it
-  back.classList.remove('open');
+  // the form closes and says so at once; the ship is told behind it.
+  // Save stays off until the ship has the change
+  closeModal();
+  fSave.disabled = true;
   toast('Saving "' + name + '"…');
   if (cat === 'todo' && state.view === 'tasks') {
     var cur = editCtx && lastTasks.filter(function(t) { return t.id === editCtx.id && t.cal === editCtx.home; })[0];
@@ -2384,13 +2614,30 @@ fSave.onclick = function() {
 
 // the date field follows the scope: the series' first day for all of
 // it, the tapped occurrence's day for one or from one on, so moving one
-// occurrence to another day is a change of the date
+// occurrence to another day is a change of the date. A kind whose start
+// holds the time of day (every N minutes, a kept rule) takes the
+// occurrence's time too; the others take theirs from the args
 document.querySelectorAll('input[name="scope"]').forEach(function(r) {
   r.onchange = function() {
     if (!editCtx || !editCtx.series) return;
-    document.getElementById('f-date').value = r.value === 'all' ? editCtx.startDate : ymd(editCtx.occ);
+    var all = r.value === 'all';
+    document.getElementById('f-date').value = all ? editCtx.startDate : ymd(editCtx.occ);
+    if (cat === 'timed' && timedStart(kindSel.value)) {
+      document.getElementById('f-time').value = all ? editCtx.startTime : pad2(editCtx.occ.hh) + ':' + pad2(editCtx.occ.mm);
+    }
   };
 });
+
+// the page stays current while it is open: changes from Google, CalDAV
+// and peers, new invitations, a new day. Not while something is open
+// that a redraw would disturb
+function wake() {
+  if (!state.y || document.hidden || !pop.classList.contains('hidden') ||
+      back.classList.contains('open') || settingsBack.classList.contains('open')) return;
+  refresh(); loadInvites();
+}
+document.addEventListener('visibilitychange', wake);
+setInterval(wake, 5 * 60000);
 
 // ---- boot ---------------------------------------------------------
 

@@ -26,7 +26,7 @@
       <span id="month-label"></span>
       <div id="loader"><div class="spin"></div></div>
       <span id="load-err" role="status"></span>
-      <select id="zone-sel" title="Display timezone"></select>
+      <select id="zone-sel" title="Calendar timezone: what the views show, and what new events and reminders use" aria-label="Calendar timezone"></select>
       <button id="globe-btn" class="nav-btn icon-btn" title="Set calendar timezone to your browser timezone">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18"/></svg>
       </button>
@@ -76,7 +76,7 @@
       </div>
     </div>
 
-    <div id="pop" class="hidden">
+    <div id="pop" class="hidden" role="dialog" aria-labelledby="pop-name" tabindex="-1">
       <button id="pop-close" title="Close">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
@@ -85,6 +85,7 @@
         <span id="pop-name"></span>
       </div>
       <div id="pop-time"></div>
+      <div id="pop-cal"></div>
       <div id="pop-alarms"></div>
       <div id="pop-where"></div>
       <div id="pop-guests"></div>
@@ -99,7 +100,7 @@
         <a id="pop-join" class="pop-act" target="_blank" rel="noopener noreferrer">Join</a>
         <button id="pop-edit" class="pop-act">Edit</button>
         <button id="pop-done" class="pop-act">Done</button>
-        <button id="pop-skip" class="pop-act">Skip this one</button>
+        <button id="pop-skip" class="pop-act">Delete this one</button>
         <button id="pop-del" class="pop-act danger">Delete series</button>
       </div>
     </div>
@@ -178,7 +179,7 @@
             <input id="f-date" type="date">
           </div>
           <div class="tf">
-            <label class="f" for="f-time">At time</label>
+            <label class="f" id="lbl-time" for="f-time">At time</label>
             <input id="f-time" type="time" value="09:00">
           </div>
           <div class="af">
@@ -218,7 +219,7 @@
         </div>
         <label class="f ef" for="f-period">Repeat every (minutes)</label>
         <input id="f-period" type="number" min="1" value="60" class="ef">
-        <div class="rc nth-row">
+        <div class="rp nth-row">
           <div>
             <label class="f" for="f-count">Ends after (0 = never)</label>
             <input id="f-count" type="number" min="0" step="1" value="0">
