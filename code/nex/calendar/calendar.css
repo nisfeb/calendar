@@ -97,24 +97,27 @@ body { font-family: -apple-system, system-ui, sans-serif; background: #111; colo
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* popover */
-#pop { position: fixed; background: #1d1d1f; border: 1px solid #303032; border-radius: 14px; padding: 16px 18px 10px; width: 280px; z-index: 200; box-shadow: 0 12px 40px rgba(0,0,0,0.55); }
+#pop { position: fixed; background: #1d1d1f; border: 1px solid #303032; border-radius: 14px; padding: 16px 18px 10px; width: 280px; z-index: 200; box-shadow: 0 12px 40px rgba(0,0,0,0.55); max-height: calc(100vh - 16px); overflow-y: auto; }
+#pop:focus { outline: none; }
 #pop.hidden { display: none; }
-#pop-close { position: absolute; top: 10px; right: 10px; background: none; border: none; color: #666; cursor: pointer; padding: 4px; border-radius: 8px; line-height: 0; }
+#pop-close { position: absolute; top: 10px; right: 10px; background: none; border: none; color: #888; cursor: pointer; padding: 4px; border-radius: 8px; line-height: 0; }
 #pop-close:hover { color: #eee; background: #2a2a2c; }
 #pop-head { display: flex; align-items: center; gap: 9px; margin-bottom: 7px; padding-right: 20px; }
 #pop-dot { width: 11px; height: 11px; border-radius: 4px; flex-shrink: 0; }
 #pop-name { font-size: 15px; font-weight: 500; line-height: 1.3; }
 #pop-time { font-size: 12.5px; color: #a8a8a8; margin-bottom: 2px; padding-left: 20px; }
-#pop-note { font-size: 12px; color: #777; padding-left: 20px; margin-top: 4px; white-space: pre-wrap; }
+#pop-note { font-size: 12px; color: #a8a8a8; padding-left: 20px; margin-top: 4px; white-space: pre-wrap; }
+#pop-cal { font-size: 12px; color: #9aa3b2; padding-left: 20px; }
+#pop-note a { color: #93c5fd; overflow-wrap: anywhere; }
 #pop-where { font-size: 12px; color: #9aa3b2; padding-left: 20px; margin-top: 4px; overflow-wrap: anywhere; }
 #pop-join { text-decoration: none; }
 #pop-guests { font-size: 12px; color: #9aa3b2; padding-left: 20px; margin-top: 4px; }
 #pop-rsvp { padding-left: 14px; }
 #pop-rsvp .on { color: #eee; background: #2a2a2c; }
-#pop-actions { display: flex; justify-content: flex-end; gap: 2px; margin-top: 12px; padding-top: 8px; border-top: 1px solid #2a2a2c; }
+#pop-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 2px; margin-top: 12px; padding-top: 8px; border-top: 1px solid #2a2a2c; }
 .pop-act { background: none; border: none; font-size: 12px; color: #888; cursor: pointer; padding: 6px 10px; border-radius: 8px; }
 .pop-act:hover { color: #eee; background: #2a2a2c; }
-.pop-act.danger { color: #b45c5c; }
+.pop-act.danger { color: #f87171; }
 .pop-act.danger:hover { color: #f87171; background: rgba(248,113,113,0.08); }
 
 /* modal */
@@ -128,7 +131,7 @@ body { font-family: -apple-system, system-ui, sans-serif; background: #111; colo
 .seg-btn:hover { color: #ccc; }
 .seg-btn.on { background: #2563eb; color: #fff; }
 label.f { display: block; font-size: 11px; color: #888; margin: 10px 0 3px; letter-spacing: 0.03em; }
-#kind-hint { font-size: 11px; color: #667; margin-top: 5px; line-height: 1.4; }
+#kind-hint { font-size: 11px; color: #8f8f8f; margin-top: 5px; line-height: 1.4; }
 .nth-row { display: flex; gap: 8px; }
 .nth-row > div { flex: 1; }
 #modal input, #modal select, #modal textarea { width: 100%; padding: 7px 9px; border-radius: 6px; border: 1px solid #333; background: #111; color: #eee; font-size: 13px; outline: none; }

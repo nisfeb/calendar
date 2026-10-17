@@ -149,7 +149,7 @@ function fetchWindow(fromMs, toMs, cb) {
       rows.forEach(function(r) {
         var m = r.meta || {};
         r.name = m.name || '';
-        r.note = m.note || '';
+        r.note = noteText(m.note);
         r.location = m.location || '';
         r.conference = m.conference || '';
         r.guests = objs(m.guests).concat(objs(m.ships));
@@ -162,6 +162,29 @@ function fetchWindow(fromMs, toMs, cb) {
       cb(rows);
     })
     .catch(function(e) { loadFailed(e); cb(null); });
+}
+
+// a note from Google is often HTML: its text for display, a link's
+// address kept beside its words. Parsed, never put in the page as HTML
+function noteText(s) {
+  if (typeof s !== 'string') return '';
+  if (!/<[a-z\/!][^>]*>/i.test(s)) return s;
+  var doc = new DOMParser().parseFromString(s.replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|div|li)>/gi, '$&\n'), 'text/html');
+  doc.querySelectorAll('a[href]').forEach(function(a) {
+    var href = a.getAttribute('href');
+    if (/^https?:\/\//i.test(href) && a.textContent.trim() !== href) a.textContent += ' (' + href + ')';
+  });
+  return doc.body.textContent.trim();
+}
+// text with its http(s) links made links, built node by node
+function linkify(el, text) {
+  el.textContent = '';
+  text.split(/(https?:\/\/[^\s<>"()]*[^\s<>"().,;:!?])/i).forEach(function(bit, i) {
+    if (!(i % 2)) { if (bit) el.appendChild(document.createTextNode(bit)); return; }
+    var a = document.createElement('a');
+    a.href = bit; a.textContent = bit; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    el.appendChild(a);
+  });
 }
 
 function capsOn(ser) {
@@ -268,6 +291,18 @@ function pack(items) {
   });
 }
 
+// text on a color: near-black on a light one, white on a dark one, by
+// WCAG luminance (Google's pale colors fail with white)
+function ink(c) {
+  var h = safeColor(c).slice(1);
+  if (h.length < 6) h = h.replace(/./g, '$&$&');
+  var l = [0, 2, 4].map(function(i) {
+    var v = parseInt(h.substr(i, 2), 16) / 255;
+    return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * l[0] + 0.7152 * l[1] + 0.0722 * l[2] > 0.19 ? '#111' : '#fff';
+}
+
 // the line the ship adds to a note when trunk makes a Talon call's link
 // (app.hoon +talon-link-into), with the blank line before it. A call
 // taken off or asked for again drops it, so a note never keeps a dead
@@ -282,7 +317,9 @@ var label = document.getElementById('month-label');
 var pop = document.getElementById('pop');
 var popTarget = null;
 
+var popOpener = null;
 function showPop(ev, x, y) {
+  if (!pop.contains(document.activeElement)) popOpener = document.activeElement;
   popTarget = ev;
   document.getElementById('pop-name').textContent = ev.name;
   document.getElementById('pop-dot').style.background = ev.color || '#4a6a8a';
@@ -306,10 +343,13 @@ function showPop(ev, x, y) {
     text = fmtDate(s) + ' ' + fmtTimeLong(s) + ' – ' + fmtDate(e) + ' ' + fmtTimeLong(e);
   }
   document.getElementById('pop-time').textContent = text;
+  var pc = document.getElementById('pop-cal');
+  pc.textContent = CALS[ev.cal] ? CALS[ev.cal].name || ev.cal : '';
+  pc.style.display = pc.textContent ? '' : 'none';
   document.getElementById('pop-alarms').textContent =
     (ev.alarms || []).length ? 'Reminders: ' + ev.alarms.map(function(a) { return alarmText(a, ev.cat); }).join(', ') : '';
   var note = document.getElementById('pop-note');
-  note.textContent = ev.note || '';
+  linkify(note, ev.note || '');
   note.style.display = ev.note ? '' : 'none';
   var where = document.getElementById('pop-where');
   where.textContent = ev.location || '';
@@ -317,9 +357,13 @@ function showPop(ev, x, y) {
   // the join link: the event's conference, else a location that is a
   // link. Only http(s), since a peer's share or a feed can carry anything
   var join = [ev.conference, ev.location].filter(function(u) { return /^https?:\/\/\S+$/i.test(u || ''); })[0];
+  // it says where it goes: a peer's link can name any host
   var pj = document.getElementById('pop-join');
   pj.style.display = join ? '' : 'none';
-  if (join) pj.href = join;
+  if (join) {
+    pj.href = join; pj.title = join;
+    try { pj.textContent = 'Join (' + new URL(join).hostname + ')'; } catch (e) { pj.textContent = 'Join'; }
+  }
   // the guests and their answers, the owner's own answer as buttons
   var gl = document.getElementById('pop-guests');
   var others = (ev.guests || []).filter(function(g) { return !g.self; });
@@ -348,11 +392,31 @@ function showPop(ev, x, y) {
   pdel.style.display = ro ? 'none' : '';
   pdel.textContent = series ? 'Delete series' : 'Delete';
   pop.classList.remove('hidden');
-  var pw = 290, ph = 170;
-  pop.style.left = Math.min(x, window.innerWidth - pw - 8) + 'px';
-  pop.style.top = Math.min(y, window.innerHeight - ph - 8) + 'px';
+  // its real size: guests, answers and a note make it tall (CSS caps it
+  // at the window and lets it scroll)
+  pop.style.left = Math.max(8, Math.min(x, window.innerWidth - pop.offsetWidth - 8)) + 'px';
+  pop.style.top = Math.max(8, Math.min(y, window.innerHeight - pop.offsetHeight - 8)) + 'px';
+  pop.focus({ preventScroll: true });
 }
-function hidePop() { pop.classList.add('hidden'); popTarget = null; }
+// focus goes back to the chip that opened it, unless it has moved on
+function hidePop() {
+  var inside = pop.contains(document.activeElement);
+  pop.classList.add('hidden'); popTarget = null;
+  if (inside && popOpener && document.contains(popOpener)) popOpener.focus();
+}
+// Tab stays inside an open dialog
+function trapTab(box) {
+  box.addEventListener('keydown', function(e) {
+    if (e.key !== 'Tab') return;
+    var f = [].filter.call(box.querySelectorAll('button, input, select, textarea, a[href], summary, [tabindex="0"]'),
+      function(el) { return !el.disabled && el.offsetParent !== null; });
+    if (!f.length) return;
+    var first = f[0], last = f[f.length - 1];
+    if (e.shiftKey && (document.activeElement === first || document.activeElement === box)) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  });
+}
+trapTab(pop);
 var GUEST_ST = { accepted: 'going', tentative: 'maybe', declined: 'not going', 'needs-action': 'no answer' };
 document.querySelectorAll('#pop-rsvp button').forEach(function(b) {
   b.onclick = function() {
@@ -461,6 +525,7 @@ function chipEl(ev, cont) {
   var chip = document.createElement('div');
   chip.className = 'chip' + (cont ? ' cont' : '') + (ev.cat === 'todo' && ev.done ? ' todo-done' : '');
   chip.style.background = ev.color || '#4a6a8a';
+  chip.style.color = ink(ev.color || '#4a6a8a');
   var nm = ev.cat === 'todo' ? (ev.done ? '☑ ' : '☐ ') + (ev.priority && ev.priority <= 4 ? '! ' : '') + ev.name : ev.name;
   chip.textContent = cont ? '· ' + nm
     : ev.all ? nm : fmtTime(parts(ev.l)) + ' ' + nm;
@@ -544,27 +609,44 @@ function renderMonth(rows) {
 }
 
 // a day with more chips than fit hides the last ones behind "+N more",
-// which opens the day
+// which opens the day. Measured all at once, then hidden all at once:
+// a busy month lays out twice, not once per hidden chip
 function clipCells() {
-  grid.querySelectorAll('.cell').forEach(function(cell) {
-    var chips = [].slice.call(cell.querySelectorAll('.chip'));
-    if (!chips.length || cell.scrollHeight <= cell.clientHeight) return;
+  var over = [].filter.call(grid.querySelectorAll('.cell'), function(cell) {
+    return cell.querySelector('.chip') && cell.scrollHeight > cell.clientHeight;
+  });
+  if (!over.length) return;
+  var cs = getComputedStyle(over[0]);
+  var pad = parseFloat(cs.paddingBottom) || 0, gap = parseFloat(cs.rowGap) || 0;
+  var mores = over.map(function(cell) {
     var more = document.createElement('div');
     more.className = 'more';
-    cell.appendChild(more);
-    var hid = 0;
-    while (cell.scrollHeight > cell.clientHeight && hid < chips.length) {
-      chips[chips.length - 1 - hid].style.display = 'none';
-      hid++;
-      more.textContent = '+' + hid + ' more';
-    }
+    more.textContent = '+0 more';   // a line to measure
     more.onclick = function(e) { e.stopPropagation(); cell.querySelector('.dnum').click(); };
-    pressable(more);
+    cell.appendChild(pressable(more));
+    return more;
+  });
+  // the chips that end above the "+N more" line stay
+  var keep = over.map(function(cell, i) {
+    var floor = cell.getBoundingClientRect().top + cell.clientTop + cell.clientHeight - pad - gap - mores[i].offsetHeight;
+    var chips = cell.querySelectorAll('.chip'), n = 0;
+    while (n < chips.length && chips[n].getBoundingClientRect().bottom <= floor + 0.5) n++;
+    return n;
+  });
+  over.forEach(function(cell, i) {
+    var chips = cell.querySelectorAll('.chip');
+    for (var j = keep[i]; j < chips.length; j++) chips[j].style.display = 'none';
+    mores[i].textContent = '+' + (chips.length - keep[i]) + ' more';
   });
 }
 var monthRows = null;
+// a resize (a phone's address bar, a dragged window) redraws once it settles
+var resizeTimer = null;
 window.addEventListener('resize', function() {
-  if (state.view === 'month' && monthRows) renderMonth(monthRows);
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(function() {
+    if (state.view === 'month' && monthRows) renderMonth(monthRows);
+  }, 150);
 });
 
 // ---- week / day view ----------------------------------------------
@@ -682,6 +764,7 @@ function renderTimeGrid(rows, n) {
       var blk = document.createElement('div');
       blk.className = 'blk';
       blk.style.background = it.ev.color || '#4a6a8a';
+      blk.style.color = ink(it.ev.color || '#4a6a8a');
       blk.style.top = it.s + 'px';
       blk.style.height = Math.max(18, it.e - it.s) + 'px';
       var w = 100 / it.ncols;
@@ -758,6 +841,7 @@ function syncUrl() {
 var loader = document.getElementById('loader');
 var loaderTimer = null;
 var loadSeq = 0;
+var shownAt = '';
 
 function load() {
   syncUrl();
@@ -768,6 +852,9 @@ function load() {
   // must not paint over the one now showing. A failed load (null)
   // leaves the grid as it was.
   var seq = ++loadSeq;
+  // a popup belongs to the view it was opened on; a refresh keeps it
+  var at = state.view + ' ' + state.y + '-' + state.m + '-' + state.d;
+  if (at !== shownAt) { hidePop(); shownAt = at; }
   // a tooltip over a chip that is about to be redrawn would stick
   var tip = document.getElementById('tipbox');
   if (tip) tip.remove();
@@ -1051,7 +1138,7 @@ document.getElementById('task-name').addEventListener('keydown', function(e) { i
 document.addEventListener('keydown', function(e) {
   if (e.key !== 'Escape') return;
   if (!pop.classList.contains('hidden')) { hidePop(); return; }
-  if (back.classList.contains('open')) closeModal();
+  if (back.classList.contains('open')) closeModal(true);
   else if (settingsBack.classList.contains('open')) closeSettings();
 });
 
@@ -1584,8 +1671,12 @@ function openSettings() {
   document.getElementById('dav-new').classList.add('hidden');
   document.getElementById('google-redirect').textContent = location.origin + CAL + '/google/callback';
   loadCalsList(); loadShares(); loadInvites(); loadDav(); loadCdav(); loadGoogle(); loadFeeds(); loadConflicts(); loadOutcomes();
+  if (!settingsBack.classList.contains('open')) settingsOpener = document.activeElement;
   settingsBack.classList.add('open');
+  document.getElementById('settings-close').focus();
 }
+var settingsOpener = null;
+trapTab(document.getElementById('settings-modal'));
 // after a save: had the ship refused it, say why. The record's times are
 // the ship's clock, so a minute's slack, and a refusal is said once.
 var saidRefusalAt = 0;
@@ -1629,8 +1720,10 @@ function loadOutcomes() {
 }
 function closeSettings() {
   // a field still focused has not fired its change yet
-  if (document.activeElement && settingsBack.contains(document.activeElement)) document.activeElement.blur();
+  var inside = document.activeElement && settingsBack.contains(document.activeElement);
+  if (inside) document.activeElement.blur();
   settingsBack.classList.remove('open'); loadCals(); refresh();
+  if (inside && settingsOpener && document.contains(settingsOpener)) settingsOpener.focus();
 }
 document.getElementById('settings-btn').onclick = openSettings;
 document.getElementById('settings-close').onclick = closeSettings;
@@ -2039,15 +2132,32 @@ function setPriSelect(p) {
 // the editor opens and closes through these. A click just after it
 // closed (the second of a double-clicked Save) lands on the grid, and
 // must not open a blank one there
-var modalClosedAt = 0;
+var modalClosedAt = 0, modalOpener = null, formAtOpen = '';
+// what the form holds, to tell a changed one from one left as opened
+function formState() {
+  return JSON.stringify([cat, fAlarms, [].map.call(back.querySelectorAll('input, select, textarea, .day-tog'), function(el) {
+    return el.classList.contains('day-tog') ? el.classList.contains('on')
+      : (el.type === 'checkbox' || el.type === 'radio') ? el.checked : el.value;
+  })]);
+}
 function showModal() {
   fSave.disabled = false;
+  alarmSel.value = ''; alarmInputs('');
+  modalOpener = document.activeElement;
   back.classList.add('open');
+  formAtOpen = formState();
+  document.getElementById('f-name').focus();
 }
-function closeModal() {
+// ask: an Escape or a backdrop click, which can be a slip, asks before
+// it throws away a changed form
+function closeModal(ask) {
+  if (ask && formState() !== formAtOpen && !confirm('Discard the changes to this event?')) return;
+  var inside = back.contains(document.activeElement);
   back.classList.remove('open');
   modalClosedAt = Date.now();
+  if (inside && modalOpener && document.contains(modalOpener)) modalOpener.focus();
 }
+trapTab(document.getElementById('modal'));
 
 function openModal(opts) {
   if (Date.now() - modalClosedAt < 400) return;
@@ -2199,7 +2309,7 @@ document.getElementById('add-btn').onclick = function() { openModal(); };
 document.getElementById('f-until').addEventListener('input', function(e) { if (e.target.value) document.getElementById('f-count').value = 0; });
 document.getElementById('f-count').addEventListener('input', function(e) { if (+e.target.value) document.getElementById('f-until').value = ''; });
 document.getElementById('modal-close').onclick = function() { closeModal(); };
-backdropClose(back, function() { closeModal(); });
+backdropClose(back, function() { closeModal(true); });
 
 // an RRULE as the form's own repeat, when it is one the form builds:
 // daily, weekly on days, monthly on a day or an nth weekday, yearly on a

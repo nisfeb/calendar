@@ -38,6 +38,16 @@ test('quick-add leaves names and plain words alone', () => {
   assert.deepEqual(q('Book flights oct 20 #travel !high'), { name: 'Book flights', due: c.serial(2026, 10, 20), tags: ['travel'], priority: 1 });
 });
 
+test('chip text is dark on a light color and white on a dark one', () => {
+  assert.equal(c.ink('#fbd75b'), '#111');   // Google's banana
+  assert.equal(c.ink('#ffffff'), '#111');
+  assert.equal(c.ink('#fff'), '#111');
+  assert.equal(c.ink('#4a6a8a'), '#fff');   // the default slate
+  assert.equal(c.ink('#101541'), '#fff');
+  assert.equal(c.ink('#7bd148cc'), '#111');
+  assert.equal(c.ink('red; color: x'), '#fff');
+});
+
 test('a call taken off drops the join line the ship wrote, and only that', () => {
   const url = 'https://ship.example/apps/trunk/call/e-1a2b';
   const line = 'Join the call in any browser: ' + url;
