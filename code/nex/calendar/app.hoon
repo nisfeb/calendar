@@ -113,6 +113,10 @@
           [%fall %& [/ %'invites-sent.json'] [[/ %json] [%o ~]]]
           [%fall %& [/ %'invites.json'] [[/ %json] [%o ~]]]
           [%fall %& [/ %'invite-routes.json'] [[/ %json] [%o ~]]]
+          ::  talon-rooms.json: each event's call room on trunk, by room:
+          ::  its calendar and uid, its link once trunk made one, and when
+          ::  a refused one was last asked
+          [%fall %& [/ %'talon-rooms.json'] [[/ %json] [%o ~]]]
           [%fall %& [/ %'google.sig'] [[/ %sig] ~]]
           [%fall %| /requests empty-dir:loader]
       ==
@@ -564,6 +568,7 @@
         ;<  ~  bind:m  share-pass
         ;<  ~  bind:m  invite-pass
         ;<  ~  bind:m  reply-pass
+        ;<  ~  bind:m  talon-pass
         ;<  ~  bind:m  send-refusals
         ;<  ~  bind:m  (sync-pass %ship pull)
         ::  a grant approved after the rise: the inbox road lands here
@@ -3881,6 +3886,223 @@
     (~(put by rows) (scot %p to.j) (stamp ?~(w '' etag.e.u.w)))
   =.  sent  ?:(=(~ rows) (~(del by sent) key.j) (~(put by sent) key.j [%o rows]))
   $(left t.left)
+::  +talon-room: an event's call room on trunk, a @tas from its calendar
+::  and uid: the same every time, so asking again finds the same link
+++  talon-room
+  |=  [cid=@ta =uid:cal]
+  ^-  @t
+  (crip "e-{((x-co:co 16) (end [3 8] (sham cid uid)))}")
+::  +talon-pass: Talon calls (trunk wire 19). An event of ours whose meta
+::  asks for one (call 'talon') and has no join link yet gets a link from
+::  trunk: it becomes the join link (meta conference), goes into the note
+::  for guests who read only that, and its room is kept (meta talon_room,
+::  talon-rooms.json). A room whose event is gone, or no longer names it
+::  (the call was taken off), is closed, which ends its link. A refusal
+::  is a fault saying what to do, asked again when the event changes or
+::  an hour on. A copy of another ship's invitation, a moved instance and
+::  a calendar another ship shares with us are not ours to give a room
+++  talon-pass
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  ;<  c=calendar:cal  bind:m  (read-cal './')
+  ;<  rj=json  bind:m  (read-json-grub './' 'talon-rooms.json')
+  ;<  now=@da  bind:m  get-time:io
+  =/  rooms=(map @t json)  (omap rj)
+  =/  now-ms=@ud  (da-to-ms now)
+  =/  want=(list [room=@t cid=@ta e=entry:cal])
+    %-  zing
+    %+  turn  ~(tap by cals.c)
+    |=  [cid=@ta k=cal:cal]
+    ^-  (list [@t @ta entry:cal])
+    ?:  ?=(%ship kind.props.k)  ~
+    %+  murn  ~(val by entries.k)
+    |=  e=entry:cal
+    ^-  (unit [@t @ta entry:cal])
+    ?:  (dav-is-child e)  ~
+    =/  mt=meta:cal  (meta-of:cal event.e)
+    ?:  (~(has by mt) 'host')  ~
+    ?.  =('talon' (meta-str:cal mt 'call'))  ~
+    ?.  =('' (meta-str:cal mt 'conference'))  ~
+    =/  r=@t  (talon-room cid uid.e)
+    =/  row=json  (fall (~(get by rooms) r) [%o ~])
+    ?:  ?&  =(etag.e (gs row 'etag'))
+            (lth (sub now-ms (min now-ms (fall (gn row 'at_ms') 0))) 3.600.000)
+        ==
+      ~
+    `[r cid e]
+  =/  ends=(list @t)
+    %+  murn  ~(tap by rooms)
+    |=  [r=@t row=json]
+    ^-  (unit @t)
+    =/  k=(unit cal:cal)  (~(get by cals.c) (crip (trip (gs row 'cal'))))
+    =/  e=(unit entry:cal)  ?~(k ~ (~(get by entries.u.k) (gs row 'uid')))
+    ?~  e  `r
+    =/  mt=meta:cal  (meta-of:cal event.u.e)
+    ::  still asking for one, or holding this one: kept
+    ?:  =(`s+r (~(get by mt) 'talon_room'))  ~
+    ?:  &(=('' (gs row 'url')) =('talon' (meta-str:cal mt 'call')))  ~
+    `r
+  ?:  &(?=(~ want) ?=(~ ends))  (pure:m ~)
+  ;<  wire=@ud  bind:m  trunk-wire
+  ?:  (lth wire 19)
+    ;<  ~  bind:m
+      ?~  want  (pure:(fiber:fiber:nexus ,~) ~)
+      %:  fault  './'  'talon'  %warning  &
+        "a Talon call needs trunk wire 19 and a grubbery whose trunk mark carries app links; this ship has not got both yet"
+        "update trunk and grubbery; the call is made once they are"
+      ==
+    (write-json-grub './' 'talon-rooms.json' [%o (stamp-rooms rooms want now-ms '' '')])
+  ;<  our=@p  bind:m  get-our:io
+  =/  dir=path  /sys/gall/subs/(scot %p our)/trunk/app/grubbery/calendar
+  ::  rooms to close first: one poke ends the room and its link
+  =/  close=(list @t)  ends
+  |-
+  ?^  close
+    ;<  *  bind:m  (trunk-poke [%app-room-close-as 'calendar' i.close])
+    $(close t.close, rooms (~(del by rooms) i.close))
+  ?~  want
+    (write-json-grub './' 'talon-rooms.json' [%o rooms])
+  ::  trunk's answers come as facts kept under /sys/gall/subs: the road
+  ::  to read them names this ship, so the owner grants it by hand
+  ;<  watch=?(%live %refused %failed)  bind:m  (talon-watch dir)
+  ?:  ?=(%refused watch)
+    ;<  ~  bind:m
+      %:  fault  './'  'road/talon'  %warning  &
+        "the peek road {(spud dir)}/ is refused, so Talon calls cannot be made"
+        "grant that road (this one only, not /sys/gall/subs/) at /apps/grubbery/permits"
+      ==
+    (write-json-grub './' 'talon-rooms.json' [%o (stamp-rooms rooms want now-ms '' '')])
+  ;<  ~  bind:m  (unfault './' 'road/talon')
+  =/  w  i.want
+  =/  title=@t  (end [3 128] (meta-str:cal (meta-of:cal event.e.w) 'name'))
+  ::  the request's own id: the last fact kept may be an older answer for
+  ::  the same room
+  ;<  now=@da  bind:m  get-time:io
+  =/  req=@t  (crip "{(trip room.w)}.{(a-co:co (da-to-ms now))}")
+  ;<  sent=?(%sent %refused %nacked)  bind:m
+    (trunk-poke [%app-guest-link-as 'calendar' room.w title & req])
+  ;<  got=(unit [url=@t why=@t])  bind:m
+    =/  n  (fiber:fiber:nexus ,(unit [@t @t]))
+    ?:  ?=(%refused sent)  (pure:n `['' 'the gall road /sys/gall/ is refused'])
+    ?:  ?=(%nacked sent)  (pure:n `['' 'this grubbery cannot hand trunk an app link'])
+    (talon-answer dir req)
+  =/  url=@t  ?~(got '' url.u.got)
+  =/  why=@t  ?~(got 'trunk did not answer' why.u.got)
+  =.  rooms  (stamp-rooms rooms ~[w] now-ms url ?:(=('' url) why ''))
+  ;<  ~  bind:m
+    ?.  =('' url)
+      ;<  ~  bind:(fiber:fiber:nexus ,~)  (unfault './' 'talon')
+      (talon-link-into cid.w uid.e.w room.w url)
+    %:  fault  './'  'talon'  %warning  &
+      "trunk gave no call link: {(trip why)}"
+      (trip (talon-remedy why))
+    ==
+  $(want t.want)
+::  +stamp-rooms: rows for rooms asked for now, with their link or none
+++  stamp-rooms
+  |=  [rooms=(map @t json) asked=(list [room=@t cid=@ta e=entry:cal]) now-ms=@ud url=@t why=@t]
+  ^-  (map @t json)
+  %+  roll  asked
+  |=  [[r=@t cid=@ta e=entry:cal] acc=_rooms]
+  %+  ~(put by acc)  r
+  %-  pairs:enjs:format
+  :~  ['cal' s+cid]  ['uid' s+uid.e]  ['etag' s+etag.e]  ['at_ms' (numb:enjs:format now-ms)]
+      ['url' s+url]  ['why' s+why]
+  ==
+::  +talon-remedy: what the owner does about a refusal trunk names
+++  talon-remedy
+  |=  why=@t
+  ^-  @t
+  ?:  =('apps may not host calls on this ship' why)  'switch "calendar (through grubbery)" on at /apps/trunk'
+  ?:  =('no sfu configured' why)  'set up a call server at /apps/trunk'
+  ?:  =('no public address set' why)  'open /apps/trunk once from the ship\'s public https address'
+  ?:  =('the gall road /sys/gall/ is refused' why)  'grant it at /apps/grubbery/permits'
+  ?:  =('this grubbery cannot hand trunk an app link' why)  'update grubbery: its trunk mark is older than trunk wire 19'
+  'look at /apps/trunk'
+::  +talon-watch: the subscription to trunk's answers, made once. %refused
+::  when the road to read them is not granted
+++  talon-watch
+  |=  dir=path
+  =/  m  (fiber:fiber:nexus ,?(%live %refused %failed))
+  ^-  form:m
+  ;<  live=(unit view:nexus)  bind:m  (peek-soft:io [%& %& dir %live] ~)
+  ?~  live  (pure:m %refused)
+  ?:  &(?=([%file *] u.live) =([~ %.y] (mole |.(!<(? (need-vase:tarball sang.u.live))))))
+    (pure:m %live)
+  ;<  our=@p  bind:m  get-our:io
+  =/  w=wire  /talon-watch
+  ;<  ~  bind:m
+    %-  send-dart:io
+    :*  %node  w  &+&+[/sys/gall %'main.sig']  %poke
+        [/ %gall-poke]  [[our %grubbery] gall-watch+[our %trunk /app/grubbery/calendar]]
+    ==
+  ;<  ok=?  bind:m
+    |=  input:fiber:nexus
+    :+  ~  q.state
+    ?+  in  [%skip ~]
+        ~  [%wait ~]
+        [~ %veto %node * * *]  ?.(=(w wire.dart.u.in) [%skip ~] [%done %.n])
+        [~ %pack * *]
+      ?.  =(w wire.u.in)  [%skip ~]
+      ?~(err.u.in [%wait ~] [%done %.n])
+        [~ %poke * *]
+      ?.  =([/ %poke-ack] p.sage.u.in)  [%skip ~]
+      =/  [aw=wire err=(unit tang)]  !<([wire (unit tang)] q.sage.u.in)
+      ?.  =(w aw)  [%skip ~]
+      [%done ?=(~ err)]
+    ==
+  ?.  ok  (pure:m %failed)
+  ::  trunk's answer to a request made before the subscription is up is
+  ::  lost: wait for its ack (live), 10 s at most
+  =/  tries=@ud  10
+  |-
+  ;<  ~  bind:m  (sleep:io ~s1)
+  ;<  lv=(unit view:nexus)  bind:m  (peek-soft:io [%& %& dir %live] ~)
+  ?:  &(?=([~ %file *] lv) =([~ %.y] (mole |.(!<(? (need-vase:tarball sang.u.lv))))))
+    (pure:m %live)
+  ?:  =(0 tries)  (pure:m %failed)
+  $(tries (dec tries))
+::  +talon-answer: trunk's answer to one request, read from the last fact
+::  on the subscription: [url ''] or ['' why]. ~ when none came in 15 s
+++  talon-answer
+  |=  [dir=path req=@t]
+  =/  m  (fiber:fiber:nexus ,(unit [url=@t why=@t]))
+  ^-  form:m
+  =/  tries=@ud  15
+  |-
+  ;<  v=(unit view:nexus)  bind:m  (peek-soft:io [%& %& dir %data] ~)
+  =/  j=json
+    ?.  ?=([~ %file *] v)  [%o ~]
+    (fall (mole |.(!<(json (need-vase:tarball sang.u.v)))) [%o ~])
+  =/  ok=json  (obj:gcal j 'guest-link')
+  =/  no=json  (obj:gcal j 'guest-denied')
+  ?:  &(=(req (gs ok 'req')) !=('' (gs ok 'url')))  (pure:m `[(gs ok 'url') ''])
+  ?:  =(req (gs no 'req'))  (pure:m `['' (gs no 'why')])
+  ?:  =(0 tries)  (pure:m ~)
+  ;<  ~  bind:m  (sleep:io ~s1)
+  $(tries (dec tries))
+::  +talon-link-into: a link trunk made, onto its event: the join link,
+::  the room, and a line in the note, the call asked for no more
+++  talon-link-into
+  |=  [cid=@ta =uid:cal room=@t url=@t]
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  ;<  c=calendar:cal  bind:m  (read-cal './')
+  =/  k=(unit cal:cal)  (~(get by cals.c) cid)
+  ?~  k  (pure:m ~)
+  =/  e=(unit entry:cal)  (~(get by entries.u.k) uid)
+  ?~  e  (pure:m ~)
+  =/  mt=meta:cal  (meta-of:cal event.u.e)
+  =/  note=@t  (meta-str:cal mt 'note')
+  =/  join=@t  (cat 3 'Join the call in any browser: ' url)
+  =.  mt
+    %-  ~(gas by (~(del by mt) 'call'))
+    :~  ['conference' s+url]
+        ['talon_room' s+room]
+        :-  'note'
+        s+?:(?=(^ (find (trip url) (trip note))) note ?:(=('' note) join (rap 3 ~[note '\0a\0a' join])))
+    ==
+  (dav-write './' c(cals (~(put by cals.c) cid (put-entry:cal u.k u.e(event (put-meta:cal event.u.e mt))))))
 ::  +reply-pass: the guest side's answers a host did not hear, sent again
 ::  an hour on
 ++  reply-pass

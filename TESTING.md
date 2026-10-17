@@ -117,3 +117,15 @@ $U calendar kids /apps/shell.shell/desks/calendar.desk/desk/data/calendar.calend
 `u` guards its subcommands. A raw `.^` in an expression that misses kills
 every thread on the ship: check a path with `kids` first. Never point u,
 the fleet commands or these scripts at a ship outside `calendar`.
+
+## Talon calls (talon-matrix.py)
+
+`scripts/talon-matrix.py` needs %trunk at wire 19 on the test ship, which the fleet's platform does not install. On ~rux it went like this (2026-10-17), with trunk's own README ("The desk") for the trunk part:
+
+1. Snapshot first: `$F --fast snap calendar pre-trunk`.
+2. In the dojo `|mount %landscape`, `|new-desk %trunk`, `|mount %trunk`; copy trunk's `app lib mar sur gen desk.bill desk.docket-0` into the mount, plus the base and landscape files its README lists (the marks now include `css`); `|commit %trunk`, `|install our %trunk`. `/~/scry/trunk/version.json` then says 19.
+3. Only then widen grubbery's trunk mark: copy trunk's `docs/grubbery-trunk-action.hoon` over both `grubbery/gub/mar/clay/trunk/trunk-action.hoon` and `grubbery/gub/mar/clay/trunk/trunk/action.hoon` in the pier, and `|commit %grubbery`.
+4. A call server and the public address, as POSTs to `/apps/trunk/action`: `{"set-sfu":{"base":"http://127.0.0.1:8445","group":"talon","key":"<k>"}}` (a local Galène; trunk's session ran one) and `{"set-origin":"http://localhost:8121"}`.
+5. Grant the calendar the peek road `/sys/gall/subs/~rux/trunk/app/grubbery/calendar/`: approve-weir at `/apps/grubbery/permits` with the instance's `weir.json` plus that road as `granted`, then `/apps/grubbery/permits/reload`.
+
+The gate switches "calendar (through grubbery)" on and off itself. Return to the snapshot afterwards.

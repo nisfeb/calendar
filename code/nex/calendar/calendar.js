@@ -2241,13 +2241,15 @@ fSave.onclick = function() {
     if (emails.length || oldGuests.length) meta.guests = next;
   }
   // a call asked for: the calendar's sync makes it (Google makes a Meet on
-  // the push). Keep leaves the link the event has
+  // the push, trunk a Talon call's link). Keep leaves the link the event
+  // has; any other choice drops it, and a Talon room with it
   var call = document.getElementById('f-call').value;
   if (cat === 'timed' && call !== 'keep') {
     if (call === 'meet' && !(CALS[fCal.value] && CALS[fCal.value].kind === 'google')) {
       st.textContent = 'Google Meet needs a calendar linked to Google'; return;
     }
     if (call) meta.call = call; else delete meta.call;
+    delete meta.conference; delete meta.talon_room;
   }
   var tags = parseTags(document.getElementById('f-tags').value);
   if (tags.length) meta.tags = tags; else delete meta.tags;
