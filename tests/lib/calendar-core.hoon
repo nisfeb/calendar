@@ -799,6 +799,7 @@
     (expect-eq !>(|) !>((endpoint-ok:core 'https://www.googleapis.com.evil.example/x')))
     (expect-eq !>(|) !>((endpoint-ok:core 'https://evil.example/oauth2.googleapis.com')))
     (expect-eq !>(|) !>((endpoint-ok:core 'ftp://localhost/')))
+    (expect-eq !>(|) !>((endpoint-ok:core 'https://www.googleapis.com:443@evil.example/')))
   ==
 ::  a re-read task without PRIORITY clears it (the file's), and a file
 ::  cannot name this ship's bookkeeping

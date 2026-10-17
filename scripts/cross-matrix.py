@@ -122,41 +122,47 @@ if len(sys.argv) > 6:
     check('host: google calendar linked and seeded', bool(gc) and 'G seed' in rows(HOST, HJ, gc), (gc, list(rows(HOST, HJ, gc))))
     r = json.loads(curl(HOST, HJ, '/apps/calendar/share/share', {'id': gc, 'ship': PEERNAME, 'mode': 'edit'}))
     check('host: a google calendar can be shared', r.get('ok') is True, r)
-    key = None
-    def offered2():
-        global key
-        for k, o in json.loads(curl(PEER, PJ, '/apps/calendar/share/shares.json'))['offers'].items():
-            if o['cal'] == gc: key = k; return True
-        return False
-    wait('peer: offer arrived', offered2, 30)
-    gsid = json.loads(curl(PEER, PJ, '/apps/calendar/share/accept', {'key': key}))['id']; sync(PEER, PJ)
-    wait('peer: google seed pulled through the host', lambda: 'G seed' in rows(PEER, PJ, gsid))
-    poke(PEER, PJ, {'action': 'add-event', 'cal': gsid, 'cat': 'timed', 'kind': 'once', 'start_ms': 1793700000000, 'fin': 'dur', 'dur_min': 30, 'meta': {'name': 'from peer'}})
-    wait('host: peer add arrived', lambda: 'from peer' in rows(HOST, HJ, gc))
-    gsync()
-    def gevents(): return json.dumps(ctl({'op': 'state'}).get('events', {}))
-    wait('google: peer add pushed up, once', lambda: [w[0] for w in writes()] == ['insert'] and 'from peer' in gevents())
-    ctl({'op': 'put', 'event': {'id': 'g-later', 'summary': 'G later', 'start': {'dateTime': '2026-11-03T10:00:00Z'}, 'end': {'dateTime': '2026-11-03T11:00:00Z'}}})
-    gsync(); time.sleep(4); sync(PEER, PJ)
-    wait('peer: a later google event reaches the peer', lambda: 'G later' in rows(PEER, PJ, gsid))
-    pu = rows(PEER, PJ, gsid)['from peer']['id']
-    poke(PEER, PJ, {'action': 'edit-event', 'cal': gsid, 'id': pu, 'cat': 'timed', 'kind': 'once', 'start_ms': 1793700000000, 'fin': 'dur', 'dur_min': 45, 'meta': {'name': 'from peer v2'}})
-    wait('host: peer edit arrived', lambda: 'from peer v2' in rows(HOST, HJ, gc))
-    gsync()
-    wait('google: the edit is one update, no echo', lambda: [w[0] for w in writes()] == ['insert', 'update'] and 'from peer v2' in gevents())
-    time.sleep(20); sync(PEER, PJ); gsync(); time.sleep(10)
-    check('no ping-pong after two more passes', [w[0] for w in writes()] == ['insert', 'update'] and rows(PEER, PJ, gsid)['from peer v2']['cat'] == 'timed', writes())
-    # a peer cannot make the host's Google account mail anyone: guests it
-    # names in a Google-linked calendar are not taken, the edit is
-    pu = rows(PEER, PJ, gsid)['from peer v2']['id']
-    poke(PEER, PJ, {'action': 'edit-event', 'cal': gsid, 'id': pu, 'cat': 'timed', 'kind': 'once', 'start_ms': 1793700000000, 'fin': 'dur', 'dur_min': 45,
-                    'meta': {'name': 'from peer v3', 'guests': [{'email': 'stranger@x.test', 'status': 'needs-action'}]}})
-    wait('host: peer edit with a guest arrived, the guest left out', lambda: 'from peer v3' in rows(HOST, HJ, gc) and not rows(HOST, HJ, gc)['from peer v3']['meta'].get('guests'))
-    gsync()
-    def gev(name): return [e for e in ctl({'op': 'state'}).get('events', {}).get('primary@fake', {}).values() if e.get('summary') == name]
-    wait('google: the edit went up with no attendee', lambda: gev('from peer v3') and not gev('from peer v3')[0].get('attendees'))
-    curl(HOST, HJ, '/apps/calendar/share/revoke', {'id': gc, 'ship': PEERNAME}); time.sleep(3)
-    poke(PEER, PJ, {'action': 'del-calendar', 'id': gsid})
-    curl(HOST, HJ, '/apps/calendar/google/unlink', {'id': gc}); ctl({'op': 'reset'})
+    # cleanup runs whatever a check raises: a gate that dies here would
+    # leave the next run a shared copy that turns its offer into a mode change
+    key = None; gsid = ''
+    try:
+        def offered2():
+            global key
+            for k, o in json.loads(curl(PEER, PJ, '/apps/calendar/share/shares.json'))['offers'].items():
+                if o['cal'] == gc: key = k; return True
+            return False
+        wait('peer: offer arrived', offered2, 30)
+        gsid = json.loads(curl(PEER, PJ, '/apps/calendar/share/accept', {'key': key}))['id']; sync(PEER, PJ)
+        wait('peer: google seed pulled through the host', lambda: 'G seed' in rows(PEER, PJ, gsid))
+        poke(PEER, PJ, {'action': 'add-event', 'cal': gsid, 'cat': 'timed', 'kind': 'once', 'start_ms': 1793700000000, 'fin': 'dur', 'dur_min': 30, 'meta': {'name': 'from peer'}})
+        wait('host: peer add arrived', lambda: 'from peer' in rows(HOST, HJ, gc))
+        gsync()
+        def gevents(): return json.dumps(ctl({'op': 'state'}).get('events', {}))
+        wait('google: peer add pushed up, once', lambda: [w[0] for w in writes()] == ['insert'] and 'from peer' in gevents())
+        ctl({'op': 'put', 'event': {'id': 'g-later', 'summary': 'G later', 'start': {'dateTime': '2026-11-03T10:00:00Z'}, 'end': {'dateTime': '2026-11-03T11:00:00Z'}}})
+        gsync(); time.sleep(4); sync(PEER, PJ)
+        wait('peer: a later google event reaches the peer', lambda: 'G later' in rows(PEER, PJ, gsid))
+        pu = rows(PEER, PJ, gsid)['from peer']['id']
+        poke(PEER, PJ, {'action': 'edit-event', 'cal': gsid, 'id': pu, 'cat': 'timed', 'kind': 'once', 'start_ms': 1793700000000, 'fin': 'dur', 'dur_min': 45, 'meta': {'name': 'from peer v2'}})
+        wait('host: peer edit arrived', lambda: 'from peer v2' in rows(HOST, HJ, gc))
+        gsync()
+        wait('google: the edit is one update, no echo', lambda: [w[0] for w in writes()] == ['insert', 'update'] and 'from peer v2' in gevents())
+        time.sleep(20); sync(PEER, PJ); gsync(); time.sleep(10)
+        check('no ping-pong after two more passes', [w[0] for w in writes()] == ['insert', 'update'] and rows(PEER, PJ, gsid)['from peer v2']['cat'] == 'timed', writes())
+        # a peer cannot make the host's Google account mail anyone: guests it
+        # names in a Google-linked calendar are not taken, the edit is
+        pu = rows(PEER, PJ, gsid)['from peer v2']['id']
+        poke(PEER, PJ, {'action': 'edit-event', 'cal': gsid, 'id': pu, 'cat': 'timed', 'kind': 'once', 'start_ms': 1793700000000, 'fin': 'dur', 'dur_min': 45,
+                        'meta': {'name': 'from peer v3', 'guests': [{'email': 'stranger@x.test', 'status': 'needs-action'}]}})
+        wait('host: peer edit with a guest arrived, the guest left out', lambda: 'from peer v3' in rows(HOST, HJ, gc) and not rows(HOST, HJ, gc)['from peer v3']['meta'].get('guests'))
+        gsync()
+        def gev(name): return [e for e in ctl({'op': 'state'}).get('events', {}).get('primary@fake', {}).values() if e.get('summary') == name]
+        wait('google: the edit went up with no attendee', lambda: gev('from peer v3') and not gev('from peer v3')[0].get('attendees'))
+    except Exception as ex:
+        check('the Google part ran to its end', False, repr(ex))
+    finally:
+        curl(HOST, HJ, '/apps/calendar/share/revoke', {'id': gc, 'ship': PEERNAME}); time.sleep(3)
+        if gsid: poke(PEER, PJ, {'action': 'del-calendar', 'id': gsid})
+        curl(HOST, HJ, '/apps/calendar/google/unlink', {'id': gc}); ctl({'op': 'reset'})
 print('CROSS MATRIX ' + ('PASSED' if not fails else 'FAILED: ' + ', '.join(fails)))
 sys.exit(1 if fails else 0)

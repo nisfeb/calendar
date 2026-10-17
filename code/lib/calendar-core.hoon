@@ -395,6 +395,8 @@
     ~
   ?~  rest  |
   =/  host=tape  (scag (fall (find "/" u.rest) (lent u.rest)) u.rest)
+  ::  a user part (google.com@elsewhere) names elsewhere
+  ?^  (find "@" host)  |
   =/  name=tape  (scag (fall (find ":" host) (lent host)) host)
   ?|  &(tls ?=(^ (find ~[name] `(list tape)`~["oauth2.googleapis.com" "www.googleapis.com" "accounts.google.com"])))
       =("localhost" name)
