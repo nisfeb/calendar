@@ -648,19 +648,20 @@
     =/  tags=(list @t)  (meta-tags:cal m)
     ?~(tags ~ ~[(line "CATEGORIES" (sep-join:rr "," (turn tags |=(t=@t (escape t)))))])
     ?:(=('' (ms 'color')) ~ ~[(line "COLOR" (escape (ms 'color')))])
-    ::  a URI, not text: no escaping, but no control characters either
-    =/  conf=tape  (skip (trip (ms 'conference')) |=(c=@t (lth c 32)))
-    ?~(conf ~ ~[(line "CONFERENCE;VALUE=URI;FEATURE=VIDEO" conf)])
-    =/  org=(unit json)  (~(get by m) 'organizer')
-    ?~(org ~ (drop (guest-line "ORGANIZER" u.org)))
-    =/  gs=(unit json)  (~(get by m) 'guests')
-    ?.  ?=([~ %a *] gs)  ~
-    (murn p.u.gs |=(g=json (guest-line "ATTENDEE" g)))
     =/  pri=@ud  (meta-priority:cal m)
     ?:(=(0 pri) ~ ~[(line "PRIORITY" (a-co:co pri))])
     timing
     recur-lines
     alarm-lines
+    ::  where a file's own lines go, as clients write them
+    =/  org=(unit json)  (~(get by m) 'organizer')
+    ?~(org ~ (drop (guest-line "ORGANIZER" u.org)))
+    =/  gs=(unit json)  (~(get by m) 'guests')
+    ?.  ?=([~ %a *] gs)  ~
+    (murn p.u.gs |=(g=json (guest-line "ATTENDEE" g)))
+    ::  a URI, not text: no escaping, but no control characters either
+    =/  conf=tape  (skip (trip (ms 'conference')) |=(c=@t (lth c 32)))
+    ?~(conf ~ ~[(line "CONFERENCE;VALUE=URI" conf)])
     %+  turn
       %+  skip  props.e
       |=  p=prop
@@ -755,10 +756,11 @@
   ==
 ::  +meta-prop: a prop read into meta, so not kept verbatim as well
 ++  meta-prop  |=(p=prop ?=(?(%'CATEGORIES' %'COLOR' %'PRIORITY' %'CONFERENCE' %'ATTENDEE' %'ORGANIZER') (base-key k.p)))
-::  +guest-json: an ATTENDEE or ORGANIZER as {email, name, status, self}.
-::  status is the PARTSTAT in lower case; self (X-SELF, which only the
-::  Google pull writes) marks the calendar's own owner among the guests.
-::  ponytail: ROLE, RSVP and the other params are not kept
+::  +guest-json: an ATTENDEE or ORGANIZER as {email, name, status, self,
+::  raw}. status is the PARTSTAT in lower case; self (X-SELF, which only
+::  the Google pull writes) marks the calendar's own owner among the
+::  guests. raw is the line as it came, [key value], so a guest no one
+::  changed goes back out exactly so (+guest-line)
 ++  guest-json
   |=  p=prop
   ^-  (unit json)
@@ -767,28 +769,72 @@
   ?~  email  ~
   =/  name=@t  (key-param k.p 'CN')
   =/  st=@t  (crip (cass (trip (key-param k.p 'PARTSTAT'))))
+  =/  self=?  =('TRUE' (key-param k.p 'X-SELF'))
   :-  ~
   %-  pairs:enjs:format
   ;:  weld
     ^-  (list [@t json])  ~[['email' s+(crip email)]]
     ^-  (list [@t json])  ?:(=('' name) ~ ~[['name' s+name]])
     ^-  (list [@t json])  ?:(=('' st) ~ ~[['status' s+st]])
-    ^-  (list [@t json])  ?.(=('TRUE' (key-param k.p 'X-SELF')) ~ ~[['self' b+&]])
+    ^-  (list [@t json])  ?.(self ~ ~[['self' b+&]])
+    ^-  (list [@t json])  ?:(self ~ ~[['raw' [%a ~[s+k.p s+v.p]]]])
   ==
+::  +key-segments: a property key split at the semicolons outside quotes
+++  key-segments
+  |=  k=@t
+  ^-  (list tape)
+  =/  t=tape  (trip k)
+  =/  cur=tape  ~
+  =/  out=(list tape)  ~
+  =/  q=?  |
+  |-
+  ?~  t  (flop [(flop cur) out])
+  ?:  =('"' i.t)  $(t t.t, cur [i.t cur], q !q)
+  ?:  &(=(';' i.t) !q)  $(t t.t, cur ~, out [(flop cur) out])
+  $(t t.t, cur [i.t cur])
 ::  +guest-line: a guest from meta as an ATTENDEE or ORGANIZER line; ~
-::  for one with no email (a ship). A name loses quotes and control
-::  characters, and only a known status is written
+::  for one with no email (a ship). One unchanged since it was read is
+::  its line as it came. Otherwise it is made: a name quoted when it
+::  must be, losing quotes and control characters, only a known status,
+::  and the read line's other parameters (ROLE, RSVP, ...) kept
 ++  guest-line
   |=  [key=tape g=json]
   ^-  (unit tape)
   =/  clean  |=(t=@t `tape`(skip (trip t) |=(c=@t |((lth c 32) =('"' c)))))
+  =/  bare  |=(t=@t `tape`(skip (trip t) |=(c=@t (lth c 32))))
   =/  email=tape  (clean (jstr g 'email'))
   ?~  email  ~
+  =/  raw=(unit prop)
+    =/  r=(unit json)  ?.(?=([%o *] g) ~ (~(get by p.g) 'raw'))
+    ?.  ?=([~ %a [%s *] [%s *] ~] r)  ~
+    `[p.i.p.u.r p.i.t.p.u.r]
+  =/  was=(unit json)  (biff raw guest-json)
+  =/  same
+    |=  k=@t
+    =(?~(was '' (jstr u.was k)) (jstr g k))
+  ?:  ?&  ?=(^ raw)  ?=(^ was)
+          =(key (trip (base-key k.u.raw)))
+          (same 'email')  (same 'name')  (same 'status')
+          !=([~ %b %.y] ?.(?=([%o *] g) ~ (~(get by p.g) 'self')))
+      ==
+    `(line (bare k.u.raw) (bare v.u.raw))
   =/  name=tape  (clean (jstr g 'name'))
   =/  st=@t  (jstr g 'status')
   =/  ps=tape
     ?.(?=(?(%needs-action %accepted %declined %tentative %delegated) st) "" ";PARTSTAT={(cuss (trip st))}")
-  `(line :(weld key ?~(name "" ";CN=\"{name}\"") ps) (weld "mailto:" email))
+  =/  cn=tape
+    ?~  name  ""
+    ?:((lien `tape`name |=(c=@t ?=(?(%':' %';' %',') c))) ";CN=\"{name}\"" ";CN={name}")
+  =/  more=tape
+    ?~  raw  ""
+    %-  zing
+    %+  turn
+      %+  skip  (slag 1 (key-segments k.u.raw))
+      |=  s=tape
+      =/  n=tape  (cuss (scag (fall (find "=" s) (lent s)) s))
+      ?=(^ (find ~[n] `(list tape)`~["CN" "PARTSTAT" "X-SELF"]))
+    |=(s=tape (weld ";" (skip s |=(c=@t (lth c 32)))))
+  `(line :(weld key cn ps more) (weld "mailto:" email))
 ::  +jstr: a string member of a json object, '' when absent
 ++  jstr
   |=  [j=json k=@t]

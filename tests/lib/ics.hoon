@@ -184,7 +184,7 @@
     |=(l=tape (weld l crlf:ics))
   =/  ves=(list vevent:ics)  (events:ics body)
   ;:  weld
-    (expect !>(?=(^ (find "CONFERENCE;VALUE=URI;FEATURE=VIDEO:https://meet.google.com/abc-defg-hij" out))))
+    (expect !>(?=(^ (find "CONFERENCE;VALUE=URI:https://meet.google.com/abc-defg-hij" out))))
     (expect !>(?=(~ (find "\0d\0aX-EVIL" evil))))
     (expect-eq !>(1) !>((lent ves)))
     (expect-eq !>(`s+'https://zoom.us/j/1') !>((~(get by (read-meta:ics (snag 0 ves))) 'conference')))
@@ -220,6 +220,16 @@
         :~  (pairs:enjs:format ~[['email' s+'ana@x.test'] ['name' s+'Ana'] ['status' s+'accepted']])
             (pairs:enjs:format ~[['email' s+'bo@x.test'] ['status' s+'bogus;X=1']])
             (pairs:enjs:format ~[['ship' s+'~zod']])
+            ::  read so and unchanged: the line as it came
+            %-  pairs:enjs:format
+            :~  ['email' s+'kim@x.test']  ['name' s+'Kim']  ['status' s+'accepted']
+                ['raw' [%a ~[s+'ATTENDEE;ROLE=CHAIR;CN=Kim;PARTSTAT=ACCEPTED' s+'mailto:kim@x.test']]]
+            ==
+            ::  read so, then answered: made again, its ROLE kept
+            %-  pairs:enjs:format
+            :~  ['email' s+'lu@x.test']  ['status' s+'declined']
+                ['raw' [%a ~[s+'ATTENDEE;PARTSTAT=NEEDS-ACTION;ROLE=OPT-PARTICIPANT' s+'mailto:lu@x.test']]]
+            ==
         ==
     ==
   =/  ev=event:cal  [%timed [[/lib/rules %once] ~ ~2026.11.2..10.00.00] ~ [%dur ~h1] [~ ~] w]
@@ -229,11 +239,21 @@
   ;:  weld
     (expect !>(?=(~ (find "old@x.test" old))))
     %+  expect-eq
-      !>(`[%a ~[(pairs:enjs:format ~[['email' s+'doe@x.test'] ['name' s+'Doe: J'] ['status' s+'tentative']])]])
+      !>  :-  ~
+          :-  %a
+          :_  ~
+          %-  pairs:enjs:format
+          :~  ['email' s+'doe@x.test']  ['name' s+'Doe: J']  ['status' s+'tentative']
+              ['raw' [%a ~[s+'ATTENDEE;CN="Doe: J";PARTSTAT=TENTATIVE;ROLE=REQ-PARTICIPANT' s+'MAILTO:doe@x.test']]]
+          ==
     !>((~(get by m) 'guests'))
-    (expect-eq !>(`(pairs:enjs:format ~[['email' s+'boss@x.test'] ['name' s+'Boss']])) !>((~(get by m) 'organizer')))
+    %+  expect-eq
+      !>(`(pairs:enjs:format ~[['email' s+'boss@x.test'] ['name' s+'Boss'] ['raw' [%a ~[s+'ORGANIZER;CN=Boss' s+'mailto:boss@x.test']]]]))
+    !>((~(get by m) 'organizer'))
     (expect !>(?=(^ (find "ORGANIZER:mailto:boss@x.test" out))))
-    (expect !>(?=(^ (find "ATTENDEE;CN=\"Ana\";PARTSTAT=ACCEPTED:mailto:ana@x.test" out))))
+    (expect !>(?=(^ (find "ATTENDEE;CN=Ana;PARTSTAT=ACCEPTED:mailto:ana@x.test" out))))
+    (expect !>(?=(^ (find "ATTENDEE;ROLE=CHAIR;CN=Kim;PARTSTAT=ACCEPTED:mailto:kim@x.test" out))))
+    (expect !>(?=(^ (find "ATTENDEE;PARTSTAT=DECLINED;ROLE=OPT-PARTICIPANT:mailto:lu@x.test" out))))
     (expect !>(?=(^ (find "ATTENDEE:mailto:bo@x.test" out))))
     (expect !>(?=(~ (find "~zod" out))))
     (expect !>((meta-prop:ics ['ATTENDEE;CN=x' 'mailto:a@b'])))

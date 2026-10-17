@@ -84,6 +84,22 @@ moved = wait(lambda: [e for e in events(GUEST, GJ, 'urbit') if e['meta']['name']
 check('the host\'s change reaches the copy, the answer kept', moved and moved[0]['meta'].get('location') == 'Room 2'
       and [g.get('status') for g in moved[0]['meta'].get('ships', []) if g.get('self')] == ['accepted'], moved)
 
+# one occurrence of an invited series moved: no second invitation, and the
+# guest's copy shows the move
+poke(HOST, HJ, {'action': 'add-event', 'cal': 'inv', 'id': 'inv-weekly@gate', 'cat': 'timed', 'kind': 'weekly', 'start_ms': 1792404000000,
+                'args': {'days': ['mon'], 'at': 600}, 'count': 3, 'fin': 'dur', 'dur_min': 60,
+                'meta': {'name': 'inv weekly', 'ships': [{'ship': GUESTNAME, 'status': 'needs-action'}]}})
+rw = wait(lambda: row('inv weekly'))
+curl(GUEST, GJ, '/apps/calendar/invites/answer', {'key': rw['key'] if rw else '', 'status': 'accepted', 'cal': 'urbit'})
+wait(lambda: [e for e in events(GUEST, GJ, 'urbit') if e['meta']['name'] == 'inv weekly'])
+poke(HOST, HJ, {'action': 'edit-at', 'id': 'inv-weekly@gate', 'at_ms': 1792404000000 + 7 * 86400000, 'cat': 'timed', 'kind': 'once',
+                'start_ms': 1792404000000 + 8 * 86400000, 'fin': 'dur', 'dur_min': 60,
+                'meta': {'name': 'inv weekly (Tuesday)', 'ships': [{'ship': GUESTNAME, 'status': 'accepted'}]}})
+gw = wait(lambda: [e for e in events(GUEST, GJ, 'urbit') if e['meta']['name'] == 'inv weekly (Tuesday)'])
+check('a moved occurrence reaches the copy in its series', gw and len([e for e in events(GUEST, GJ, 'urbit') if e['meta']['name'] == 'inv weekly']) == 1, events(GUEST, GJ, 'urbit'))
+check('and sends no second invitation', len([r for r in invites(GUEST, GJ) if r.get('name', '').startswith('inv weekly')]) == 1, invites(GUEST, GJ))
+poke(HOST, HJ, {'action': 'del-event', 'id': 'inv-weekly@gate'})
+
 # the next invitation from that host offers the same calendar; a decline reaches the host
 poke(HOST, HJ, dict(meet('inv drinks', [{'ship': GUESTNAME, 'status': 'needs-action'}], start=1793050800000), action='add-event', id='inv-drinks@gate'))
 r2 = wait(lambda: row('inv drinks'))

@@ -44,11 +44,16 @@
     %+  expect-eq
       !>  :-  ~
           :-  %a
-          :~  (pairs:enjs:format ~[['email' s+'ana@x.test'] ['name' s+'Ana A'] ['status' s+'accepted']])
+          :~  %-  pairs:enjs:format
+              :~  ['email' s+'ana@x.test']  ['name' s+'Ana A']  ['status' s+'accepted']
+                  ['raw' [%a ~[s+'ATTENDEE;CN="Ana A";PARTSTAT=ACCEPTED' s+'mailto:ana@x.test']]]
+              ==
               (pairs:enjs:format ~[['email' s+'me@x.test'] ['status' s+'needs-action'] ['self' b+&]])
           ==
     !>((~(get by m) 'guests'))
-    (expect-eq !>(`(pairs:enjs:format ~[['email' s+'boss@x.test']])) !>((~(get by m) 'organizer')))
+    %+  expect-eq
+      !>(`(pairs:enjs:format ~[['email' s+'boss@x.test'] ['raw' [%a ~[s+'ORGANIZER' s+'mailto:boss@x.test']]]]))
+    !>((~(get by m) 'organizer'))
     %+  expect-eq
       !>(~[['attendees' [%a ~[(pairs:enjs:format ~[['email' s+'ana@x.test'] ['responseStatus' s+'accepted']])]]]])
     !>(out)

@@ -80,7 +80,7 @@ skipped = [r for r in win if r['meta'].get('name') == 'G weekly' and r['idx'] ==
 check('moved instance shows, original skipped', len(moved) == 1 and not skipped, (len(moved), len(skipped)))
 ex = curl([CAL + '/dav/cal/%s/g-timed%%40google.com.ics' % gc])
 check('alarm pulled', 'TRIGGER:-PT10M' in str(ex), str(ex)[:200])
-check('meet link pulled', 'CONFERENCE;VALUE=URI;FEATURE=VIDEO:https://meet.google.com/abc-defg-hij' in str(ex)
+check('meet link pulled', 'CONFERENCE;VALUE=URI:https://meet.google.com/abc-defg-hij' in str(ex)
       and [r['meta'].get('conference') for r in ship_get('/events.json') if r['meta'].get('name') == 'G timed'] == ['https://meet.google.com/abc-defg-hij'], str(ex)[:400])
 check('nothing pushed back', writes() == [], writes())
 # remote delete + rename
@@ -193,7 +193,26 @@ poke({'action': 'edit-at', 'id': off[0]['id'] if off else '', 'at_ms': 179245440
 st = ctl({'op': 'state'}); new = st['writes'][n0:]
 oi = st['events']['primary@fake'].get(offs[0]['id'] + '_20261027', {}) if offs else {}
 check('an all-day instance moves by its date', [w[0] for w in new] == ['update'] and oi.get('start') == {'date': '2026-10-28'} and oi.get('summary') == 'offsite (Wednesday)', (new, oi))
-for nm in ('G guests', 'invite out', 'all hands', 'offsite'):
+# a series with no zone: Google names its instance's original start in
+# UTC, and the moved one still shows once after a pull
+poke({'action': 'add-event', 'cal': gc, 'cat': 'timed', 'kind': 'weekly', 'start_ms': 1792404000000, 'args': {'days': ['mon'], 'at': 600}, 'count': 3,
+      'fin': 'dur', 'dur_min': 30, 'meta': {'name': 'utc standup'}}); time.sleep(10)
+us = [r for r in ship_get('/events.json') if r['meta'].get('name') == 'utc standup']
+# the second Monday, 2026-10-26 10:00 UTC, moved an hour later
+poke({'action': 'edit-at', 'id': us[0]['id'] if us else '', 'at_ms': 1792404000000 + 7 * D, 'cat': 'timed', 'kind': 'once', 'start_ms': 1792404000000 + 7 * D + 3600000,
+      'fin': 'dur', 'dur_min': 30, 'meta': {'name': 'utc standup (late)'}}); time.sleep(10)
+prod()
+win = ship_get('/window.json?from=1792368000000&to=1794355200000')['rows']
+nm = sorted(r['meta'].get('name') for r in win if r['meta'].get('name', '').startswith('utc standup'))
+check('a no-zone series\' moved instance shows once after a pull', nm == ['utc standup', 'utc standup', 'utc standup (late)'], nm)
+# a guest taken off a meeting made here is off it on Google too
+poke({'action': 'add-event', 'cal': gc, 'id': 'two-guests@gate', 'cat': 'timed', 'kind': 'once', 'start_ms': 1791385200000, 'fin': 'dur', 'dur_min': 30,
+      'meta': {'name': 'two guests', 'guests': [{'email': 'a@x.test', 'status': 'needs-action'}, {'email': 'b@x.test', 'status': 'needs-action'}]}}); time.sleep(10)
+poke({'action': 'edit-event', 'id': 'two-guests@gate', 'cat': 'timed', 'kind': 'once', 'start_ms': 1791385200000, 'fin': 'dur', 'dur_min': 30,
+      'meta': {'name': 'two guests', 'guests': [{'email': 'a@x.test', 'status': 'needs-action'}]}}); time.sleep(10)
+st = ctl({'op': 'state'}); tg = [e for e in st['events']['primary@fake'].values() if e.get('summary') == 'two guests']
+check('a guest taken off is off on google', tg and [a['email'] for a in tg[0].get('attendees', [])] == ['a@x.test'], tg and tg[0].get('attendees'))
+for nm in ('G guests', 'invite out', 'all hands', 'offsite', 'utc standup', 'two guests'):
     for r in ship_get('/events.json'):
         if r['meta'].get('name') == nm: poke({'action': 'del-event', 'id': r['id']})
 time.sleep(8)

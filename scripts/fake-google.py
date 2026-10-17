@@ -156,8 +156,11 @@ class H(BaseHTTPRequestHandler):
             if eid not in EVENTS[cid] and at and base in EVENTS[cid] and EVENTS[cid][base].get('recurrence'):
                 st = (at[:4] + '-' + at[4:6] + '-' + at[6:8]) if len(at) == 8 else \
                      (at[:4] + '-' + at[4:6] + '-' + at[6:8] + 'T' + at[9:11] + ':' + at[11:13] + ':' + at[13:15] + 'Z')
+                # Google names the original start in the series' own zone
+                tz = (EVENTS[cid][base].get('start') or {}).get('timeZone')
+                ost = {'date': st} if len(at) == 8 else dict({'dateTime': st}, **({'timeZone': tz} if tz else {}))
                 EVENTS[cid][eid] = {'id': eid, 'recurringEventId': base, 'iCalUID': EVENTS[cid][base].get('iCalUID'), 'status': 'confirmed',
-                                    'originalStartTime': {'date': st} if len(at) == 8 else {'dateTime': st}}
+                                    'originalStartTime': ost}
             if eid not in EVENTS[cid]: self.send(404, {'error': {'code': 404}}); return
             im = self.headers.get('If-Match')
             if im and im != EVENTS[cid][eid].get('etag'): self.send(412, {'error': {'code': 412, 'message': 'Precondition Failed'}}); return

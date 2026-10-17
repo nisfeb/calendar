@@ -311,7 +311,6 @@ function showPop(ev, x, y) {
   }).join(', ') : '';
   if (ev.host) gl.textContent = 'From ' + ev.host + (gl.textContent ? '. ' + gl.textContent : '');
   gl.style.display = gl.textContent ? '' : 'none';
-  gl.style.display = others.length ? '' : 'none';
   var me = (ev.guests || []).filter(function(g) { return g.self; })[0];
   var rs = document.getElementById('pop-rsvp');
   rs.style.display = me && !calReadonly(ev.cal) ? '' : 'none';
@@ -1730,7 +1729,8 @@ function loadInvites() {
       var row = document.createElement('div'); row.className = 'feed-row';
       var nm = document.createElement('span'); nm.className = 'fn';
       nm.textContent = (r.name || r.uid) + ' from ' + r.host + (r.start_ms ? ', ' + fmtDate(msToUTC(r.start_ms)) : '');
-      var u = document.createElement('span'); u.className = 'fu'; u.textContent = r.status ? GUEST_ST[r.status] : 'no answer yet';
+      var u = document.createElement('span'); u.className = 'fu';
+      u.textContent = (r.status ? GUEST_ST[r.status] : 'no answer yet') + (r.status && r.told === false ? ', the host has not heard yet' : '');
       var sel = document.createElement('select'); sel.setAttribute('aria-label', 'Calendar for ' + (r.name || r.uid));
       Object.keys(CALS).filter(function(id) { return !calReadonly(id); }).forEach(function(id) {
         var o = document.createElement('option'); o.value = id; o.textContent = CALS[id].name; sel.appendChild(o);
