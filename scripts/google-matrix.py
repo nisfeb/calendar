@@ -159,7 +159,28 @@ poke({'action': 'add-event', 'cal': gc, 'cat': 'timed', 'kind': 'once', 'start_m
       'meta': {'name': 'invite out', 'guests': [{'email': 'bo@x.test', 'status': 'needs-action'}]}}); time.sleep(10)
 st = ctl({'op': 'state'}); io = [e for e in st['events']['primary@fake'].values() if e.get('summary') == 'invite out']
 check('guests added here go to google', io and io[0].get('attendees') == [{'email': 'bo@x.test', 'responseStatus': 'needsAction'}], io and io[0].get('attendees'))
-for nm in ('G guests', 'invite out'):
+# only this one: a series with a guest, one occurrence moved here becomes
+# an edit of Google's instance (<series>_<start in UTC>), guests and all,
+# and the series itself is not sent again
+poke({'action': 'add-event', 'cal': gc, 'cat': 'timed', 'kind': 'weekly', 'start_ms': 1792404000000, 'args': {'days': ['mon'], 'at': 600}, 'count': 4, 'zone': 'America/New_York',
+      'fin': 'dur', 'dur_min': 60, 'meta': {'name': 'all hands', 'guests': [{'email': 'bo@x.test', 'status': 'needs-action'}]}}); time.sleep(10)
+ah = [r for r in ship_get('/events.json') if r['meta'].get('name') == 'all hands']
+st = ctl({'op': 'state'}); series = [e for e in st['events']['primary@fake'].values() if e.get('summary') == 'all hands' and not e.get('recurringEventId')]
+check('series with a guest pushed', ah and series, (ah, series))
+n0 = len(st['writes'])
+# the second Monday, 2026-10-26 10:00 New York (14:00Z), moved to Tuesday 11:00
+poke({'action': 'edit-at', 'id': ah[0]['id'], 'at_ms': 1793023200000, 'cat': 'timed', 'kind': 'once', 'start_ms': 1792404000000 + 8 * 86400000 + 3600000,
+      'zone': 'America/New_York', 'fin': 'dur', 'dur_min': 60, 'meta': {'name': 'all hands (Tuesday)', 'guests': [{'email': 'bo@x.test', 'status': 'needs-action'}]}}); time.sleep(10)
+st = ctl({'op': 'state'}); new = st['writes'][n0:]
+inst = st['events']['primary@fake'].get(series[0]['id'] + '_20261026T140000Z', {}) if series else {}
+check('one instance edit, the series not sent again', [w[0] for w in new] == ['update'] and new and new[0][2] == series[0]['id'] + '_20261026T140000Z', new)
+check('the instance moved with its guests', inst.get('summary') == 'all hands (Tuesday)' and inst.get('start', {}).get('dateTime', '').startswith('2026-10-27T11:00:00')
+      and inst.get('attendees') == [{'email': 'bo@x.test', 'responseStatus': 'needsAction'}] and inst.get('iCalUID') == series[0].get('iCalUID'), inst)
+win = ship_get('/window.json?from=1792368000000&to=1794355200000')['rows']
+names = sorted((r['meta'].get('name'), r['l']) for r in win if r['meta'].get('name', '').startswith('all hands'))
+check('the ship shows the moved one in place of the second', [n for n, _ in names].count('all hands') == 3 and [n for n, _ in names].count('all hands (Tuesday)') == 1, names)
+prod(); check('no echo of the instance after a pull', len(writes()) == n0 + 1, writes()[n0:])
+for nm in ('G guests', 'invite out', 'all hands'):
     for r in ship_get('/events.json'):
         if r['meta'].get('name') == nm: poke({'action': 'del-event', 'id': r['id']})
 time.sleep(8)

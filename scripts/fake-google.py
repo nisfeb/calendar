@@ -150,6 +150,14 @@ class H(BaseHTTPRequestHandler):
         if len(parts) == 7 and parts[5] == 'events':
             if FAIL['writes']: self.send(503, {'error': {'code': 503, 'message': 'forced'}}); return
             cid, eid = parts[4], parts[6]
+            # an instance of a series, by Google's id <series>_<original start in UTC>:
+            # the first edit makes its exception
+            base, _, at = eid.partition('_')
+            if eid not in EVENTS[cid] and at and base in EVENTS[cid] and EVENTS[cid][base].get('recurrence'):
+                st = (at[:4] + '-' + at[4:6] + '-' + at[6:8]) if len(at) == 8 else \
+                     (at[:4] + '-' + at[4:6] + '-' + at[6:8] + 'T' + at[9:11] + ':' + at[11:13] + ':' + at[13:15] + 'Z')
+                EVENTS[cid][eid] = {'id': eid, 'recurringEventId': base, 'iCalUID': EVENTS[cid][base].get('iCalUID'), 'status': 'confirmed',
+                                    'originalStartTime': {'date': st} if len(at) == 8 else {'dateTime': st}}
             if eid not in EVENTS[cid]: self.send(404, {'error': {'code': 404}}); return
             im = self.headers.get('If-Match')
             if im and im != EVENTS[cid][eid].get('etag'): self.send(412, {'error': {'code': 412, 'message': 'Precondition Failed'}}); return

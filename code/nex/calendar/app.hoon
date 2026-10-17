@@ -258,6 +258,25 @@
             (set-skips u.ev (~(del in (skips-of u.ev)) u.idx))
           ;<  ~  bind:m  (replace:io (put-ev c home id new))
           $
+        ::  edit-at: "only this one". The occurrence that starts at at_ms
+        ::  (as skip-at names it) takes the poke's own shape (a single
+        ::  event, add-event's fields) as an override child of the series
+        ?:  =('edit-at' act)
+          =/  id=@ta  (crip (trip (gs jon 'id')))
+          =/  at=(unit @ud)  (gn jon 'at_ms')
+          =/  ev=(unit event:cal)  (parse-event jon zone.c)
+          =/  als=alarms-arg:core  (parse-alarms jon)
+          ?:  ?=(%bad -.als)
+            ;<  ~  bind:m  (refuse './' act (gs jon 'id') '' why.als)
+            $
+          =/  new=(unit calendar:cal)
+            ?.  &(?=(^ at) ?=(^ ev))  ~
+            (put-child c home id (ms-to-da u.at) u.ev ?:(?=(%set -.als) `l.als ~))
+          ?~  new
+            ;<  ~  bind:m  (refuse './' act (gs jon 'id') '' "no repeating event has an occurrence there, or the new one could not be read")
+            $
+          ;<  ~  bind:m  (replace:io u.new)
+          $
         ::  split-event: "this and following" as one step. The series ends
         ::  before occurrence idx and a new one (the poke's own fields, in
         ::  the calendar it names) starts there, keeping the old one's skips
@@ -1768,6 +1787,43 @@
     |=  [[* ch=entry:cal] acc=_k]
     ?:((cancelled ch) (del-entry:cal acc uid.ch) (put-one:cal acc ch))
   (restamp:cal k `parent)
+::  +put-child: "only this one" from a poke: the occurrence of series id
+::  that starts at `at` (the instant, as skip-at and the window name it)
+::  becomes an override child with the shape ev, and the series skips
+::  it, as a client's RECURRENCE-ID would have it. So it stays the
+::  series' instance everywhere: in CalDAV objects, and on Google as an
+::  edit of that instance, guests and all. A child already there for it
+::  is replaced, keeping its Google id; alarms absent are the old
+::  child's, else the series'. ~ when the series is not found, does not
+::  repeat, or has no occurrence at `at`.
+++  put-child
+  |=  [c=calendar:cal home=@ta id=@ta at=@da ev=event:cal als=(unit (list alarm:cal))]
+  ^-  (unit calendar:cal)
+  =/  got=(unit [cid=@ta e=entry:cal])  (locate c home id)
+  ?~  got  ~
+  =/  pe=entry:cal  e.u.got
+  ?.  ?=(?(%timed %allday) -.event.pe)  ~
+  ?~  (occurrence-index event.pe at)  ~
+  ::  its RECURRENCE-ID: the series' own wall clock in its zone
+  =/  w=when:ics
+    ?:  ?=(%allday -.event.pe)  [%day at]
+    ?~(zone.event.pe [%utc at] [%local u.zone.event.pe (wall:rules zone.event.pe at)])
+  =/  [ps=tape v=tape]  (when-text:ics w)
+  =/  rid=[@t @t]  [(crip (weld "RECURRENCE-ID" ps)) (crip v)]
+  =/  k=cal:cal  (~(got by cals.c) cid.u.got)
+  =/  cu=uid:cal  (crip "{(trip uid.pe)}#{v}")
+  =/  old=(unit entry:cal)  (~(get by entries.k) cu)
+  =/  gids=(list [@t @t])
+    ?~  old  ~
+    (skim props.u.old |=([key=@t *] =("X-GOOGLE-" (scag 9 (trip key)))))
+  =/  ch=entry:cal
+    :*  ev  cu  ''  0
+        (fall als ?~(old alarms.pe alarms.u.old))
+        [['X-GRUBBERY-PARENT' uid.pe] rid gids]
+    ==
+  =.  k  (skip-instances k uid.pe ~[~[rid]])
+  =.  k  (restamp:cal (put-one:cal k ch) `uid.pe)
+  `c(cals (~(put by cals.c) cid.u.got k))
 ::  +skip-instance: the parent skips one occurrence (a cancelled or
 ::  overridden instance), the one the RECURRENCE-ID in props names
 ++  skip-instance
@@ -2907,11 +2963,59 @@
   ;<  ~  bind:m  (unfault pre (cat 3 'google-pages/' id))
   (pure:m row2)
 ++  google-stop  google-stop:core
+::  +push-kids: a series' instances changed since the watermark, out as
+::  edits of their Google instances: a pulled one's own id, else Google's
+::  <series id>_<original start in UTC>. pgid is the series' Google id.
+::  The body is the instance's own (no iCalUID: it is the series'), and
+::  one the same as last sent is not sent. A refusal is logged like a
+::  parent's.
+++  push-kids
+  |=  [pre=@t id=@ta base=tape q=tape pgid=@t since=@ud sup=(set [@t @ud]) kids=(list entry:cal)]
+  =/  m  (fiber:fiber:nexus ,(list [uid:cal @t @t @t @t @t]))
+  ^-  form:m
+  =|  out=(list [uid:cal @t @t @t @t @t])
+  |-
+  ?~  kids  (pure:m out)
+  =/  ch=entry:cal  i.kids
+  ?:  |((lte seq.ch since) (~(has in sup) [uid.ch seq.ch]) ?=(%todo -.event.ch))  $(kids t.kids)
+  =/  own=@t  =/(p (get-prop:ics props.ch 'X-GOOGLE-ID') ?~(p '' v.u.p))
+  =/  iid=@t
+    ?.  =('' own)  own
+    =/  w=(unit when:ics)  (parse-when:ics props.ch 'RECURRENCE-ID')
+    ?~  w  ''
+    %-  crip
+    %+  weld  "{(trip pgid)}_"
+    ?-  -.u.w
+      %day    (date-text:ics d.u.w)
+      %utc    (weld (dt-text:ics d.u.w) "Z")
+      %local  (weld (dt-text:ics (fall (place:rules `zone.u.w d.u.w) d.u.w)) "Z")
+    ==
+  ?:  =('' iid)  $(kids t.kids)
+  =/  body=json
+    =/  b=json  (json-of:gcal ch ~)
+    ?.(?=([%o *] b) b [%o (~(del by p.b) 'iCalUID')])
+  =/  sent=@t  (scot %uv (sham body))
+  ?:  =(`sent (bind (get-prop:ics props.ch 'X-GOOGLE-SENT') tail))  $(kids t.kids)
+  =/  gtag=@t  =/(p (get-prop:ics props.ch 'X-GOOGLE-ETAG') ?~(p '' v.u.p))
+  ;<  [status=@ud res=json]  bind:m
+    %:  google-api-hdr  pre  %'PATCH'  "{base}/{(enc-seg:dav (trip iid))}{q}"  `body
+      ?:(=('' gtag) ~ ~[['if-match' gtag]])
+    ==
+  ?.  =(200 status)
+    ;<  ~  bind:m
+      %:  google-conflict  pre  id  uid.ch  `ch  (gs res 'updated')
+        ?:  =(412 status)  'changed on both sides; google kept'
+        (crip "google refused the instance edit ({(a-co:co status)})")
+      ==
+    $(kids t.kids)
+  $(kids t.kids, out [[uid.ch (gs res 'id') (gs res 'updated') (gs res 'etag') (join-link:gcal res) sent] out])
 ::  +google-push: the calendar's log past the watermark, out. A parent
 ::  with a known Google id is patched, without one inserted; a delete
-::  goes by the id map. Children (overrides) are not pushed: Google keeps
-::  its own instances. A +google-stop status stops the pass and keeps
-::  the watermark.
+::  goes by the id map. Its children (overrides) changed since go out as
+::  edits of their Google instances (+push-kids). A body the same as the
+::  one last sent (X-GOOGLE-SENT) is not sent again, so moving one
+::  instance does not mail the guests a change of the series. A
+::  +google-stop status stops the pass and keeps the watermark.
 ++  google-push
   |=  [pre=@t id=@ta row=json]
   =/  m  (fiber:fiber:nexus ,json)
@@ -2929,7 +3033,7 @@
   =/  sup=(set [@t @ud])  (suppressed row)
   =/  changes=(list [uid:cal ?(%put %del)])  (changes-since u.k since sup)
   =/  base=tape  "/calendar/v3/calendars/{(enc-seg:dav (trip gid))}/events"
-  =|  results=(list [=uid:cal gid=@t updated=@t etag=@t join=@t])
+  =|  results=(list [=uid:cal gid=@t updated=@t etag=@t join=@t sent=@t])
   ::  conferenceDataVersion=1: a Meet asked for is made, and one there is
   ::  kept on a patch that does not name it. sendUpdates=all: Google mails
   ::  the guests an invite, a change or a cancellation, as its own page
@@ -2971,6 +3075,11 @@
     ::  (guests, visibility, colors, other apps' properties) stays. If-Match
     ::  names the version last pulled: an edit made on Google since is a
     ::  412, logged below, and the next pull brings it
+    =/  sent=@t  (scot %uv (sham body))
+    ?:  &(!=('' have) =(`sent (bind (get-prop:ics props.u.e 'X-GOOGLE-SENT') tail)))
+      ;<  kres=(list [uid:cal @t @t @t @t @t])  bind:m
+        (push-kids pre id base q have since sup (kids-of:cal u.k u))
+      $(changes t.changes, results (weld kres results))
     =/  gtag=@t  =/(p (get-prop:ics props.u.e 'X-GOOGLE-ETAG') ?~(p '' v.u.p))
     ::  guests named for an event pulled before guests were read: Google's
     ::  list is fetched and merged in, or the patch would drop the guests
@@ -3010,10 +3119,12 @@
         ==
       $(changes t.changes)
     =/  new-gid=@t  (gs res 'id')
+    ;<  kres=(list [uid:cal @t @t @t @t @t])  bind:m
+      (push-kids pre id base q new-gid since sup (kids-of:cal u.k u))
     %=  $
       changes  t.changes
       ids      (~(put by ids) u s+new-gid)
-      results  [[u new-gid (gs res 'updated') (gs res 'etag') (join-link:gcal res)] results]
+      results  (weld kres [[u new-gid (gs res 'updated') (gs res 'etag') (join-link:gcal res) sent] results])
     ==
   ::  the ids and stamps Google handed back, onto a fresh read of the
   ::  calendar (a poke may have landed while we waited on the network).
@@ -3026,7 +3137,7 @@
   =/  seq-mid=@ud  seq.kk
   =.  kk
     %+  roll  results
-    |=  [[u=uid:cal g=@t up=@t et=@t join=@t] acc=_kk]
+    |=  [[u=uid:cal g=@t up=@t et=@t join=@t sent=@t] acc=_kk]
     =/  e=(unit entry:cal)  (~(get by entries.acc) u)
     ?~  e  acc
     ::  the Meet Google made is the event's join link now; a request it
@@ -3038,7 +3149,8 @@
       :-  ['X-GOOGLE-ID' g]
       :-  ['X-GOOGLE-UPDATED' up]
       :-  ['X-GOOGLE-ETAG' et]
-      (skip props.u.e |=([key=@t *] ?=(^ (find ~[key] `(list @t)`~['X-GOOGLE-ID' 'X-GOOGLE-UPDATED' 'X-GOOGLE-ETAG']))))
+      :-  ['X-GOOGLE-SENT' sent]
+      (skip props.u.e |=([key=@t *] ?=(^ (find ~[key] `(list @t)`~['X-GOOGLE-ID' 'X-GOOGLE-UPDATED' 'X-GOOGLE-ETAG' 'X-GOOGLE-SENT']))))
     (put-entry:cal acc u.e(props props))
   ;<  ~  bind:m
     ?~  results  (pure:(fiber:fiber:nexus ,~) ~)

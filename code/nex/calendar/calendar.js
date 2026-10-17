@@ -2304,10 +2304,11 @@ fSave.onclick = function() {
     if (body.count && body.count === editCtx.count) body.count = Math.max(1, body.count - editCtx.before);
     poke(body, finish);
   } else {
-    // only this one: a one-off at the form's day and time, then the
-    // occurrence skipped by its start
-    var only = { action: 'add-event', cat: cat, meta: body.meta, kind: 'once', alarms: body.alarms };
-    if (body.cal) only.cal = body.cal;
+    // only this one: the occurrence becomes the series' own exception
+    // (a RECURRENCE-ID) at the form's day and time, so a Google meeting
+    // moves for its guests too
+    var only = { action: 'edit-at', id: editCtx.id, home: editCtx.home, at_ms: editCtx.l,
+                 cat: cat, meta: body.meta, kind: 'once', alarms: body.alarms };
     if (cat === 'timed') {
       only.start_ms = Date.UTC(+p[0], +p[1] - 1, +p[2], +tv[0], +tv[1]);
       if (body.zone) only.zone = body.zone;
@@ -2316,11 +2317,7 @@ fSave.onclick = function() {
       only.start_ms = Date.UTC(+p[0], +p[1] - 1, +p[2]);
       only.span_days = body.span_days || 1;
     }
-    var skip = { action: 'skip-at', id: editCtx.id, home: editCtx.home, start_ms: editCtx.l };
-    poke(only, function(ok) {
-      if (!ok) { finish(false); return; }
-      poke(skip, finish);
-    });
+    poke(only, finish);
   }
 };
 
