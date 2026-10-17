@@ -2,7 +2,7 @@
 # offline-tests.sh: run the Hoon suites in tests/lib through vere eval,
 # with no ship (scripts/hoon-test-kit/offline-test.py), all at once.
 # Each suite builds pytz's 599 zone files, so each takes about a minute;
-# in parallel the five take about 80 s. The ship run (TESTING.md) stays
+# in parallel the six take about 90 s. The ship run (TESTING.md) stays
 # the verdict.
 #
 #   scripts/offline-tests.sh            every suite

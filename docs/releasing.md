@@ -1,17 +1,10 @@
-#  Releasing calendar: what makes ricsul update, and what makes its subscribers update
+# Releasing calendar: what makes ricsul update, and what makes its subscribers update
 
-Calendar is a **stock desk app**: the source of truth is this git repo, the
-publisher is `~ricsul-bilwyt`, and every other ship gets it from ricsul. Two
-separate mechanisms move a change along that path, and they fail in different
-ways. This file is the same in nisfeb/lattice and nisfeb/auspex, because the
-mechanism is identical for all three and the thing that costs hours is not
-knowing which half you are looking at.
+Calendar is a **stock desk app**: the source of truth is this git repo, the publisher is `~ricsul-bilwyt`, and every other ship gets it from ricsul. Two separate mechanisms move a change along that path, and they fail in different ways. nisfeb/lattice and nisfeb/auspex carry their own versions of this file, because the mechanism is identical for all three and the thing that costs hours is not knowing which half you are looking at. The testing section and its checklist (§7) are the calendar's own.
 
-Written 2026-09-15 from the grubbery kernel source (`gub/nex/desk.hoon`) and
-from failures measured on `~ricsul-bilwyt`, `~martyr-sanryg` and `~wex` that
-day. Line references are to grubbery's `desk/gub/nex/desk.hoon`.
+Written 2026-09-15 from the grubbery kernel source (`gub/nex/desk.hoon`) and from failures measured on `~ricsul-bilwyt`, `~martyr-sanryg` and `~wex` that day. Line references are to grubbery's `desk/gub/nex/desk.hoon`.
 
-##  The short version
+## The short version
 
 ```
 you: git push  (ref main)
@@ -30,11 +23,9 @@ ricsul's desk               /apps/shell.shell/desks/calendar.desk/desk/code
 every subscriber's desk     source.json -> ~ricsul-bilwyt/apps/shell.shell/desks/calendar.desk/desk/code
 ```
 
-**The single thing that makes anything update is `code/version.json` changing.**
-Not a new commit, not changed code — the version number. Everything below is
-detail on that one fact.
+**The single thing that makes anything update is `code/version.json` changing.** Not a new commit, not changed code: the version number. Everything below is detail on that one fact.
 
-##  1. What makes ricsul update
+## 1. What makes ricsul update
 
 Ricsul's forge repo tracks this repo. Its config:
 
@@ -42,8 +33,7 @@ Ricsul's forge repo tracks this repo. Its config:
 {"token":"","ref":"main","repo":"nisfeb/calendar","poll":15}
 ```
 
-So a `git push` to `main` reaches ricsul **on its own within about 15 minutes**.
-There is no staging state for a desk app: pushing is deploying, on a timer.
+So a `git push` to `main` reaches ricsul **on its own within about 15 minutes**. There is no staging state for a desk app: pushing is deploying, on a timer.
 
 To make it immediate instead of waiting for the poll:
 
@@ -52,9 +42,7 @@ POST https://urbit.sneagan.com/grubbery/forge/api/run
      {"repo":"calendar.git_repo","command":"pull"}
 ```
 
-It answers `ok`, which means the forge accepted the command — **not** that the
-desk has rebuilt. The pull checks the repo out into the forge tree; the desk
-then has to notice.
+It answers `ok`, which means the forge accepted the command, **not** that the desk has rebuilt. The pull checks the repo out into the forge tree; the desk then has to notice.
 
 Ricsul's calendar desk points at that tree:
 
@@ -62,10 +50,9 @@ Ricsul's calendar desk points at that tree:
 {"code":"/apps/forge.git_forge/repos/calendar.git_repo/data/tree/code"}
 ```
 
-A local path, not a ship — ricsul reads its own forge. (Subscribers point at
-ricsul over ames instead; see §2.)
+A local path, not a ship: ricsul reads its own forge. (Subscribers point at ricsul over ames instead; see §2.)
 
-##  2. What makes ricsul's subscribers update
+## 2. What makes ricsul's subscribers update
 
 Every subscriber's calendar desk has a `source.json` naming ricsul:
 
@@ -73,11 +60,7 @@ Every subscriber's calendar desk has a `source.json` naming ricsul:
 {"code":"~ricsul-bilwyt/apps/shell.shell/desks/calendar.desk/desk/code"}
 ```
 
-The desk nexus keeps a subscription on the source's `code/version.json`
-(desk.hoon:163-186). On a `%news` for that file it runs `do-snapshot` then
-`sync-release`. **No user action is required** — nobody has to press Fetch
-Latest, and no consent prompt appears unless the release adds a road to
-`ask.json`.
+The desk nexus keeps a subscription on the source's `code/version.json` (desk.hoon:163-186). On a `%news` for that file it runs `do-snapshot` then `sync-release`. **No user action is required.** Nobody has to press Fetch Latest, and no consent prompt appears unless the release adds a road to `ask.json`.
 
 The gate is exactly this (`+source-behind`):
 
@@ -85,30 +68,25 @@ The gate is exactly this (`+source-behind`):
 (pure:m !=(src-ver own))
 ```
 
-An inequality between the source's `code/version.json` and the desk's own root
-`version.json`. Nothing else is compared — not file hashes, not commit ids,
-not timestamps.
+An inequality between the source's `code/version.json` and the desk's own root `version.json`. Nothing else is compared: not file hashes, not commit ids, not timestamps.
 
-`sync-release` then mirrors the code tree and **republishes the version file
-locally**, with the kernel's own comment explaining why:
+`sync-release` then mirrors the code tree and **republishes the version file locally**, with the kernel's own comment explaining why:
 
-> mirror the source's version file locally, under its own name, so
-> followers of THIS desk watch our republished version
+> mirror the source's version file locally, under its own name, so followers of THIS desk watch our republished version
 
 That is the relay hop. It is why a subscriber can itself be a publisher.
 
-##  3. Therefore: bump `code/version.json` on every release
+## 3. Therefore: bump `code/version.json` on every release
 
 | what you did | what happens |
 |---|---|
 | changed code, bumped version | ricsul syncs, subscribers sync. Correct. |
 | changed code, **forgot** the bump | **nothing propagates.** Ricsul's forge has your commit; no desk ever pulls it. Everything looks fine and nothing shipped. |
-| bumped version, no code change | the version file syncs and nothing else does. `sync-dir` is content-addressed — only real changes write — so no nexus rebuilds. |
+| bumped version, no code change | the version file syncs and nothing else does. `sync-dir` is content-addressed (only real changes write), so no nexus rebuilds. |
 
-The second row is the common mistake and it is silent. The third row matters
-when you are trying to force a rebuild: a version-only bump will not do it.
+The second row is the common mistake and it is silent. The third row matters when you are trying to force a rebuild: a version-only bump will not do it.
 
-##  4. Verifying a release actually landed
+## 4. Verifying a release actually landed
 
 Check all four, in this order. Each separates a different failure.
 
@@ -128,39 +106,27 @@ GET /grubbery/ball/apps/shell.shell/desks/calendar.desk/desk/data/calendar.calen
 GET /apps/calendar        # fast 200/403 = alive.  hang = dead instance holding the route.
 ```
 
-A version number is not proof. **The instance's `bang` is the proof**, and the
-route is the proof a user cares about.
+A version number is not proof. **The instance's `bang` is the proof**, and the route is the proof a user cares about.
 
-##  5. The failure modes, all measured
+## 5. The failure modes, all measured
 
-###  5a. Version matches, code tree empty: wedged for ever
+### 5a. Version matches, code tree empty: wedged for ever
 
-Measured on `~martyr-sanryg`, 2026-09-15. Its calendar desk read
-`{"version": 15}` at the root, ricsul published 15, and `code/` was **empty** —
-zero children. `source-behind` compared 15 to 15, answered "not behind", and
-never synced again. The desk page reported itself up to date. `/apps/calendar`
-hung for 30 seconds on every request.
+Measured on `~martyr-sanryg`, 2026-09-15. Its calendar desk read `{"version": 15}` at the root, ricsul published 15, and `code/` was **empty**, with zero children. `source-behind` compared 15 to 15, answered "not behind", and never synced again. The desk page reported itself up to date. `/apps/calendar` hung for 30 seconds on every request.
 
-The version gate is the trap: it suppresses the only thing that would refill
-the tree. The escape is the unconditional pull, which has no version gate:
+The version gate is the trap: it suppresses the only thing that would refill the tree. The escape is the unconditional pull, which has no version gate:
 
 ```sh
 POST /grubbery/desk/calendar/fetch-latest
 ```
 
-(`+do-fetch`, desk.hoon: *"pull the source's current code now,
-unconditionally (no version gate)"*. The same thing runs from a
-`{"action":"fetch"}` poke at the desk's `main.sig`.)
+(`+do-fetch`, desk.hoon: *"pull the source's current code now, unconditionally (no version gate)"*. The same thing runs from a `{"action":"fetch"}` poke at the desk's `main.sig`.)
 
-###  5b. A BANGed instance is not healed by a successful sync
+### 5b. A BANGed instance is not healed by a successful sync
 
-Same ship, same incident. After `fetch-latest` refilled the tree,
-`/nex/calendar/app.hoon` compiled cleanly in 11.8s — and the instance stayed
-BANGed. `reload-changed-nexuses` ran for 28ms and never visited it, because a
-nexus that never built has no recorded refs for a changed-refs walk to follow.
+Same ship, same incident. After `fetch-latest` refilled the tree, `/nex/calendar/app.hoon` compiled cleanly in 11.8s, and the instance stayed BANGed. `reload-changed-nexuses` ran for 28ms and never visited it, because a nexus that never built has no recorded refs for a changed-refs walk to follow.
 
-It came back only when the instance was reloaded explicitly. Over HTTP, that is
-a form-encoded POST to the instance's own explorer URL:
+It came back only when the instance was reloaded explicitly. Over HTTP, that is a form-encoded POST to the instance's own explorer URL:
 
 ```sh
 POST /grubbery/ball/apps/shell.shell/desks/calendar.desk/desk/data/calendar.calendar_app
@@ -169,24 +135,18 @@ POST /grubbery/ball/apps/shell.shell/desks/calendar.desk/desk/data/calendar.cale
 
 So: **a clean compile does not imply a live app.** Check the bang.
 
-###  5c. A neck-less `/desk/code` never compiles anything
+### 5c. A neck-less `/desk/code` never compiles anything
 
-A `/desk/code` that was created as a plain directory — by an older kernel, or
-by hand — has no `[/ %code]` neck, and a dir without that neck is not a code
-namespace, so grubbery never runs `build-code` over it. Files land with the
-right marks and nothing compiles them. The desk page says "nothing to pull"
-while the app is dead.
+A `/desk/code` that was created as a plain directory, by an older kernel or by hand, has no `[/ %code]` neck, and a dir without that neck is not a code namespace, so grubbery never runs `build-code` over it. Files land with the right marks and nothing compiles them. The desk page says "nothing to pull" while the app is dead.
 
-`+ensure-code-nexus` repairs it. It used to run only when the desk nexus rose,
-which a subscriber does not do by itself; since 2026-09-15 it also runs from
-`sync-release`, so an arriving release repairs it. Check the neck with:
+`+ensure-code-nexus` repairs it. It used to run only when the desk nexus rose, which a subscriber does not do by itself; since 2026-09-15 it also runs from `sync-release`, so an arriving release repairs it. Check the neck with:
 
 ```sh
 GET /grubbery/ball/apps/shell.shell/desks/calendar.desk/desk?info=1
 #    "code" child should have  neck: "/code"
 ```
 
-###  5d. Symptom shapes
+### 5d. Symptom shapes
 
 | symptom | usual cause |
 |---|---|
@@ -195,10 +155,9 @@ GET /grubbery/ball/apps/shell.shell/desks/calendar.desk/desk?info=1
 | route **403s fast** | healthy; that is just unauthenticated |
 | desk says up to date, app dead | 5a (empty tree) or 5c (neck-less dir) |
 
-##  6. Desk apps and the kernel are delivered differently
+## 6. Desk apps and the kernel are delivered differently
 
-Do not mix these up. Calendar, lattice and auspex are **desk apps**. Grubbery
-itself is the **kernel**.
+Do not mix these up. Calendar, lattice and auspex are **desk apps**. Grubbery itself is the **kernel**.
 
 | | desk app (calendar / lattice / auspex) | kernel (grubbery) |
 |---|---|---|
@@ -207,72 +166,34 @@ itself is the **kernel**.
 | how it reaches subscribers | version bump, automatically | kiln desk sync, automatically |
 | release unit | `code/version.json` | a clay commit |
 
-Two notes on the kernel side, both learned the hard way:
+Three notes on the kernel side, all learned the hard way:
 
-- Touching `lib/*.hoon` or `app/grubbery.hoon` bumps the **gall agent**: the
-  ship stops answering HTTP for minutes (~4.5 on `~wex`). Touching
-  `gub/nex/*.hoon` only rebuilds a nexus, which is seconds.
+- Touching `lib/*.hoon` or `app/grubbery.hoon` bumps the **gall agent**: the ship stops answering HTTP for minutes (~4.5 on `~wex`). Touching `gub/nex/*.hoon` only rebuilds a nexus, which is seconds.
 - On ricsul, **deletions from the mount never reach clay**; adds and edits do.
-- A `\|commit` that prints only `>=` with no rebuild means clay saw no change.
-  That usually means it was already committed, not that the commit failed.
+- A `\|commit` that prints only `>=` with no rebuild means clay saw no change. That usually means it was already committed, not that the commit failed.
 
-##  7. Testing before you ship
+## 7. Testing before you ship
 
-`~wex` is the fake test ship. Writing into a desk's code tree compiles
-**immediately**, with no commit, which is the fast loop:
+Test on the fleet sets, never on ricsul. `TESTING.md` has the ships, the resets, the cookie jars and the deploy: the set `calendar` (`~rux`) for the single-ship gates, and `calendar-pair` (`~bes` and `~reb`) for the ship-to-ship ones. `scripts/dev-deploy.py` puts a tree's `code/` on a test ship the way a release reaches a subscriber: it writes the files that differ and stamps a dev version, so the desk pulls. Then read the instance's `?info=1`: `bang: null` means it compiled, and a non-null bang **carries the compile error with line and column**.
 
-```sh
-POST /grubbery/ball/apps/shell.shell/desks/calendar.desk/desk/code/nex/calendar/app.hoon
-     action=write-text  content=<the file>
-```
+Fake ships derive every keypair from the `@p`, so anything key-dependent behaves differently there than on a real ship. Verify crypto paths on ricsul, not only on a fake ship.
 
-Then read the instance's `?info=1`: `bang: null` means it compiled, and a
-non-null bang **carries the compile error with line and column**. That is about
-a minute per iteration. A file that does not exist yet needs
-`action=create-file&filename=<name>` first — `write-text` 404s on a missing
-file.
-
-Fake ships derive every keypair from the `@p`, so anything key-dependent
-behaves differently there than on a real ship. Verify crypto paths on ricsul,
-not only on wex.
+The previous release is the commit before the candidate's in `git log --format='%h %s' -- code/version.json` (there are no tags). Put it on a test ship with `git worktree add /tmp/prev <commit>` and `scripts/dev-deploy.py <ship-url> <jar> --code /tmp/prev/code`.
 
 ### Before every release: the checklist
 
-Nothing below is optional. Calendar 18 and 19 each locked users' ships,
-and each would have been caught by one of these (lattice
-`/reference/grubbery-crash-loops` has the why).
+Nothing below is optional. Calendar 18 and 19 each locked users' ships, and each would have been caught by one of these (lattice `/reference/grubbery-crash-loops` has the why).
 
-1. `scripts/hoon-test-kit/hoon-test.sh <pier>`: every unit suite passes
-   (`docs/hoon-testing.md`).
-2. The single-ship gates on the candidate: `roundtrip.sh`, `edge-matrix.py`,
-   `todo-matrix.py`, `dav-matrix.py`, `google-matrix.py`.
-3. The two-ship gates, both ships on the candidate: `ship-share-matrix.py`,
-   `caldav-client-matrix.py`, `cross-matrix.py`. When the release changes
-   what ships send each other, run `ship-share-matrix.py` again with one
-   ship on the previous release, both ways round: subscribers update at
-   different times.
-4. `scripts/upgrade-check.sh`: a test ship on the previous release, with
-   its data, gets the candidate; five quiet minutes, no crash in
-   `rise.json`, a poke acknowledged, the routes compared.
-5. `scripts/weir-check.sh` twice, with `/sys/behn/` and with
-   `/sys/bowl.sig` refused: the calendar parks, it never spins.
-   Then `scripts/quiet-check.sh` (`docs/logging.md`): the console
-   captured while the calendar reloads, upgrades, loses the timer road
-   and the web road in turn and gets each back. A healthy calendar prints
-   nothing; a refused road is one line and a record.
-6. A big input, if the release touches a parser or a sync path: an import
-   of thousands of objects, and of one series with thousands of
-   overrides, must answer in seconds, with the ship answering throughout.
-7. When the release touches reminders: `scripts/push-matrix.py` (a browser
-   gets one) and `scripts/trunk-matrix.py` (a phone does, through trunk's
-   push-notice; the test ship needs `%trunk` at wire 12 and the kernel's
-   mark for it).
+1. The version is bumped (§3). On the release commit, `git diff --stat $(git log -1 --format=%h -- code/version.json) -- code` lists nothing. Code changed since the commit that last touched `code/version.json` means the bump is missing.
+2. The tests with no ship: `scripts/offline-tests.sh` and `node tests/js/google-setup.test.cjs`. Then `scripts/hoon-test-kit/hoon-test.sh <pier>` on the test ship: every unit suite passes (`docs/hoon-testing.md`).
+3. The single-ship gates on `~rux` with the candidate: `roundtrip.sh`, `edge-matrix.py`, `todo-matrix.py`, `google-matrix.py`, `page-matrix.py`, and `dav-matrix.py` with the ship URL and cookie jar as its fourth and fifth arguments (without them it skips the ship-to-client direction).
+4. The ship-to-ship gates on `~bes` and `~reb`, both on the candidate: `ship-share-matrix.py`, `invite-matrix.py`, `caldav-client-matrix.py`, and `cross-matrix.py` with the fake Google's URL as its sixth argument (without it the Google calendar shared onward is skipped). When the release changes what ships send each other, run `ship-share-matrix.py` and `invite-matrix.py` again with one ship on the previous release, both ways round: subscribers update at different times.
+5. `scripts/upgrade-check.sh`: a test ship on the previous release, with its data, gets the candidate's changed files. It passes on five quiet minutes, no fiber crashing twice in `rise.json` (one crash during the deploy itself is the retry doing its job), a poke acknowledged, and the routes compared.
+6. `scripts/weir-check.sh` twice, with `/sys/behn/` and with `/sys/bowl.sig` refused: the calendar parks, it never spins. Then `scripts/quiet-check.sh` (`docs/logging.md`): the console captured while the calendar reloads, upgrades, loses the timer road and the web road in turn and gets each back. A healthy calendar prints nothing; a refused road is one line and a record.
+7. A big input, if the release touches a parser or a sync path: an import of thousands of objects, and of one series with thousands of overrides, must answer in seconds, with the ship answering throughout. No script does this one; build the file and time the import by hand.
+8. When the release touches reminders: `scripts/push-matrix.py` (a browser gets one) and `scripts/trunk-matrix.py` (a phone does, through trunk's push-notice; the test ship needs `%trunk` at wire 12 and the kernel's mark for it).
+9. When the release touches Talon calls: `scripts/talon-matrix.py` (the test ship needs `%trunk` at wire 19; `TESTING.md` says how to ready one).
 
-Test the upgrade, not just the new code. Put the previous release on the test
-ship, give it the data real ships have (including what the old code accepted
-without checking), then switch to the new release and watch the console for a
-few minutes. Calendar 18 skipped this: its one-time conversion of preset
-repeats crashed at every start on an event version 17 had stored unchecked,
-and its crash retry turned that into an endless loop on a subscriber's ship.
-Anything that runs at start must not crash on old data, and a retry must back
-off (see `+rise-later`).
+Once the release is pushed, the four checks in §4 say whether it landed.
+
+Test the upgrade, not just the new code. Put the previous release on the test ship, give it the data real ships have (including what the old code accepted without checking), then switch to the new release and watch the console for a few minutes. Calendar 18 skipped this: its one-time conversion of preset repeats crashed at every start on an event version 17 had stored unchecked, and its crash retry turned that into an endless loop on a subscriber's ship. Anything that runs at start must not crash on old data, and a retry must back off (see `+rise-later`).
