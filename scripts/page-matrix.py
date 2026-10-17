@@ -187,6 +187,42 @@ with Firefox() as ff:
     check('a tick moves the row to Done at once', at_once is True, at_once)
     check('x ticks the row in focus', wait(lambda: (task('page today') or {}).get('done') is True), task('page today'))
 
+    # a meeting: the popup shows its place, a Join button, the guests and
+    # the owner's answer; the form shows Location and Guests, keeps the
+    # link, and refuses email guests on a calendar not linked to Google
+    t0 = (today + 2) * DAY + 15 * 3600000
+    poke({'action': 'add-event', 'cal': 'page-two', 'id': 'page-meet@page', 'cat': 'timed', 'kind': 'once', 'start_ms': t0, 'fin': 'dur', 'dur_min': 30,
+          'meta': {'name': 'page meeting', 'location': 'Room 4', 'conference': 'https://meet.example.test/x',
+                   'guests': [{'email': 'ana@x.test', 'status': 'accepted'}, {'email': 'me@x.test', 'self': True, 'status': 'needs-action'}]}})
+    check('meeting seeded', wait(lambda: curl('/event.json?id=page-meet%40page&cal=page-two').get('meta', {}).get('location') == 'Room 4'))
+    ff.js("""window._row = null; fetchWindow(arguments[0] - 86400000, arguments[0] + 86400000, function(rows) {
+        window._row = (rows || []).filter(function(r) { return r.id === 'page-meet@page'; })[0] || null; });""", t0)
+    check('the window has the meeting', ff.wait("return window._row ? 1 : 0", 20))
+    pop = ff.js("""showPop(window._row, 10, 10);
+        var j = document.getElementById('pop-join'), r = document.getElementById('pop-rsvp');
+        return [document.getElementById('pop-where').textContent, j.style.display, j.getAttribute('href'),
+                document.getElementById('pop-guests').textContent, r.style.display];""")
+    check('the popup shows place, Join, guests and the answer buttons',
+          pop == ['Room 4', '', 'https://meet.example.test/x', 'Guests: ana@x.test (going)', ''], pop)
+    ff.js("document.querySelector('#pop-rsvp button[data-st=\"accepted\"]').click()")
+    def my_status():
+        g = curl('/event.json?id=page-meet%40page&cal=page-two').get('meta', {}).get('guests', [])
+        return [x.get('status') for x in g if x.get('self')]
+    check('Going sets the owner\'s answer', wait(lambda: my_status() == ['accepted']), my_status())
+    ff.js("window._d = null; getJSON('/event.json?id=page-meet%40page&cal=page-two').then(function(d) { window._d = d; });")
+    ff.wait("return window._d ? 1 : 0", 20)
+    form = ff.js("""openEdit(window._d, window._row);
+        return [document.getElementById('f-loc').value, document.getElementById('f-guests').value, document.getElementById('f-call').value];""")
+    check('the form shows location, guests (not the owner) and keeps the link', form == ['Room 4', 'ana@x.test', 'keep'], form)
+    said = ff.js("""document.getElementById('f-guests').value = 'ana@x.test, bo@x.test'; document.getElementById('f-save').click();
+        return document.getElementById('f-status').textContent;""")
+    check('email guests on a local calendar are refused', said == 'Email guests need a calendar linked to Google', said)
+    ff.js("""document.getElementById('f-guests').value = 'ana@x.test'; document.getElementById('f-loc').value = 'Room 5';
+        document.getElementById('f-save').click();""")
+    def meet_meta(): return curl('/event.json?id=page-meet%40page&cal=page-two').get('meta', {})
+    check('a location change saves, the guests and link kept', wait(lambda: meet_meta().get('location') == 'Room 5'
+          and meet_meta().get('conference') == 'https://meet.example.test/x' and len(meet_meta().get('guests', [])) == 2), meet_meta())
+
 poke({'action': 'del-calendar', 'id': 'page-two'})
 check('cleanup', wait(lambda: 'page-two' not in {c['id'] for c in curl('/calendars.json')}))
 print('PAGE MATRIX ' + ('PASSED' if not fails else 'FAILED (%d)' % len(fails)))

@@ -180,7 +180,20 @@ win = ship_get('/window.json?from=1792368000000&to=1794355200000')['rows']
 names = sorted((r['meta'].get('name'), r['l']) for r in win if r['meta'].get('name', '').startswith('all hands'))
 check('the ship shows the moved one in place of the second', [n for n, _ in names].count('all hands') == 3 and [n for n, _ in names].count('all hands (Tuesday)') == 1, names)
 prod(); check('no echo of the instance after a pull', len(writes()) == n0 + 1, writes()[n0:])
-for nm in ('G guests', 'invite out', 'all hands'):
+# the same for an all-day series: the instance id is the date alone
+D = 86400000
+poke({'action': 'add-event', 'cal': gc, 'cat': 'allday', 'kind': 'weekly', 'start_ms': 1792454400000, 'args': {'days': ['tue']}, 'count': 3, 'span_days': 1,
+      'meta': {'name': 'offsite'}}); time.sleep(10)
+st = ctl({'op': 'state'}); offs = [e for e in st['events']['primary@fake'].values() if e.get('summary') == 'offsite' and not e.get('recurringEventId')]
+off = [r for r in ship_get('/events.json') if r['meta'].get('name') == 'offsite']
+n0 = len(st['writes'])
+# 2026-10-27, the second Tuesday, moved to Wednesday
+poke({'action': 'edit-at', 'id': off[0]['id'] if off else '', 'at_ms': 1792454400000 + 7 * D, 'cat': 'allday', 'kind': 'once', 'start_ms': 1792454400000 + 8 * D, 'span_days': 1,
+      'meta': {'name': 'offsite (Wednesday)'}}); time.sleep(10)
+st = ctl({'op': 'state'}); new = st['writes'][n0:]
+oi = st['events']['primary@fake'].get(offs[0]['id'] + '_20261027', {}) if offs else {}
+check('an all-day instance moves by its date', [w[0] for w in new] == ['update'] and oi.get('start') == {'date': '2026-10-28'} and oi.get('summary') == 'offsite (Wednesday)', (new, oi))
+for nm in ('G guests', 'invite out', 'all hands', 'offsite'):
     for r in ship_get('/events.json'):
         if r['meta'].get('name') == nm: poke({'action': 'del-event', 'id': r['id']})
 time.sleep(8)
