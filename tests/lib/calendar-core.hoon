@@ -836,4 +836,36 @@
     (expect-eq !>(~h2) !>((late-reach:core (with ~[[[%off & & ~h2] ''] [[%off | & ~m30] '']]))))
     (expect-eq !>(~d31) !>((late-reach:core (with ~[[[%off | & ~d40] '']]))))
   ==
+::  a task's alarm at or after its due says due or overdue; a date-only
+::  task's "morning of" says due today, and a day on, overdue
+++  test-alarm-task-wording
+  =/  due=@da  (add at ~h3)
+  =/  task=event:cal  [%todo `due ~ (malt ~[['name' s+'taxes']])]
+  =/  dated=event:cal  [%todo `~2026.11.2 ~ (malt ~[['name' s+'stamps']])]
+  =/  push
+    |=  [als=(list alarm:cal) e=event:cal from=@da now=@da]
+    (turn (alarm-pushes:core ~[(ref 2)] (alarm-at als e) from now ~) |=([* b=@t *] b))
+  ;:  weld
+    (expect-eq !>(~['due now']) !>((push ~[[[%rel ~s0] '']] task (sub due ~s1) due)))
+    (expect-eq !>(~['overdue 30 min']) !>((push ~[[[%off | & ~m30] '']] task (add due ~m29) (add due ~m30))))
+    (expect-eq !>(~['due today']) !>((push ~[[[%off | & ~h9] '']] dated (add ~2026.11.2 ~h8) (add ~2026.11.2 ~h9))))
+    (expect-eq !>(~['overdue 1 days']) !>((push ~[[[%off | & ~d1] '']] dated (sub ~2026.11.3 ~h1) ~2026.11.3)))
+  ==
+::  a Friday-the-13th rule stored by an older version (its bound the
+::  COUNT, counted in Fridays) gets the bound that holds its COUNT read
+::  monthly, once
+++  test-migrate-rules
+  =/  st=@da  ~2026.11.13..18.00.00
+  =/  rc=recur:cal  [[/lib/rules %rrule] (malt ~[['rrule' s+'FREQ=DAILY;BYDAY=FR;BYMONTHDAY=13;COUNT=4']]) st]
+  =/  e=entry:cal  [[%timed rc ~ [%dur ~h1] [`4 (sy ~[2])] (malt ~[['name' s+'f13']])] 'f@t' '' 0 ~ ~]
+  =/  c0=calendar:cal  (cals ~[[%a ~[e]]])
+  =/  c1=calendar:cal  (migrate-rules:core c0)
+  =/  ev1=event:cal  event:(~(got by entries:(~(got by cals.c1) %a)) 'f@t')
+  ?>  ?=(%timed -.ev1)
+  ;:  weld
+    (expect !>((gth (fall dom.bound.ev1 0) 4)))
+    (expect-eq !>(~) !>(except.bound.ev1))
+    (expect-eq !>(4) !>((count-of:ics recur.ev1 (fall dom.bound.ev1 0))))
+    (expect-eq !>(c1) !>((migrate-rules:core c1)))
+  ==
 --

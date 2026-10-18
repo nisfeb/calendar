@@ -119,7 +119,7 @@ def named_host():
             and HOSTNAME in [g.get('ship') for g in e['meta'].get('ships', [])]]
 check('the guest names the host on its copy', wait(named_host), events(GUEST, GJ, 'urbit'))
 # none from the guest for 45 s (rows other runs left are not its)
-from_guest = lambda: [r for r in invites(HOST, HJ) if r.get('host') == GUESTNAME]
+from_guest = lambda: [r for r in invites(HOST, HJ) if r.get('host') == GUESTNAME and r.get('uid') == 'inv-meeting@gate']
 t0 = time.time(); seen = []
 while time.time() - t0 < 45 and not seen:
     seen = from_guest(); time.sleep(3)

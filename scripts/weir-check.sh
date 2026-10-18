@@ -32,10 +32,15 @@ post() {
   echo "$1 -> $code"
   [[ $code == 303 || $code == 200 ]]
 }
-# a fiber parked (or crashed) shows as a child's bang
-parked() { curl -sL -m 60 -b "$JAR" "$B$I?info=1" | python3 -c 'import json,sys
-try: d=json.load(sys.stdin); print("yes" if any(c.get("bang") for c in d["children"]) else "no")
+# a fiber parked (or crashed) shows as a child's bang: the children that
+# have one, by name, compared with the ones that had one before (a bang
+# that was there already says nothing of this road)
+banged() { curl -sL -m 60 -b "$JAR" "$B$I?info=1" | python3 -c 'import json,sys
+try: d=json.load(sys.stdin); print(" ".join(sorted(c.get("name","?") for c in d["children"] if c.get("bang"))))
 except Exception: print("unreadable")'; }
+base=$(banged)
+[[ "$base" != unreadable ]] || { echo "the instance cannot be read; check the cookie" >&2; exit 2; }
+parked() { local now; now=$(banged); [[ "$now" != unreadable && "$now" != "$base" ]] && echo yes || echo no; }
 settles() { local want=$1 t; for t in $(seq 1 12); do [[ "$(parked)" == "$want" ]] && return 0; sleep 5; done; return 1; }
 restore() {
   local ok=1

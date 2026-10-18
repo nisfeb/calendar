@@ -302,6 +302,18 @@
   ^-  tape
   =/  t=tape  (date-text:ics d)
   :(weld (scag 4 t) "-" (scag 2 (slag 4 t)) "-" (scag 2 (slag 6 t)))
+::  +sans-nulls: a body less every key whose value is null. An insert
+::  has nothing to clear, so Google is not asked to read one there
+++  sans-nulls
+  |=  j=json
+  ^-  json
+  ?+  j  j
+    [%a *]  [%a (turn p.j sans-nulls)]
+      [%o *]
+    :-  %o
+    %-  ~(gas by *(map @t json))
+    (murn ~(tap by p.j) |=([k=@t v=json] ?~(v ~ `[k (sans-nulls v)])))
+  ==
 ::  +time-json: a start or end object. The kind not used is null: a PATCH
 ::  merges these objects, and an event made all-day (or timed) keeps the
 ::  other kind's key unless it is cleared

@@ -179,7 +179,7 @@ function noteText(s) {
   // a link or address in angle brackets (Outlook, Teams) is text, not a tag
   s = s.replace(/<((?:https?|mailto):[^<>\s]+|[^<>\s@]+@[^<>\s]+)>/gi, ' $1 ');
   // HTML only when it holds a tag HTML has: "bring <snacks>" is text
-  if (!/<\/?(a|b|i|u|p|br|div|span|ul|ol|li|strong|em|font|table|tr|td|th|h[1-6]|img|html|body|blockquote|pre|code)\b[^>]*>/i.test(s)) return s.trim();
+  if (!/<!--|<\/?(a|b|i|u|s|p|br|hr|div|span|ul|ol|li|strong|em|font|small|sub|sup|center|table|tr|td|th|h[1-6]|img|html|body|blockquote|pre|code|o:p)\b[^>]*>/i.test(s)) return s.trim();
   var doc = new DOMParser().parseFromString(s.replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|div|li)>/gi, '$&\n'), 'text/html');
   doc.querySelectorAll('a[href]').forEach(function(a) {
     var href = a.getAttribute('href');

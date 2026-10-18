@@ -805,13 +805,15 @@
     ::  now": a task says due or overdue, a day's event or a date-only
     ::  task (a "morning of" alarm) says today
     =/  task=?  ?=(%todo -.event.u.en)
+    ::  (all-day:cal counts every task: a task is dated by its due alone)
     =/  dated=?
-      ?|  (all-day:cal event.u.en)
-          &(task =(0 (mod (fall ?:(?=(%todo -.event.u.en) due.event.u.en ~) l.span.r) ~d1)))
-      ==
+      ?:  task  =(0 (mod (fall ?:(?=(%todo -.event.u.en) due.event.u.en ~) l.span.r) ~d1))
+      (all-day:cal event.u.en)
     =/  said=@t
       ?:  (gth at u.fire)  body
-      ?:  &(dated task)  'due today'
+      ?:  &(dated task)
+        ?:  (lth u.fire (add at ~d1))  'due today'
+        (crip "overdue {(scow %ud (div (sub u.fire at) ~d1))} days")
       ?:  task
         ?:  =(at u.fire)  'due now'
         (crip "overdue {(scow %ud (div (sub u.fire at) ~m1))} min")
@@ -918,6 +920,46 @@
     ?-  -.ev
       %timed   e(event ev(recur rc))
       %allday  e(event ev(recur rc))
+    ==
+  ==
+::  +migrate-rules: a DAILY rule with BYDAY and BYMONTHDAY (Friday the
+::  13th) was read before v37 as WEEKLY on those days, BYMONTHDAY left
+::  out, so the bound stored from its COUNT counted Fridays (COUNT=4 held
+::  four). Read as MONTHLY now, that bound would hold four months, and a
+::  push would cut the series there. The bound becomes the one that
+::  holds the text's COUNT again, once: only while it is still the old
+::  reading's (a bound made since is left), and the skips, which named
+::  Fridays, go.
+++  migrate-rules
+  |=  c=calendar:cal
+  ^-  calendar:cal
+  %=    c
+      cals
+    %-  ~(run by cals.c)
+    |=  k=cal:cal
+    %+  roll  ~(val by entries.k)
+    |=  [e=entry:cal acc=_k]
+    =/  ev=event:cal  event.e
+    ?.  ?=(?(%timed %allday) -.ev)  acc
+    ?.  =(%rrule name.kind.recur.ev)  acc
+    =/  txt=@t
+      =/  j=(unit json)  (~(get by args.recur.ev) 'rrule')
+      ?.(?=([~ %s *] j) '' p.u.j)
+    =/  up=tape  (cuss (trip txt))
+    ?.  &(?=(^ (find "FREQ=DAILY" up)) ?=(^ (find "BYDAY=" up)) ?=(^ (find "BYMONTHDAY=" up)))  acc
+    =/  r=(unit rule:rr)  (parse:rr txt)
+    ?~  r  acc
+    ?.  =(%monthly freq.u.r)  acc
+    ?~  count.u.r  acc
+    =/  n=@ud  u.count.u.r
+    =/  dom=(unit @ud)  ?-(-.ev %timed dom.bound.ev, %allday dom.bound.ev)
+    ?.  =(dom `n)  acc
+    =/  d=@ud  (fall (mole |.((dom-of:ics recur.ev n))) n)
+    ?:  =(d n)  acc
+    %+  put-entry:cal  acc
+    ?-  -.ev
+      %timed   e(event ev(dom.bound `d, except.bound ~))
+      %allday  e(event ev(dom.bound `d, except.bound ~))
     ==
   ==
 ::  +kind-table: the rule kinds by name. An event names its kind by rail

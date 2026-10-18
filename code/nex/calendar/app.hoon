@@ -146,7 +146,7 @@
         ::  once: after the first rise this changes nothing
         ;<  raw0=*  bind:m  (get-state-as:io ,*)
         =/  c0=calendar:cal  (lift:cal raw0)
-        =/  c1=calendar:cal  (migrate-kinds c0)
+        =/  c1=calendar:cal  (migrate-rules (migrate-kinds c0))
         ;<  ~  bind:m  ?:(=(c0 c1) (pure:m ~) (replace:io c1))
         ;<  our=@p  bind:m  get-our:io
         |-
@@ -2579,6 +2579,14 @@
 ++  check-roads
   =/  m  (fiber:fiber:nexus ,~)
   ^-  form:m
+  ::  the clock first: with /sys/bowl.sig refused every record here (a
+  ::  file read asks it for a nonce) would park this fiber, so only the
+  ::  web binding is tried, and nothing is written. The kernel's permits
+  ::  page shows that road; there is no road/bowl key
+  ;<  clock=(unit @da)  bind:m  soft-now
+  ?~  clock
+    ;<  *  bind:m  (soft-bind [~ /apps/calendar])
+    (pure:m ~)
   ;<  timer=?  bind:m  (soft-behn /rise/rest [[/ %timer-rest] `wire`/rise])
   ;<  ~  bind:m
     ?:  timer  (unfault './' 'road/behn')
@@ -2586,17 +2594,11 @@
       "the timer road /sys/behn/ is refused, so reminders and syncing are stopped"
       "grant it at /apps/grubbery/permits, then reload the calendar"
     ==
-  ;<  clock=(unit @da)  bind:m  soft-now
-  ::  no road/bowl fault: with /sys/bowl.sig refused, writing one asks it
-  ::  for a nonce, and would park here before the web road is looked at.
-  ::  The kernel's permits page shows that road. A key an older version
-  ::  wrote is cleared
-  ;<  ~  bind:m
-    ?~  clock  (pure:(fiber:fiber:nexus ,~) ~)
-    (unfault './' 'road/bowl')
+  ::  a key an older version wrote
+  ;<  ~  bind:m  (unfault './' 'road/bowl')
   ;<  web=?  bind:m  (soft-bind [~ /apps/calendar])
   ?:  web  (unfault './' 'road/eyre')
-  %:  fault  './'  'road/eyre'  %error  &(timer ?=(^ clock))
+  %:  fault  './'  'road/eyre'  %error  timer
     "the web road /sys/eyre/ is refused, so the calendar's page and CalDAV do not answer"
     "grant it at /apps/grubbery/permits, then reload the calendar"
   ==
@@ -3405,9 +3407,14 @@
       %local  (weld (dt-text:ics (fall (place:rules `zone.u.w d.u.w) d.u.w)) "Z")
     ==
   ?:  =('' iid)  $(kids t.kids)
+  ::  an instance's own private properties and reminders go without
+  ::  nulls: a null there would clear what it shares with its series
   =/  body=json
     =/  b=json  (json-of:gcal ch ~)
-    ?.(?=([%o *] b) b [%o (~(del by (~(del by p.b) 'iCalUID')) 'recurrence')])
+    ?.  ?=([%o *] b)  b
+    =/  o=(map @t json)  (~(del by (~(del by p.b) 'iCalUID')) 'recurrence')
+    =/  clean  |=([m=(map @t json) k=@t] ?.((~(has by m) k) m (~(put by m) k (sans-nulls:gcal (~(got by m) k)))))
+    [%o (clean (clean o 'extendedProperties') 'reminders')]
   =/  sent=@t  (scot %uv (sham body))
   ?:  =(`sent (bind (get-prop:ics props.ch 'X-GOOGLE-SENT') tail))  $(kids t.kids)
   =/  gtag=@t  =/(p (get-prop:ics props.ch 'X-GOOGLE-ETAG') ?~(p '' v.u.p))
@@ -3536,7 +3543,7 @@
     ::  a merged body is not the one meta makes: not kept as sent
     =?  sent  merged  ''
     ;<  [status=@ud res=json]  bind:m
-      ?:  =('' have)  (google-api pre %'POST' "{base}{q}" `body)
+      ?:  =('' have)  (google-api pre %'POST' "{base}{q}" `(sans-nulls:gcal body))
       %:  google-api-hdr  pre  %'PATCH'  "{base}/{(enc-seg:dav (trip have))}{q}"  `body
         ?:(=('' gtag) ~ ~[['if-match' gtag]])
       ==
@@ -3546,7 +3553,7 @@
     ::  settles it (Google wins)
     ;<  [status=@ud res=json]  bind:m
       ?.  &(=(404 status) !=('' have) =('' known))  (pure:(fiber:fiber:nexus ,[@ud json]) [status res])
-      (google-api pre %'POST' "{base}{q}" `body)
+      (google-api pre %'POST' "{base}{q}" `(sans-nulls:gcal body))
     ?:  (google-stop status res)
       ;<  ~  bind:m
         %:  fault  pre  (cat 3 'google-push/' id)  %error  (acts status)
@@ -5652,6 +5659,7 @@
       ==
   ==
 ++  migrate-kinds  migrate-kinds:core
+++  migrate-rules  migrate-rules:core
 ++  kind-table  kind-table:core
 ++  kind-for
   |=  =rail:tarball

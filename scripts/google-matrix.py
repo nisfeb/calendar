@@ -227,6 +227,8 @@ check('a timed event made all-day has only a date on google', sh and sh[0].get('
 # properties, so the key goes as null)
 poke({'action': 'add-event', 'cal': gc, 'id': 'tagged@gate', 'cat': 'timed', 'kind': 'once', 'start_ms': 1791385200000, 'fin': 'dur', 'dur_min': 30,
       'meta': {'name': 'tagged', 'tags': ['work']}}); time.sleep(10)
+tg1 = [e for e in ctl({'op': 'state'})['events']['primary@fake'].values() if e.get('summary') == 'tagged']
+check('a tag goes up', tg1 and tg1[0].get('extendedProperties', {}).get('private', {}).get('tags') == 'work', tg1 and tg1[0].get('extendedProperties'))
 poke({'action': 'edit-event', 'id': 'tagged@gate', 'cat': 'timed', 'kind': 'once', 'start_ms': 1791385200000, 'fin': 'dur', 'dur_min': 30,
       'meta': {'name': 'tagged', 'tags': []}}); time.sleep(10)
 tg2 = [e for e in ctl({'op': 'state'})['events']['primary@fake'].values() if e.get('summary') == 'tagged']

@@ -16,7 +16,9 @@
 # Passes when: the deploy is taken, the instance is not banged, the worker
 # never sits at full CPU for 30 s, the route answers at the end, a poke is
 # acknowledged, and rise.json shows no fiber crashing since the deploy,
-# but for one crash (n=1) within 90 s of it (the retry doing its job).
+# but for one crash (n=1) within 90 s of the desk taking it (the retry
+# doing its job). Taken is the desk's code/version.json naming the stamp
+# dev-deploy wrote, within ten minutes.
 # Route differences are printed for the operator to explain; they are not
 # a failure by themselves. The captures are kept when they differ, and
 # removed whatever happens otherwise.
@@ -26,7 +28,8 @@ pier=$(cd "$1" && pwd) || exit 2
 B=${2%/}; JAR=$3
 here=$(cd "$(dirname "$0")" && pwd)
 CODE=$(cd "${4:-$here/../code}" && pwd) || exit 2
-I=/grubbery/ball/apps/shell.shell/desks/calendar.desk/desk/data/calendar.calendar_app
+D=/grubbery/ball/apps/shell.shell/desks/calendar.desk/desk
+I=$D/data/calendar.calendar_app
 serf=$(pgrep -f "work --snap-dir $pier( |$)" | head -1)
 [[ -n "$serf" ]] || { echo "no worker for $pier" >&2; exit 2; }
 ticks() { awk '{print $14+$15}' "/proc/$serf/stat"; }
@@ -50,8 +53,17 @@ python3 "$here/dev-deploy.py" "$B" "$JAR" --code "$CODE" > "$work/deploy.log" 2>
 dep=$?
 tail -n 1 "$work/deploy.log"
 (( dep == 0 )) || { cat "$work/deploy.log"; echo "FAIL: the deploy was not taken (dev-deploy exit $dep)"; exit 1; }
-grep -qE '/calendar-dev/code/(nex|lib)/' "$work/deploy.log" ||
+grep -qE '^  /calendar-dev/code/' "$work/deploy.log" ||
   { echo "nothing to upgrade: the ship already runs this code" >&2; exit 2; }
+# taken means the desk runs the stamp dev-deploy wrote: until then the
+# old code runs (a desk that does not follow the dev tree never does)
+stamp=$(sed -n 's/.*version.json = \([^ ]*\).*/\1/p' "$work/deploy.log" | tail -n 1)
+for i in $(seq 1 60); do
+  [[ "$(get "$D/code/version.json?raw=1")" == *"\"$stamp\""* ]] && break
+  sleep 10
+done
+[[ "$(get "$D/code/version.json?raw=1")" == *"\"$stamp\""* ]] ||
+  { echo "FAIL: the desk never took version $stamp (does it follow /calendar-dev/code?)"; exit 1; }
 t1=$(date +%s)
 fail=0; hot=0
 for i in $(seq 1 30); do
