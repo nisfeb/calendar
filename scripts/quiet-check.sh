@@ -3,14 +3,14 @@
 # healthy calendar prints nothing; a refused road is said once, with its
 # remedy, and recorded; granting it again clears the record.
 #
-#   quiet-check.sh <pier> <ship-url> <cookie-jar> [files ...]
+#   quiet-check.sh <pier> <ship-url> <cookie-jar> [code-dir]
 #
 # Captures the ship's console (the tmux pane of the pier's king) while the
 # calendar
 #   reload       is reloaded: no calendar line;
-#   upgrade      with files given (paths under code/, nex/calendar/app.hoon
-#                last), takes them through upgrade-check.sh: no calendar
-#                line;
+#   upgrade      with a code-dir given (the candidate's code/, on a ship
+#                running the previous release), takes it through
+#                upgrade-check.sh: that must pass, and no calendar line;
 #   refuse       loses /sys/behn/ and is reloaded: exactly one line about
 #                it, the kernel's for the app it parks ("grubbery: <app> is
 #                parked: ..."), naming the permits page; no calendar line;
@@ -29,18 +29,18 @@
 # (grubbery dist/single-release 5ae72f0 or later). The roads are put back
 # and the capture stopped whatever happens.
 set -uo pipefail
-pier=$(cd "$1" && pwd); B=${2%/}; JAR=$3; shift 3
+pier=$(cd "$1" && pwd) || exit 2; B=${2%/}; JAR=$3; shift 3
 here=$(cd "$(dirname "$0")" && pwd)
 I=/grubbery/ball/apps/shell.shell/desks/calendar.desk/desk/data/calendar.calendar_app
 WAIT=${QUIET_WAIT:-60}
 # the console pane: QUIET_PANE (e.g. fleet:rux) when it is not found by the
-# king's tty. The king: the runtime, then the pier (a path, or a name in
-# its cwd), then its flags (vere-v4.6 rux --http-port 8121 --loom 32)
-king=$(pgrep -f "vere[^ ]* ([^ ]*/)?$(basename "$pier")/?( |\$)" | head -1)
+# king's tty. The king is the pier's worker's parent
+serf=$(pgrep -f "work --snap-dir $pier( |$)" | head -1)
+king=$([[ -n "$serf" ]] && ps -o ppid= -p "$serf" | tr -d ' ')
 pane=${QUIET_PANE:-$(tmux list-panes -a -F '#{pane_tty} #{session_name}:#{window_index}.#{pane_index}' |
   awk -v t="$(readlink "/proc/$king/fd/0" 2>/dev/null)" '$1==t{print $2}')}
 [[ -n "$pane" ]] || { echo "no tmux pane found for $pier" >&2; exit 2; }
-cap=$(mktemp)
+cap=$(mktemp); up=$(mktemp); uc=''
 post() { curl -s -o /dev/null -m 120 -b "$JAR" --data-urlencode action="$1" "${@:2}" "$B$I"; }
 road() { post "$1" --data-urlencode category=poke --data-urlencode road-path="$2"; }
 # the record is read through the kernel's route, which answers with the
@@ -48,13 +48,16 @@ road() { post "$1" --data-urlencode category=poke --data-urlencode road-path="$2
 fault() { curl -sL -m 60 -b "$JAR" "$B$I/outcomes.json?raw=1" | python3 -c 'import json,sys
 try: print("yes" if sys.argv[1] in json.load(sys.stdin).get("faults", {}) else "no")
 except Exception: print("unreadable")' "$1"; }
-finish() { tmux pipe-pane -t "$pane"; road add-weir-road /sys/behn/; road add-weir-road /sys/eyre/; post reload-nexus; }
+finish() { tmux pipe-pane -t "$pane"; road add-weir-road /sys/behn/; road add-weir-road /sys/eyre/; post reload-nexus; rm -f "$up"; }
 trap finish EXIT
 tmux pipe-pane -o -t "$pane" "cat >> $cap"
 mark() { sleep 1; printf '\n### %s\n' "$1" >> "$cap"; }
 
 mark reload;      post reload-nexus; sleep "$WAIT"
-if (( $# )); then mark upgrade; "$here/upgrade-check.sh" "$pier" "$B" "$JAR" "$@" | tail -4; fi
+if (( $# )); then
+  mark upgrade; "$here/upgrade-check.sh" "$pier" "$B" "$JAR" "$1" > "$up" 2>&1; uc=$?
+  grep -E 'FAIL|^ok:|nothing to upgrade|rise.json|routes:|captures kept' "$up"
+fi
 mark refuse;      road del-weir-road /sys/behn/; post reload-nexus; sleep "$WAIT"; r1=$(fault road/behn)
 mark grant;       road add-weir-road /sys/behn/; post reload-nexus; sleep "$WAIT"; g1=$(fault road/behn)
 mark refuseweb;   road del-weir-road /sys/eyre/; post reload-nexus; sleep "$WAIT"; r2=$(fault road/eyre)
@@ -62,7 +65,7 @@ mark grantweb;    road add-weir-road /sys/eyre/; post reload-nexus; sleep "$WAIT
 mark end
 tmux pipe-pane -t "$pane"
 
-python3 - "$cap" "$r1" "$g1" "$r2" "$g2" <<'PY'
+python3 - "$cap" "$r1" "$g1" "$r2" "$g2" "$uc" <<'PY'
 import re, sys
 raw = open(sys.argv[1], 'rb').read().decode('utf-8', 'replace')
 txt = re.sub(r'\x1b\[[0-9;?]*[A-Za-z]|\x1b[()][A-Za-z0-9]|\r', '', raw)
@@ -86,6 +89,8 @@ def check(name, ok, detail=''):
     if not ok: fails.append(name)
 for s in ('reload', 'upgrade'):
     if s in seg: check('%s: the calendar prints nothing' % s, not mine(s), mine(s))
+if sys.argv[6] != '':
+    check('upgrade: upgrade-check passed', sys.argv[6] == '0', 'exit ' + sys.argv[6])
 p = parked('refuse')
 check('refuse: the calendar adds no line of its own', not mine('refuse'), mine('refuse'))
 check('refuse: exactly one line about it, the kernel\'s for the parked app', len(p) == 1, p or 'none: this kernel predates the quiet console')

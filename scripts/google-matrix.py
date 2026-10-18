@@ -223,7 +223,15 @@ check('a series made single is single on google', sh and not sh[0].get('recurren
 poke({'action': 'edit-event', 'id': 'shape@gate', 'cat': 'allday', 'kind': 'once', 'start_ms': 1791331200000, 'span_days': 1, 'meta': {'name': 'shape'}}); time.sleep(10)
 sh = [e for e in ctl({'op': 'state'})['events']['primary@fake'].values() if e.get('summary') == 'shape']
 check('a timed event made all-day has only a date on google', sh and sh[0].get('start') == {'date': '2026-10-07'}, sh and sh[0].get('start'))
-for nm in ('G guests', 'invite out', 'all hands', 'offsite', 'utc standup', 'two guests', 'shape'):
+# the last tag taken off is off on Google (a PATCH merges its private
+# properties, so the key goes as null)
+poke({'action': 'add-event', 'cal': gc, 'id': 'tagged@gate', 'cat': 'timed', 'kind': 'once', 'start_ms': 1791385200000, 'fin': 'dur', 'dur_min': 30,
+      'meta': {'name': 'tagged', 'tags': ['work']}}); time.sleep(10)
+poke({'action': 'edit-event', 'id': 'tagged@gate', 'cat': 'timed', 'kind': 'once', 'start_ms': 1791385200000, 'fin': 'dur', 'dur_min': 30,
+      'meta': {'name': 'tagged', 'tags': []}}); time.sleep(10)
+tg2 = [e for e in ctl({'op': 'state'})['events']['primary@fake'].values() if e.get('summary') == 'tagged']
+check('the last tag taken off is off on google', tg2 and 'tags' not in tg2[0].get('extendedProperties', {}).get('private', {}), tg2 and tg2[0].get('extendedProperties'))
+for nm in ('G guests', 'invite out', 'all hands', 'offsite', 'utc standup', 'two guests', 'shape', 'tagged'):
     for r in ship_get('/events.json'):
         if r['meta'].get('name') == nm: poke({'action': 'del-event', 'id': r['id']})
 time.sleep(8)

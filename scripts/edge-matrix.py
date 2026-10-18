@@ -297,15 +297,18 @@ win = rows(1796000000000, 1796200000000)
 check('window.json carries alarms, [] where none', all('alarms' in r for r in win) and [r['alarms'] for r in win if r['id'] == 'edge-alarms@test'] == [AL], win[:2])
 poke(dict(SHAPE, action='edit-event', id='edge-alarms@test', meta={'name': 'edge alarms 2'}))
 check('an edit without alarms keeps them', wait(lambda: alarm_ev()['meta']['name'] == 'edge alarms 2') and alarm_ev().get('alarms') == AL, alarm_ev())
+# the refusals this id already has (a rerun without a reset keeps the last
+# run's in the ring): the wait is for three more
+def my_refusals():
+    out = curl('/outcomes.json')
+    return [r for r in (out.get('refusals', []) if isinstance(out, dict) else []) if r.get('id') == 'edge-alarms@test']
+before = len(my_refusals())
 poke(dict(SHAPE, action='edit-event', id='edge-alarms@test', meta={'name': 'edge alarms 3'}, alarms=[{'kind': 'snooze'}]))
 poke(dict(SHAPE, action='edit-event', id='edge-alarms@test', meta={'name': 'edge alarms 4'}, alarms=[{'kind': 'before', 's': -5}]))
 poke(dict(SHAPE, action='edit-event', id='edge-alarms@test', meta={'name': 'edge alarms 5'}, alarms=[{'kind': 'at', 'desc': 'no at_ms'}]))
 # the last edit's refusal on record says all three were taken in, so the
 # event is read after it rather than after a fixed sleep
-def last_why():
-    out = curl('/outcomes.json')
-    return ([r['why'] for r in (out.get('refusals', []) if isinstance(out, dict) else []) if r.get('id') == 'edge-alarms@test'] or [''])[-1]
-wait(lambda: 'at_ms' in last_why())
+wait(lambda: len(my_refusals()) >= min(20, before + 3) and 'at_ms' in my_refusals()[-1]['why'])
 check('a malformed alarm refuses the whole edit', alarm_ev()['meta']['name'] == 'edge alarms 2' and alarm_ev().get('alarms') == AL, alarm_ev())
 # a refusal's reason has no way back through the poke, so it is recorded (docs/logging.md)
 out = curl('/outcomes.json')

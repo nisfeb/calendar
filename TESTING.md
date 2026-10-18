@@ -23,7 +23,7 @@ $F ls                        # is ~rux up? (calendar ... ~rux:up)
 $F up calendar               # restart it from its event log (vere 4.6 sometimes segfaults)
 ```
 
-The set's snapshots are `golden`, `v33` and `pre-trunk` (Talon calls, below). Start every test from `v33`, then deploy the candidate onto it (below). A point that tests should start from gets a snapshot of its own: `$F snap calendar <name>`. For a throwaway point, `$F --fast snap calendar before-x` takes seconds.
+The set's snapshots are `bare`, `golden`, `v33` and `pre-trunk` (Talon calls, below); a release's upgrade test adds `prev-data` (`docs/releasing.md` §7). Start every test from `v33`, then deploy the candidate onto it (below). A point that tests should start from gets a snapshot of its own: `$F snap calendar <name>`. For a throwaway point, `$F --fast snap calendar before-x` takes seconds.
 
 ## Offline tests (no ship)
 
@@ -85,7 +85,7 @@ The ship-to-ship gates (`ship-share-matrix.py`, `invite-matrix.py`, `caldav-clie
 | ships | `~bes` and `~reb`, fake, piers `~/fleet/piers/bes` and `~/fleet/piers/reb` |
 | HTTP | http://localhost:8138 (`~bes`) and http://localhost:8139 (`~reb`) |
 | dojo | `tmux attach -t fleet`, windows `bes` and `reb` |
-| snapshots | `golden` and `v33`, as for `calendar` |
+| snapshots | `bare`, `golden` and `v33`, as for `calendar` |
 
 ```sh
 $F reset calendar-pair v33
@@ -108,7 +108,7 @@ These work as far as anyone has looked by hand, but nothing here would catch the
 - ICS feeds (`add-feed`, `sync-feeds`): only the `apply-feeds` unit test.
 - A revoked CalDAV client password being refused: the gates revoke only while cleaning up, and none asserts a 401.
 - Tasks: **Delete done older than a week**, and `GET /apps/calendar/tags.json`.
-- Invitations: the inbox cap of 100 (with every row unanswered, a new invitation is dropped), the `invite-max` size refusal, and a copy never landing on an event of the guest's own.
+- Invitations: the inbox cap of 100 and its eviction order (a host's ten unanswered, a declined one, a stranger's oldest), the `invite-max` size refusal, and a copy never landing on an event of the guest's own.
 - `lib/gcal`'s `parse-rfc3339`, `when-of`, `rid-of` and `json-of` have no tests of their own, and `lib/dav` has no suite (calendar-core's tests reach some of it).
 - The fibers (the poke loop, the sync passes, the HTTP handlers, `rise-later`): only the gates reach them. The kit's `hoon/fiber-test.hoon` can drive a fiber in a unit test; nothing here uses it yet.
 

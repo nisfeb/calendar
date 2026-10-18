@@ -67,3 +67,7 @@ test('a link or address in angle brackets stays in a plain note', () => {
   assert.equal(c.noteText('Ask Bo <bo@x.test>'), 'Ask Bo  bo@x.test');
   assert.equal(c.noteText('plain'), 'plain');
 });
+
+test('a word in angle brackets is not a tag', () => {
+  assert.equal(c.noteText('Bring <snacks> and drinks'), 'Bring <snacks> and drinks');
+});

@@ -120,12 +120,12 @@ if len(sys.argv) > 6:
     ctl({'op': 'put', 'event': {'id': 'g-seed', 'summary': 'G seed', 'start': {'dateTime': '2026-11-02T10:00:00Z'}, 'end': {'dateTime': '2026-11-02T11:00:00Z'}}})
     r = json.loads(curl(HOST, HJ, '/apps/calendar/google/link', {'google_id': 'primary@fake', 'name': 'Fake shared', 'color': '#4285f4'})); gc = r.get('id'); time.sleep(10)
     check('host: google calendar linked and seeded', bool(gc) and 'G seed' in rows(HOST, HJ, gc), (gc, list(rows(HOST, HJ, gc))))
-    r = json.loads(curl(HOST, HJ, '/apps/calendar/share/share', {'id': gc, 'ship': PEERNAME, 'mode': 'edit'}))
-    check('host: a google calendar can be shared', r.get('ok') is True, r)
     # cleanup runs whatever a check raises: a gate that dies here would
     # leave the next run a shared copy that turns its offer into a mode change
     key = None; gsid = ''
     try:
+        r = json.loads(curl(HOST, HJ, '/apps/calendar/share/share', {'id': gc, 'ship': PEERNAME, 'mode': 'edit'}))
+        check('host: a google calendar can be shared', r.get('ok') is True, r)
         def offered2():
             global key
             for k, o in json.loads(curl(PEER, PJ, '/apps/calendar/share/shares.json'))['offers'].items():

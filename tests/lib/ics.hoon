@@ -66,6 +66,9 @@
     (expect-eq !>(~d9) !>((parse-duration:ics 'P9D')))
     (expect-eq !>((add ~h1 ~m30)) !>((parse-duration:ics 'PT1H30M')))
     (expect-eq !>(~d14) !>((parse-duration:ics 'P2W')))
+    ::  an M before the T is months, which a duration here has no length
+    ::  for: nothing, never a minute
+    (expect-eq !>(~s0) !>((parse-duration:ics 'P1M')))
   ==
 ::
 ++  test-date-edges

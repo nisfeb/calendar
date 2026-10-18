@@ -333,7 +333,9 @@
           ?&  =(~ alarms.e)
               =(`['X-GOOGLE-REMINDERS' 'default'] (get-prop:ics props.e 'X-GOOGLE-REMINDERS'))
           ==
-        ?:  dflt  ~[['useDefault' b+&]]
+        ::  overrides cleared (null) beside the default: a PATCH merges
+        ::  this object, and Google will not take both
+        ?:  dflt  ~[['useDefault' b+&] ['overrides' ~]]
         :~  ['useDefault' b+|]
             :-  'overrides'
             :-  %a
@@ -350,7 +352,9 @@
         %-  pairs:enjs:format
         :-  ['grubbery' s+'1']
         =/  tags=(list @t)  (meta-tags:cal m)
-        ?~(tags ~ ~[['tags' s+(crip (sep-join:rr "," (turn tags trip)))]])
+        ::  none is null: a PATCH merges this object, so a missing key
+        ::  would leave the last tags on Google
+        ?~(tags ~[['tags' ~]] ~[['tags' s+(crip (sep-join:rr "," (turn tags trip)))]])
     ==
   ::  a Meet the owner asked for (meta call 'meet') and the event lacks:
   ::  Google makes one when the request names conferenceDataVersion=1.

@@ -802,9 +802,20 @@
     ?~  fire  rest
     ?.  (in-win u.fire)  rest
     ::  one set after the start or near the end says so, not "starting
-    ::  now"
+    ::  now": a task says due or overdue, a day's event or a date-only
+    ::  task (a "morning of" alarm) says today
+    =/  task=?  ?=(%todo -.event.u.en)
+    =/  dated=?
+      ?|  (all-day:cal event.u.en)
+          &(task =(0 (mod (fall ?:(?=(%todo -.event.u.en) due.event.u.en ~) l.span.r) ~d1)))
+      ==
     =/  said=@t
       ?:  (gth at u.fire)  body
+      ?:  &(dated task)  'due today'
+      ?:  task
+        ?:  =(at u.fire)  'due now'
+        (crip "overdue {(scow %ud (div (sub u.fire at) ~m1))} min")
+      ?:  &(dated (lth u.fire end))  'today'
       ?:  (lte end u.fire)
         ?:  =(end u.fire)  'ending now'
         (crip "ended {(scow %ud (div (sub u.fire end) ~m1))} min ago")

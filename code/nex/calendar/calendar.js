@@ -131,8 +131,10 @@ function loadCals() {
     })
     .catch(function() {});
   // the views wait on this: a request that never answers holds them 4 s,
-  // and they draw without calendar colors
-  calsReady = Promise.race([calsReady, new Promise(function(r) { setTimeout(r, 4000); })]);
+  // and they draw without calendar colors, then again once it answers
+  var slow = false, got = calsReady;
+  calsReady = Promise.race([got, new Promise(function(r) { setTimeout(function() { slow = true; r(); }, 4000); })]);
+  got.then(function() { if (slow) refresh(); });
   return calsReady;
 }
 
@@ -176,7 +178,8 @@ function noteText(s) {
   if (typeof s !== 'string') return '';
   // a link or address in angle brackets (Outlook, Teams) is text, not a tag
   s = s.replace(/<((?:https?|mailto):[^<>\s]+|[^<>\s@]+@[^<>\s]+)>/gi, ' $1 ');
-  if (!/<[a-z\/!][^>]*>/i.test(s)) return s.trim();
+  // HTML only when it holds a tag HTML has: "bring <snacks>" is text
+  if (!/<\/?(a|b|i|u|p|br|div|span|ul|ol|li|strong|em|font|table|tr|td|th|h[1-6]|img|html|body|blockquote|pre|code)\b[^>]*>/i.test(s)) return s.trim();
   var doc = new DOMParser().parseFromString(s.replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|div|li)>/gi, '$&\n'), 'text/html');
   doc.querySelectorAll('a[href]').forEach(function(a) {
     var href = a.getAttribute('href');

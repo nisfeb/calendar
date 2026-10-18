@@ -206,7 +206,8 @@
   =/  rest=tape  t.s
   =|  acc=@dr
   =|  num=@ud
-  =|  time=?
+  ::  not =|: a loobean's bunt is yes, and P1M (a month) read as a minute
+  =/  time=?  |
   |-
   ?~  rest  acc
   ?:  =('T' i.rest)  $(rest t.rest, time &, num 0)

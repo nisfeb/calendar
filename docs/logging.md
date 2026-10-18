@@ -25,13 +25,13 @@ A refused road that parks nothing is the calendar's to say, since the kernel is 
 
 | Record | Holds | Bound | Read it |
 |---|---|---|---|
-| `outcomes.json`, `faults` | The conditions that stand now, by key: `{since_ms, last_ms, count, level, said, what, remedy}`. Removed when the condition clears. | 50 keys; a full map drops its stalest for a new one. Keys are per condition and calendar, never per object. | `GET /apps/calendar/outcomes.json`; Settings, Faults and refusals; the grub in the explorer. |
+| `outcomes.json`, `faults` | The conditions that stand now, by key: `{since_ms, last_ms, count, level, said, what, remedy}`. Removed when the condition clears. | 50 keys; a full map drops its stalest for a new one. Keys are per condition and calendar; `invite/<uid>` alone is per event, and the 50-key bound holds it. | `GET /apps/calendar/outcomes.json`; Settings, Faults and refusals; the grub in the explorer. |
 | `outcomes.json`, `refusals` | The last refused pokes: `{at_ms, action, id, from, why}`. A poke is acknowledged before it is read, so its refusal has no other way back to the client. | 20 rows, the oldest dropped. | The same. |
 | `rise.json` | Per fiber: crashes in a row, the last one's time, the next try. With the clock refused nothing is counted: the fiber parks first. | One row per fiber. | The grub in the explorer. |
 | `google-conflicts.json` | Edits the other side won, with this ship's copy. | 500 rows, one per calendar and object. | Settings, Conflicts; `GET /apps/calendar/google/conflicts.json`. |
 | The kernel's bang on a grub | A fiber the kernel parked: a dart refused by the weir on a road the calendar does not ask softly (`/sys/push/`, `/sys/iris/`, `/sys/eyre/`), or a nexus that did not build. | One per grub. | The instance's `?info=1`; the explorer. |
 
-Fault keys: `google-auth`, `google-pull/<cal>`, `google-pages/<cal>`, `google-push/<cal>`, `caldav-list/<cal>`, `caldav-get/<cal>`, `caldav-push/<cal>`, `share-push/<cal>`, `invite/<uid>`, `road/behn`, `road/eyre`, `road/inbox`, `road/scry`, `road/gall`, `road/code`, `trunk-marc`, `trunk-notice`, `talon`, `road/talon`. There is no `road/bowl`: a refused clock parks the calendar before it can write one.
+Fault keys (one per condition and place: a calendar's, or for `invite/<uid>` an event's): `google-auth`, `google-pull/<cal>`, `google-pages/<cal>`, `google-push/<cal>`, `caldav-list/<cal>`, `caldav-get/<cal>`, `caldav-push/<cal>`, `share-push/<cal>`, `invite/<uid>`, `road/behn`, `road/eyre`, `road/inbox`, `road/scry`, `road/gall`, `road/code`, `trunk-marc`, `trunk-notice`, `talon`, `road/talon`. There is no `road/bowl`: a refused clock parks the calendar before it can write one.
 
 The trunk keys are the phone side of a reminder (`+trunk-wire` and `+trunk-notice`): the scry road, the gall road and the peek road to the kernel's marks asked softly, the kernel's mark for trunk missing, and a notice trunk nacked. Each is a warning, said once by the calendar (the kernel parks nothing, since no dart is hard), and cleared when the next reminder goes through. A ship with no trunk, or one older than wire 12, records nothing: that is not a fault.
 

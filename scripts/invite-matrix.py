@@ -118,8 +118,12 @@ def named_host():
     return [e for e in events(GUEST, GJ, 'urbit') if e['meta']['name'] == 'inv meeting moved' and e['meta'].get('host') == HOSTNAME
             and HOSTNAME in [g.get('ship') for g in e['meta'].get('ships', [])]]
 check('the guest names the host on its copy', wait(named_host), events(GUEST, GJ, 'urbit'))
-time.sleep(15)
-check('the copy sends no invitation of its own', not invites(HOST, HJ), invites(HOST, HJ))
+# none from the guest for 45 s (rows other runs left are not its)
+from_guest = lambda: [r for r in invites(HOST, HJ) if r.get('host') == GUESTNAME]
+t0 = time.time(); seen = []
+while time.time() - t0 < 45 and not seen:
+    seen = from_guest(); time.sleep(3)
+check('the copy sends no invitation of its own', not seen, seen)
 
 # taken off the guest list: the copy and the invitation go
 poke(HOST, HJ, dict(meet('inv meeting moved', [], start=1793026800000), action='edit-event', id='inv-meeting@gate'))
