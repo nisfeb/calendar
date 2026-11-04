@@ -140,10 +140,16 @@
 ::  +lift: any stored calendar noun to the current shape. A phase 1
 ::  calendar becomes the %default calendar; its ids become uids; every
 ::  event is entered once so the log starts complete.
+::
+::  ponytail: a %2 noun is taken as it is, not clammed: only this
+::  calendar's own typed code writes one, and the kernel asks the mark
+::  (which comes here) several times a change, each clam a walk of the
+::  whole store (180 ms at 1,400 events, eight times a change). A new
+::  shape needs a new head tag and a branch here, as phase 1 has.
 ++  lift
   |=  n=*
   ^-  calendar
-  ?:  ?=([%2 *] n)  ;;(calendar n)
+  ?:  ?=([%2 *] n)  !<(calendar [-:!>(*calendar) n])
   =/  old=calendar-1  ;;(calendar-1 n)
   =/  c=cal
     %+  roll  ~(tap by events.old)

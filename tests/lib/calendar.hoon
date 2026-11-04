@@ -37,6 +37,18 @@
     (expect-eq !>((add 1.970 max-live:cal)) !>(y:(yore key.u.last)))
   ==
 ::
+++  test-lift
+  ::  a current noun comes back as it is; a phase 1 one becomes %default
+  =/  c  fresh-calendar:cal
+  =/  old=calendar-1:cal  ['Old' ~ ~d30 (malt ~[[%one timed-once]])]
+  =/  l=calendar:cal  (lift:cal old)
+  =/  d=(unit cal:cal)  (~(get by cals.l) %default)
+  ;:  weld
+    (expect-eq !>(c) !>((lift:cal c)))
+    (expect-eq !>('Old') !>(title.l))
+    (expect-eq !>(1) !>(?~(d 0 ~(wyt by entries.u.d))))
+  ==
+::
 ++  test-inflate-once
   =/  res  (inflate:cal (malt ~[[%one timed-once]]) kind-for (add at ~d30) ~)
   =/  keys=(list @da)  (turn (tap:on-order:cal order.res) head)

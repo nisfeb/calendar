@@ -1934,7 +1934,19 @@
     %+  skim  `(list vevent:ics)`ves
     |=(v=vevent:ics &(?=(^ (dav-rid v)) !=('todo' cat.v) !=(v u.lead)))
   =/  u=@t  ?:(=('' uid.u.lead) uid-hint uid.u.lead)
-  =/  before=(map uid:cal etag:cal)  (object-etags k u)
+  =/  par=(unit entry:cal)  (~(get by entries.k) u)
+  ::  the children are a walk of the whole calendar, so it is taken once
+  ::  per object, and not at all for a new one: a parent goes with its
+  ::  children (+del-object), so one not here has none. A Google pull
+  ::  puts an instance before its series may have come, so a Google
+  ::  calendar is walked anyway (once per object made an import
+  ::  quadratic: 1,400 objects cost 5 s)
+  =/  kids=(list entry:cal)
+    ?:  &(?=(~ par) !?=(%google kind.props.k))  ~
+    (kids-of:cal k u)
+  =/  before=(map uid:cal etag:cal)
+    ?~  par  ~
+    (~(gas by *(map uid:cal etag:cal)) (turn [u.par kids] |=(x=entry:cal [uid.x etag.x])))
   ::  children the new set no longer carries go; the rest are re-put
   ::  in place (an identical one is left alone)
   =/  keep=(set @t)
@@ -1944,14 +1956,20 @@
     =/  rid=(unit [key=@t val=@t])  (dav-rid v)
     ?~(rid ~ `(crip "{(trip u)}#{(trip val.u.rid)}"))
   =.  k
-    %+  roll  (kids-of:cal k u)
+    %+  roll  kids
     |=([ch=entry:cal acc=_k] ?:((~(has in keep) uid.ch) acc (del-entry:cal acc uid.ch)))
   =/  put=(unit [k=cal:cal =uid:cal])  (put-parent k u.lead zone u extra |)
   ?~  put  ~
   =/  kk=cal:cal  (put-overrides k.u.put uid.u.put overrides zone extra)
   ::  the same object again is no change: the parent's skips come off and
-  ::  back on along the way, and those writes are not a change to log
-  ?:  =(before (object-etags kk uid.u.put))  `[k uid.u.put]
+  ::  back on along the way, and those writes are not a change to log.
+  ::  A new one always is; one with no overrides now has no children
+  ?~  before  `[kk uid.u.put]
+  =/  after=(map uid:cal etag:cal)
+    ?^  overrides  (object-etags kk uid.u.put)
+    =/  p=(unit entry:cal)  (~(get by entries.kk) uid.u.put)
+    ?~(p ~ (malt ~[[uid.u.put etag.u.p]]))
+  ?:  =(before after)  `[k uid.u.put]
   `[kk uid.u.put]
 ++  object-etags  object-etags:core
 ::  +put-parent: a parent VEVENT into a calendar. An existing entry
