@@ -76,7 +76,11 @@
   ::  DAILY, BYDAY a limit (+occurrence)
   =/  daily-by=?  &(=(%daily u.fr) ?=(^ (get 'BYDAY')) =(1 interval))
   =/  daily-md=?  &(daily-by ?=(^ (get 'BYMONTHDAY')))
-  =/  =freq  ?:(daily-md %monthly ?:(daily-by %weekly u.fr))
+  ::  DAILY limited by BYMONTH and BYMONTHDAY (the 29th of February) is
+  ::  YEARLY on those days: a day a slot would pass years of dead ones
+  =/  daily-ym=?
+    &(=(%daily u.fr) =(1 interval) ?=(^ (get 'BYMONTH')) ?=(^ (get 'BYMONTHDAY')))
+  =/  =freq  ?:(daily-md %monthly ?:(daily-ym %yearly ?:(daily-by %weekly u.fr)))
   =/  count=(unit @ud)  (bind (get 'COUNT') |=(v=@t (fall (rush v dem) 0)))
   =/  until=(unit @da)  (bind (get 'UNTIL') parse-until)
   ::  each BY-list once (MO,MO is one Monday), in a set's order: the

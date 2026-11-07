@@ -44,6 +44,19 @@
   %+  expect-eq  !>(~['SUMMARY:abcdef' 'UID:x'])
   !>((unfold:ics 'SUMMARY:ab\0d\0a cd\0d\0a\09ef\0d\0aUID:x\0d\0a'))
 ::
+::  BEGIN and END are read in any case, with a space left after them:
+::  neither loses the component
+++  test-begin-end-loose
+  =/  body=@t
+    %-  crip
+    ;:  weld
+      "BEGIN:VCALENDAR\0d\0abegin:vevent\0d\0aUID:one@test\0d\0aSUMMARY:one\0d\0a"
+      "DTSTART:20261101T100000Z\0d\0aEND:VEVENT \0d\0a"
+      "BEGIN:VEVENT\0d\0aUID:two@test\0d\0aSUMMARY:two\0d\0a"
+      "DTSTART:20261102T100000Z\0d\0aEnd:VEvent\0d\0aEND:VCALENDAR\0d\0a"
+    ==
+  (expect-eq !>(~['one@test' 'two@test']) !>((turn (events:ics body) |=(v=vevent:ics uid.v))))
+::
 ++  test-count-from-a-file-is-capped
   =/  body=@t
     %-  crip

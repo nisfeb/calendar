@@ -89,18 +89,24 @@
   |-
   ?~  lines  (flop out)
   =/  l=@t  i.lines
-  ?:  =('BEGIN:VEVENT' l)
+  ::  BEGIN and END as the RFC reads names, in any case, and a space a
+  ::  writer left after one does not lose its component. Only a short
+  ::  line can be one, so a long one is not looked at again
+  =/  b=@t
+    ?:  (gth (met 3 l) 16)  l
+    (crip (cuss (skip (trip l) |=(c=@tD |(=(' ' c) =('\09' c))))))
+  ?:  =('BEGIN:VEVENT' b)
     $(lines t.lines, cur `[~ ~ |], alarm ~)
-  ?:  =('BEGIN:VTODO' l)
+  ?:  =('BEGIN:VTODO' b)
     $(lines t.lines, cur `[~ ~ &], alarm ~)
-  ?:  |(=('END:VEVENT' l) =('END:VTODO' l))
+  ?:  |(=('END:VEVENT' b) =('END:VTODO' b))
     ?~  cur  $(lines t.lines)
     =/  fin  [(flop props.u.cur) (flop alarms.u.cur) todo.u.cur]
     $(lines t.lines, cur ~, alarm ~, out [fin out])
   ?~  cur  $(lines t.lines)
-  ?:  =('BEGIN:VALARM' l)
+  ?:  =('BEGIN:VALARM' b)
     $(lines t.lines, alarm `~)
-  ?:  =('END:VALARM' l)
+  ?:  =('END:VALARM' b)
     ?~  alarm  $(lines t.lines)
     $(lines t.lines, alarm ~, cur `u.cur(alarms [(flop u.alarm) alarms.u.cur]))
   =/  t=tape  (trip l)

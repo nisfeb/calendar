@@ -868,4 +868,18 @@
     (expect-eq !>(4) !>((count-of:ics recur.ev1 (fall dom.bound.ev1 0))))
     (expect-eq !>(c1) !>((migrate-rules:core c1)))
   ==
+::  a write into a Google-linked calendar that is not a pull keeps the
+::  entry's own X-GOOGLE- props; a pull's own win, and a local calendar
+::  carries none
+++  test-google-carry
+  =/  old=entry:cal  (ent 'x' 'x@test')
+  =.  props.old  ~[['X-GOOGLE-ETAG' '"7"'] ['X-GOOGLE-ID' 'g1'] ['LOCATION' 'here']]
+  =/  goo=cal:cal  fresh-cal:cal
+  =.  kind.props.goo  %google
+  ;:  weld
+    (expect-eq !>(~[['X-GOOGLE-ETAG' '"7"'] ['X-GOOGLE-ID' 'g1']]) !>((google-carry:core goo `old ~)))
+    (expect-eq !>(~[['X-GOOGLE-ID' 'g2']]) !>((google-carry:core goo `old ~[['X-GOOGLE-ID' 'g2']])))
+    (expect-eq !>(~) !>((google-carry:core fresh-cal:cal `old ~)))
+    (expect-eq !>(~) !>((google-carry:core goo ~ ~)))
+  ==
 --

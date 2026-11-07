@@ -1047,7 +1047,8 @@ function renderTasks(tasks) {
   });
   // done: the last week by default; older ones on request, or deleted
   var cut = Date.now() - DONE_KEEP;
-  doneOld = d.filter(function(t) { return t.done_ms && t.done_ms < cut; });
+  // a task done with no date (a file's STATUS:COMPLETED alone) is 0: old
+  doneOld = d.filter(function(t) { return typeof t.done_ms === 'number' && t.done_ms < cut; });
   var shown = showAllDone ? d : d.filter(function(t) { return doneOld.indexOf(t) < 0; });
   shown.forEach(function(t) { done.appendChild(taskRow(t)); });
   document.getElementById('task-done-sum').textContent = 'Done (' + d.length + ')';
@@ -1296,7 +1297,7 @@ function renderAlarms() {
   }
   l.forEach(function(a, i) {
     var row = document.createElement('div'); row.className = 'alarm-row'; row.setAttribute('role', 'listitem');
-    var t = document.createElement('span'); t.textContent = alarmText(a, cat) + (a.desc ? ' · ' + a.desc : '');
+    var t = document.createElement('span'); t.textContent = alarmText(a, cat) + (a.desc && a.desc !== 'popup' ? ' · ' + a.desc : '');
     var x = document.createElement('button'); x.type = 'button'; x.className = 'nav-btn'; x.textContent = '×';
     x.title = 'Remove'; x.setAttribute('aria-label', 'Remove reminder: ' + alarmText(a, cat));
     x.onclick = function() { fAlarms.splice(i, 1); renderAlarms(); };

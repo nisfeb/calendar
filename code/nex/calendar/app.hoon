@@ -270,6 +270,9 @@
             (biff (gn jon 'start_ms') |=(ms=@ud (occurrence-index walk (ms-to-da ms))))
           ::  no occurrence starts there, so there is nothing to skip
           ?~  idx  $
+          ::  one moved elsewhere (a child) stays skipped: put back, it
+          ::  would show twice
+          ?:  &(un (moved-at c home id u.idx))  $
           ::  a date or a task has none to skip; add-skips leaves it be
           =/  new=event:cal
             ?.  un  (add-skips u.ev (sy u.idx ~))
@@ -1995,14 +1998,20 @@
     ?:  (lien extra |=([k=@t *] =('X-GRUBBERY-UID' k)))  ~
     (get-prop:ics props.u.existing 'X-GRUBBERY-UID')
   =?  extra  ?=(^ alias)  [u.alias extra]
-  =.  props.e  (with-extra props.e extra)
+  =.  props.e  (with-extra props.e (google-carry k existing extra))
   =.  e  (with-exdates e exdates.u.got)
+  ::  a Google pull reads only the reminders Google holds (minutes
+  ::  before): an alarm Google cannot hold (at a moment, after the
+  ::  start, from the end) was set here, and stays
+  =?  alarms.e  &(keep ?=(^ existing))
+    (weld alarms.e (skip alarms.u.existing |=(a=alarm:cal ?=(%rel -.trigger.a))))
   ::  the parent's existing skips survive a re-put (an override's moment
   ::  stays skipped when only the parent changed), found again by day if
   ::  its rule changed
   =?  event.e  &(keep ?=(^ existing))  (carry-skips event.u.existing event.e)
   `[(put-entry:cal k e) uid.e]
 ++  with-extra  with-extra:core
+++  google-carry  google-carry:core
 ++  keep-meta  keep-meta:core
 ++  props-rid-moment  props-rid-moment:core
 ::  +put-override: an exception instance as a child of its parent: the
@@ -2034,8 +2043,8 @@
     ?~  cg  ~
     =/  ch=entry:cal  e.u.cg
     =.  uid.ch  (crip "{(trip parent)}#{(trip val.u.rid)}")
-    =.  props.ch  [['X-GRUBBERY-PARENT' parent] (with-extra props.ch extra)]
     =/  was=(unit entry:cal)  (~(get by entries.k) uid.ch)
+    =.  props.ch  [['X-GRUBBERY-PARENT' parent] (with-extra props.ch (google-carry k was extra))]
     =?  event.ch  ?=(^ was)  (keep-meta event.u.was event.ch)
     =?  event.ch  ?=(^ host)  (put-meta:cal event.ch (~(put by (meta-of:cal event.ch)) 'host' u.host))
     `[ve ch]
@@ -5695,6 +5704,23 @@
 ::  already skipped is absent from the index, so asking twice answers ~
 ::  rather than an index that has moved.
 ::
+::  +moved-at: whether occurrence idx of series id has a moved copy (a
+::  child whose RECURRENCE-ID names that occurrence)
+++  moved-at
+  |=  [c=calendar:cal home=@ta id=@ta idx=@ud]
+  ^-  ?
+  =/  got=(unit [cid=@ta e=entry:cal])  (locate c home id)
+  ?~  got  |
+  =/  k=(unit cal:cal)  (~(get by cals.c) cid.u.got)
+  ?~  k  |
+  =/  walk=event:cal  (set-skips event.e.u.got ~)
+  ::  a RECURRENCE-ID names the series' wall clock; the walk, instants
+  =/  z=(unit @t)  ?.(?=(%timed -.event.e.u.got) ~ zone.event.e.u.got)
+  %+  lien  (kids-of:cal u.k uid.e.u.got)
+  |=  ch=entry:cal
+  =/  at=(unit @da)  (props-rid-moment props.ch event.e.u.got)
+  ?~  at  |
+  =(`idx (occurrence-index walk ?~(z u.at (fall (place:rules z u.at) u.at))))
 ++  occurrence-index
   |=  [ev=event:cal when=@da]
   ^-  (unit @ud)

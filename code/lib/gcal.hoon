@@ -220,7 +220,9 @@
     %+  turn  (arr rem 'overrides')
     |=  o=json
     ^-  alarm:cal
-    [[%rel (mul (num o 'minutes') ~m1)] (str o 'method')]
+    ::  the text an alarm says is its own; only an email reminder is
+    ::  marked, so it goes back to Google as one
+    [[%rel (mul (num o 'minutes') ~m1)] ?:(=('email' (str o 'method')) 'email' '')]
   =/  rdef=@t
     =/  rj=json  (obj item 'reminders')
     ?.  ?=([%o *] rj)  ''

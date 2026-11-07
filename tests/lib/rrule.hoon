@@ -79,6 +79,17 @@
     (expect-eq !>(~) !>((occurrence:rr f13 ~2027.8.13..10.00.00 1)))
     (expect-eq !>(`~2028.10.13..10.00.00) !>((occurrence:rr f13 ~2027.8.13..10.00.00 14)))
   ==
+::  a DAILY with BYMONTH and BYMONTHDAY (the 29th of February) is
+::  yearly: three dead years between two, not 1,460 dead days
+++  test-parse-daily-bymonth
+  =/  f29  (rule 'FREQ=DAILY;BYMONTH=2;BYMONTHDAY=29')
+  ;:  weld
+    (expect-eq !>(%yearly) !>(freq.f29))
+    (expect-eq !>(%daily) !>(freq:(rule 'FREQ=DAILY;BYMONTH=2')))
+    (expect-eq !>(`~2028.2.29..10.00.00) !>((occurrence:rr f29 ~2028.2.29..10.00.00 0)))
+    (expect-eq !>(~) !>((occurrence:rr f29 ~2028.2.29..10.00.00 1)))
+    (expect-eq !>(`~2032.2.29..10.00.00) !>((occurrence:rr f29 ~2028.2.29..10.00.00 4)))
+  ==
 ::
 ++  test-occurrences
   =/  wk  (rule 'FREQ=WEEKLY;BYDAY=MO,WE')

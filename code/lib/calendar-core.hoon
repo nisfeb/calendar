@@ -223,6 +223,21 @@
       ?=(^ (find ~[key] `(list @t)`~['X-GRUBBERY-PARENT' 'X-GRUBBERY-KIDS' 'X-GRUBBERY-UID']))
       (lien extra |=([x=@t *] =(x key)))
   ==
+::  +google-carry: the extra props for a write into calendar k over the
+::  entry old: in a Google-linked calendar, a write that is not a Google
+::  pull (a client's PUT, an import, a peer) keeps the entry's own
+::  X-GOOGLE- props, which +with-extra drops from the file. Without them
+::  the next push sends no If-Match (an edit made on Google meanwhile is
+::  overwritten), turns Google's default reminders off and re-reads the
+::  guests. A pull names its own, and they win.
+++  google-carry
+  |=  [k=cal:cal old=(unit entry:cal) extra=(list [@t @t])]
+  ^-  (list [@t @t])
+  =/  goo  |=(key=@t =("X-GOOGLE-" (scag 9 (trip key))))
+  ?.  ?=(%google kind.props.k)  extra
+  ?~  old  extra
+  ?:  (lien extra |=([key=@t *] (goo key)))  extra
+  (weld extra (skim props.u.old |=([key=@t *] (goo key))))
 ::  +keep-meta: a re-read event keeps what the file has no word for: meta
 ::  keys ICS does not carry, and a color or join link a client that knows
 ::  no COLOR or CONFERENCE left out. Name, note, location, tags, guests,
@@ -827,7 +842,8 @@
       (crip "started {(scow %ud (div (sub u.fire at) ~m1))} min ago")
     :_  rest
     :+  name
-      ?:(=('' desc.i.als) said desc.i.als)
+      ::  a Google reminder pulled before v39 holds its method as text
+      ?:(?=(?(%'' %'popup' %'email') desc.i.als) said desc.i.als)
     (crip "cal-{(trip eid.r)}-{(scow %ud idx.r)}-{(scow %ud n)}")
   =/  abs=(list [name=@t body=@t tag=@t])
     %-  zing

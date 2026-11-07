@@ -120,8 +120,9 @@
   ^-  @uv
   (sham [expansion horizon.c zone.c (~(run by cals.c) |=(k=cal seq.k))])
 ::  +expansion: bumped when a rule's occurrences change for the same
-::  data (v37: a day an RRULE names twice is one occurrence)
-++  expansion  %37
+::  data (v37: a day an RRULE names twice is one occurrence; v39: DAILY
+::  with BYMONTH and BYMONTHDAY is yearly)
+++  expansion  %39
 ++  on-order  ((on @da (set ref)) lth)
 ::
 ++  on-log    ((on @ud logent) lth)
