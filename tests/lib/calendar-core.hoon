@@ -108,6 +108,27 @@
     ::  a new id with no target goes to %default
     (expect-eq !>(~['u9']) !>((names (put-ev-in:core c ~ '' 'u9' (ev 'new')) %default)))
   ==
+++  test-store-json-home
+  ::  each row of the store's JSON names the calendar its copy is in; a
+  ::  uid two calendars hold is one row, its name and home from one copy
+  =/  c  (cals ~[[%a ~[(ent 'in a' 'u1') (ent 'solo' 'u2')]] [%b ~[(ent 'in b' 'u1')]]])
+  =/  j=json  (calendar-json:cal c)
+  ?>  ?=([%o *] j)
+  =/  evs=json  (~(got by p.j) 'events')
+  ?>  ?=([%a *] evs)
+  =/  rows=(list [uid=@t home=@t name=@t])
+    %+  turn  p.evs
+    |=  r=json
+    ?>  ?=([%o *] r)
+    [(gs:core r 'uid') (gs:core r 'home') (gs:core (~(got by p.r) 'meta') 'name')]
+  =/  m=(map @t [home=@t name=@t])  (malt rows)
+  =/  one=[home=@t name=@t]  (~(got by m) 'u1')
+  ;:  weld
+    (expect-eq !>(2) !>((lent rows)))
+    (expect-eq !>(`['a' 'solo']) !>((~(get by m) 'u2')))
+    (expect !>(|(=('a' home.one) =('b' home.one))))
+    (expect-eq !>(?:(=('a' home.one) 'in a' 'in b')) !>(name.one))
+  ==
 ::
 ++  test-locate-and-keys
   =/  c  (cals ~[[%a ~[(ent 'in a' 'u')]] [%b ~[(ent 'in b' 'u')]]])

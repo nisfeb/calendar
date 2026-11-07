@@ -232,18 +232,20 @@
   $(cs t.cs)
 ::  +entries-all, +events-all: every calendar flattened, keyed by uid. The
 ::  inflation engine and the window contract are written over events by
-::  id; a uid is that id now.
+::  id; a uid is that id now. A uid two calendars hold is one of them,
+::  and home is the calendar that copy is in.
 ++  entries-all
   |=  c=calendar
-  ^-  (map uid entry)
-  %-  ~(gas by *(map uid entry))
+  ^-  (map uid [home=@ta e=entry])
+  %-  ~(gas by *(map uid [home=@ta e=entry]))
   %-  zing
   %+  turn  ~(tap by cals.c)
-  |=([* k=cal] ~(tap by entries.k))
+  |=  [home=@ta k=cal]
+  (turn ~(tap by entries.k) |=([u=uid e=entry] [u home e]))
 ++  events-all
   |=  c=calendar
   ^-  (map eid event)
-  (~(run by (entries-all c)) |=(e=entry event.e))
+  (~(run by (entries-all c)) |=([* e=entry] event.e))
 ::
 ::  dead-run stops rules gone quiet (once exhausted, unreachable
 ::  dates); fuel stops high-frequency rules exploding the index
@@ -599,13 +601,18 @@
       :-  'events'
       :-  %a
       %+  turn  ~(tap by (entries-all c))
-      |=  [u=uid e=entry]
+      |=  [u=uid home=@ta e=entry]
       ^-  json
       =/  base=json  (event-json u event.e)
       ?.  ?=([%o *] base)  base
       :-  %o
       %-  ~(gas by p.base)
+      ::  home, the calendar this copy is in, is what a poke names to
+      ::  say which copy. Not cal: orrery reads a cal here, empty so
+      ::  far, into its seen keys, and filling it would make it say
+      ::  every event again
       :~  ['uid' s+u]
+          ['home' s+home]
           ['etag' s+etag.e]
           ['seq' (numb:enjs:format seq.e)]
       ==

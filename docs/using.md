@@ -78,7 +78,7 @@ API: guests ride in an event's meta: `guests` (by email, each `{email, name, sta
 
 ## The same event in two calendars
 
-The same UID can live in two calendars (a meeting in your Google calendar and in a calendar a peer shares with you). Each shows as its own event. Pokes that name an event by `id` take an optional `home` (the calendar id) to say which copy; without it the first found is used. `event.json` takes `?cal=` the same way.
+The same UID can live in two calendars (a meeting in your Google calendar and in a calendar a peer shares with you). Each shows as its own event. Pokes that name an event by `id` take an optional `home` (the calendar id) to say which copy. Without it, a poke for an `id` two calendars hold is refused, with the reason in `outcomes.json`. `event.json` takes `?cal=` the same way. An app on the ship that reads the store itself (the `calendar.calendar` mark's JSON, as Orrery does) gets one row per UID, and each row's `home` names the calendar of the copy it shows, to send back as `home`.
 
 ## Making a synced calendar local (migrate)
 
