@@ -784,10 +784,10 @@
           ::  the offer is a fresh one
           ;<  ~  bind:m
             ?:  |(?=(~ hit) ?=(^ live))  (pure:(fiber:fiber:nexus ,~) ~)
-            (write-json-grub './' 'ship-remotes.json' [%o (~(del by rm) id.i.hit)])
+            ;<  fresh=json  bind:(fiber:fiber:nexus ,~)  (read-json-grub './' 'ship-remotes.json')
+            (write-json-grub './' 'ship-remotes.json' [%o (~(del by (omap fresh)) id.i.hit)])
           ?^  live
-            =/  row=json  ?.(?=([%o *] row.u.live) row.u.live [%o (~(put by p.row.u.live) 'mode' s+mode)])
-            ;<  ~  bind:m  (write-json-grub './' 'ship-remotes.json' [%o (~(put by rm) id.u.live row)])
+            ;<  ~  bind:m  (set-row './' 'ship-remotes.json' id.u.live ~[['mode' s+mode]])
             ;<  ~  bind:m  (set-remote './' (crip (trip id.u.live)) `(crip "{(trip key)}#{(trip mode)}"))
             $
           ::  ponytail: a full inbox drops new offers; 200 is far past
@@ -836,7 +836,7 @@
           ;<  ~  bind:m
             ?.  &(=('read' (gs jon 'mode')) ?=(^ k))  (pure:(fiber:fiber:nexus ,~) ~)
             ;<  ~  bind:(fiber:fiber:nexus ,~)
-              (write-json-grub './' 'ship-remotes.json' [%o (~(put by rm) id.i.hit (row-put row.i.hit ~[['mode' s+'read']]))])
+              (set-row './' 'ship-remotes.json' id.i.hit ~[['mode' s+'read']])
             (set-remote './' id `(crip "{(trip key)}#read"))
           ::  a pull now, so the host's copy replaces ours at once; a pull
           ::  is every backend's, so once a minute at most
@@ -913,6 +913,9 @@
         =/  ahead=(list ref:cal)
           ~(tap in (window:cal order.ca (sub from (min back (sub from *@da))) (add now ~d31)))
         ;<  ~  bind:m  (send-pushes (alarm-pushes ahead (keyed c) from now zone.c))
+        ::  read again: a send may have waited, and a lead set meanwhile
+        ::  (+set-lead-min) stays
+        ;<  st=json  bind:m  (get-state-as:io ,json)
         =/  new-st=json
           :-  %o
           %-  ~(gas by ?:(?=([%o *] st) p.st ~))
@@ -3096,18 +3099,31 @@
   ==
 ++  omap  omap:core
 ++  row-put  row-put:core
-::  +save-row: one sync row back to its file, onto a fresh read (a link
-::  or an unlink may have changed the file meanwhile). A row whose
-::  calendar went away in the meantime is not brought back.
+::  +save-row: one sync row back to its file, onto a fresh read, field
+::  by field (+row-merge: bases are the rows this pass knew the file to
+::  hold). A row whose calendar went away meanwhile is not brought back.
 ++  save-row
-  |=  [pre=@t file=@t id=@t row=json]
+  |=  [pre=@t file=@t id=@t bases=(list json) row=json]
   =/  m  (fiber:fiber:nexus ,~)
   ^-  form:m
   ;<  cur=json  bind:m  (read-json-grub pre file)
   =/  rows=(map @t json)  (omap cur)
-  ?.  (~(has by rows) id)  (pure:m ~)
-  ?:  =(`row (~(get by rows) id))  (pure:m ~)
-  (write-json-grub pre file [%o (~(put by rows) id row)])
+  =/  now=(unit json)  (~(get by rows) id)
+  ?~  now  (pure:m ~)
+  =/  new=json  (row-merge:core bases row u.now)
+  ?:  =(new u.now)  (pure:m ~)
+  (write-json-grub pre file [%o (~(put by rows) id new)])
+::  +set-row: fields onto one row of a rows file, read fresh, so what
+::  another fiber wrote to the row meanwhile stays. A row gone stays gone
+++  set-row
+  |=  [pre=@t file=@t id=@t kvs=(list [@t json])]
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  ;<  cur=json  bind:m  (read-json-grub pre file)
+  =/  rows=(map @t json)  (omap cur)
+  =/  row=(unit json)  (~(get by rows) id)
+  ?~  row  (pure:m ~)
+  (write-json-grub pre file [%o (~(put by rows) id (row-put u.row kvs))])
 ::  +sync-file, +sync-pull, +sync-push: the three backends, by kind
 ++  sync-file
   |=  kind=?(%google %caldav %ship)
@@ -3174,9 +3190,11 @@
   ;<  row=json  bind:m
     ?.  pull  (pure:(fiber:fiber:nexus ,json) row.i.rows)
     (sync-pull kind pre id row.i.rows)
+  ::  the file holds the row as the pass began, or as its pull saved it
+  =/  pulled=json  row
   =?  row  &(?=(%ship kind) pull)  (back-off row now)
   ;<  row=json  bind:m  (sync-push kind pre id row)
-  ;<  ~  bind:m  (save-row pre file id.i.rows row)
+  ;<  ~  bind:m  (save-row pre file id.i.rows ~[row.i.rows pulled] row)
   $(rows t.rows)
 ::  +back-off: a shared calendar's row after a pull: its host not heard
 ::  (an error), asked again later each time; heard, at once
@@ -3381,7 +3399,7 @@
   ;<  ~  bind:m  (dav-write pre c(cals (~(put by cals.c) id k)))
   ;<  ~  bind:m  (log-clashes pre id clash-rows 'changed on both sides; google kept')
   ;<  ~  bind:m  (log-clashes pre id gone-rows 'deleted on google; changed here')
-  ;<  ~  bind:m  (save-row pre 'google-sync.json' id row2)
+  ;<  ~  bind:m  (save-row pre 'google-sync.json' id ~[row] row2)
   ::  ponytail: 500 pages (125k events) and no more; a listing cut off
   ::  there is not last, so it deletes nothing
   ?.  last
@@ -3945,7 +3963,7 @@
     ?:  =(k.res k)  (pure:(fiber:fiber:nexus ,~) ~)
     (dav-write pre c(cals (~(put by cals.c) id k.res)))
   ;<  ~  bind:m  (log-clashes pre id clashes.res 'changed on both sides; the remote kept')
-  ;<  ~  bind:m  (save-row pre 'caldav-remotes.json' id row2)
+  ;<  ~  bind:m  (save-row pre 'caldav-remotes.json' id ~[row] row2)
   ::  the listing answered; objects it could not fetch stand as a fault,
   ::  counted, never one line each
   ;<  ~  bind:m  (unfault pre (cat 3 'caldav-list/' id))
@@ -4611,6 +4629,8 @@
   (dav-write './' c(cals (~(put by cals.c) cid (put-entry:cal u.k u.e(event (put-meta:cal event.u.e mt))))))
 ::  +reply-pass: the guest side's answers a host did not hear, sent again
 ::  an hour on
+::  +reply-tries: how many hourly passes ask a silent host again
+++  reply-tries  24
 ++  reply-pass
   =/  m  (fiber:fiber:nexus ,~)
   ^-  form:m
@@ -4623,10 +4643,13 @@
     ?&  !=('' (gs r 'status'))
         ?=([~ %b %.n] (~(get by (omap r)) 'told'))
         (gte (sub now-ms (min now-ms (fall (gn r 'told_ms') 0))) 3.600.000)
+        ::  a day of hourly tries, as a refusal gets; a new answer starts
+        ::  them again
+        (lth (fall (gn r 'tries') 0) reply-tries)
     ==
   ?~  due  (pure:m ~)
   =/  left=(list [key=@t row=json])  due
-  =|  heard=(list [@t ?])
+  =|  heard=(list [@t ? @t])
   ::  a host that did not answer is not tried again this pass
   =|  down=(set @p)
   |-
@@ -4635,10 +4658,13 @@
     =/  rows=(map @t json)  (omap cur)
     =.  rows
       %+  roll  heard
-      |=  [[k=@t t=?] acc=_rows]
+      |=  [[k=@t t=? st=@t] acc=_rows]
       =/  r=(unit json)  (~(get by acc) k)
       ?~  r  acc
-      (~(put by acc) k (row-put u.r ~[['told' b+t] ['told_ms' (numb:enjs:format now-ms)]]))
+      ::  an answer changed while this one was out is not the one heard
+      ?.  =(st (gs u.r 'status'))  acc
+      =/  n=@ud  ?:(t 0 +((fall (gn u.r 'tries') 0)))
+      (~(put by acc) k (row-put u.r ~[['told' b+t] ['told_ms' (numb:enjs:format now-ms)] ['tries' (numb:enjs:format n)]]))
     (write-json-grub './' 'invites.json' [%o rows])
   =/  host=(unit @p)  (slaw %p (gs row.i.left 'host'))
   ;<  told=?  bind:m
@@ -4647,7 +4673,7 @@
     %^  remote-poke-wait  u.host  [%& cal-instance %'shares.sig']
     (pairs:enjs:format ~[['action' s+'invite-reply'] ['uid' s+(gs row.i.left 'uid')] ['status' s+(gs row.i.left 'status')]])
   =?  down  &(!told ?=(^ host))  (~(put in down) (need host))
-  $(left t.left, heard [[key.i.left told] heard])
+  $(left t.left, heard [[key.i.left told (gs row.i.left 'status')] heard])
 ::  +place-invite: an invitation's copy onto the calendar its row names:
 ::  the object as the host sent it, marked as the host's (meta host), its
 ::  guest ships with this ship's own answer. A copy never sends guests to
@@ -4842,11 +4868,26 @@
     ?:  &(!=('declined' st) =(cid.u.hit want))  (pure:(fiber:fiber:nexus ,~) ~)
     =/  k=cal:cal  (~(got by cals.c) cid.u.hit)
     (dav-write '../' c(cals (~(put by cals.c) cid.u.hit (del-object k (gs u.row 'uid')))))
-  =/  new=json  (row-put u.row ~[['status' s+st] ['cal' s+?:(=('declined' st) '' want)]])
-  ;<  ~  bind:m  (write-json-grub '../' 'invites.json' [%o (~(put by cur) key new)])
+  ::  read again: the copy's removal waited, and a cancel the host sent
+  ::  meanwhile is not undone. The answer is not told until the host
+  ::  hears it, whatever an answer before it was
+  ;<  ij1=json  bind:m  (read-json-grub '../' 'invites.json')
+  =/  cur1=(map @t json)  (omap ij1)
+  =/  fresh=(unit json)  (~(get by cur1) key)
+  ?~  fresh  (send-text eyre-id 404 'calendar: the host cancelled this invitation')
+  =/  new=json
+    %+  row-put  u.fresh
+    :~  ['status' s+st]  ['cal' s+?:(=('declined' st) '' want)]
+        ['told' b+|]  ['tries' (numb:enjs:format 0)]
+    ==
+  ;<  ~  bind:m  (write-json-grub '../' 'invites.json' [%o (~(put by cur1) key new)])
   ;<  placed=?  bind:m
     ?:  =('declined' st)  (pure:(fiber:fiber:nexus ,?) &)
     (place-invite '../' new)
+  ::  a copy that could not be placed is not claimed
+  ;<  ~  bind:m
+    ?:  placed  (pure:(fiber:fiber:nexus ,~) ~)
+    (set-row '../' 'invites.json' key ~[['cal' s+'']])
   ;<  ~  bind:m
     ?:  =('declined' st)  (pure:(fiber:fiber:nexus ,~) ~)
     (write-json-grub '../' 'invite-routes.json' [%o (~(put by routes) (gs u.row 'host') s+want)])
@@ -4859,9 +4900,11 @@
   =/  cur2=(map @t json)  (omap ij2)
   ;<  ~  bind:m
     ?.  (~(has by cur2) key)  (pure:(fiber:fiber:nexus ,~) ~)
+    ::  an answer changed while this one was out is not the one heard
+    ?.  =(st (gs (~(got by cur2) key) 'status'))  (pure:(fiber:fiber:nexus ,~) ~)
     =/  r2=json  (row-put (~(got by cur2) key) ~[['told' b+told] ['told_ms' (numb:enjs:format (da-to-ms now))]])
     (write-json-grub '../' 'invites.json' [%o (~(put by cur2) key r2)])
-  (send-json eyre-id (pairs:enjs:format ~[['ok' b+placed] ['cal' s+?:(=('declined' st) '' want)] ['told' b+told]]))
+  (send-json eyre-id (pairs:enjs:format ~[['ok' b+placed] ['cal' s+?:(&(placed !=('declined' st)) want '')] ['told' b+told]]))
 ++  share-request
   |=  [eyre-id=@ta req=inbound-request:eyre our=@p rest=path]
   =/  m  (fiber:fiber:nexus ,~)
@@ -4996,7 +5039,9 @@
           ['last_ms' (numb:enjs:format 0)]
       ==
     ;<  ~  bind:m  (write-json-grub '../' 'ship-remotes.json' [%o (~(put by ?:(?=([%o *] rows) p.rows ~)) id row)])
-    ;<  ~  bind:m  (write-json-grub '../' 'share-offers.json' [%o (~(del by cur) key)])
+    ::  read again: an offer another host sent meanwhile stays
+    ;<  offers2=json  bind:m  (read-json-grub '../' 'share-offers.json')
+    ;<  ~  bind:m  (write-json-grub '../' 'share-offers.json' [%o (~(del by (omap offers2)) key)])
     ;<  ~  bind:m  (google-prod '../')
     (send-json eyre-id (pairs:enjs:format ~[['id' s+id]]))
   ?:  &(post ?=([%decline ~] rest))
@@ -5340,7 +5385,7 @@
     ?:  =(k.res2 k)  (pure:(fiber:fiber:nexus ,~) ~)
     (dav-write pre c(cals (~(put by cals.c) id k.res2)))
   ;<  ~  bind:m  (log-clashes pre id clashes.res2 'changed on both sides; the host kept')
-  ;<  ~  bind:m  (save-row pre 'ship-remotes.json' id row2)
+  ;<  ~  bind:m  (save-row pre 'ship-remotes.json' id ~[row] row2)
   (pure:m row2)
 ::  +ship-push: our changes to an edit-mode shared calendar, as pokes to
 ::  the host

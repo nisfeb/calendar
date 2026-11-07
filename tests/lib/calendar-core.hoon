@@ -882,4 +882,25 @@
     (expect-eq !>(~) !>((google-carry:core fresh-cal:cal `old ~)))
     (expect-eq !>(~) !>((google-carry:core goo ~ ~)))
   ==
+::  a pass's row goes back field by field, and only where the file still
+::  holds what the pass knew: another writer's change stays
+++  test-row-merge
+  =/  was  (obj ~[['sync_token' s+'t1'] ['mode' s+'edit'] ['retry_ms' (numb:enjs:format 5)]])
+  =/  out  (obj ~[['sync_token' s+'t2'] ['mode' s+'edit'] ['retry_ms' (numb:enjs:format 9)]])
+  ;:  weld
+    ::  nobody else wrote: the pass's fields go in
+    (expect-eq !>(out) !>((row-merge:core ~[was] out was)))
+    ::  unlinked and linked again meanwhile: the new link's row stays
+    =/  fresh  (obj ~[['sync_token' s+'']])
+    (expect-eq !>(fresh) !>((row-merge:core ~[was] out fresh)))
+    ::  the host changed the mode and the owner asked for a retry: theirs
+    ::  stay, the token the pass moved goes in
+    =/  now  (obj ~[['sync_token' s+'t1'] ['mode' s+'read'] ['retry_ms' (numb:enjs:format 0)]])
+    %+  expect-eq
+      !>((obj ~[['sync_token' s+'t2'] ['mode' s+'read'] ['retry_ms' (numb:enjs:format 0)]]))
+    !>((row-merge:core ~[was] out now))
+    ::  a field its pull saved is still the pass's to change
+    =/  pulled  (obj ~[['sync_token' s+'t2'] ['mode' s+'edit'] ['retry_ms' (numb:enjs:format 5)]])
+    (expect-eq !>(out) !>((row-merge:core ~[was pulled] out pulled)))
+  ==
 --

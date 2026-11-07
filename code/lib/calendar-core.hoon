@@ -512,6 +512,28 @@
   ^-  json
   ?.  ?=([%o *] row)  row
   [%o (~(gas by p.row) kvs)]
+::  +row-merge: a pass's row onto the row as the file holds it now. A
+::  field is written only while the file still holds a value the pass
+::  knew it by (bases: the row it started from, what its pull saved);
+::  one another writer changed meanwhile stays theirs: an unlink and a
+::  new link under the same id, a mode the host changed, a retry the
+::  owner asked for
+++  row-merge
+  |=  [bases=(list json) row=json now=json]
+  ^-  json
+  =/  r=(map @t json)  (omap row)
+  =/  n=(map @t json)  (omap now)
+  =/  bs=(list (map @t json))  (turn bases omap)
+  =/  keys=(set @t)
+    %+  roll  bs
+    |=([b=(map @t json) acc=_(~(uni in ~(key by r)) ~(key by n))] (~(uni in acc) ~(key by b)))
+  :-  %o
+  %-  ~(rep in keys)
+  |=  [k=@t acc=_n]
+  =/  rk=(unit json)  (~(get by r) k)
+  ?:  =(rk (~(get by n) k))  acc
+  ?.  (lien bs |=(b=(map @t json) =((~(get by b) k) (~(get by n) k))))  acc
+  ?~(rk (~(del by acc) k) (~(put by acc) k u.rk))
 ::  +google-stop: a status that ends a push and keeps the watermark: no
 ::  answer, a server error, auth, a rate limit. Any other refusal (a
 ::  read-only calendar's 403, say) is that change's alone, logged.
