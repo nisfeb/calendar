@@ -111,11 +111,18 @@ function postJSON(path, body) {
 // the calendars as last asked for: the views wait on them, so a row
 // takes its calendar's color and read-only flag
 var calsReady = Promise.resolve();
+var calsSeq = 0;
 function loadCals() {
+  var seq = ++calsSeq;
   calsReady = getJSON('/calendars.json')
     .then(function(list) {
+      // an older answer after a newer one is not drawn over it
+      if (seq !== calsSeq) return;
       CALS = {};
       var sel = document.getElementById('f-cal'), tsel = document.getElementById('task-cal'), isel = document.getElementById('imp-cal');
+      // an open form keeps the calendar it shows: saved, a menu reset to
+      // default would move the event there (off Google, if it was there)
+      var kept = [sel.value, tsel.value, isel.value];
       sel.innerHTML = ''; tsel.innerHTML = ''; isel.innerHTML = '';
       (list || []).forEach(function(c) {
         c.color = safeColor(c.color);
@@ -127,7 +134,9 @@ function loadCals() {
           el.appendChild(o);
         });
       });
-      sel.value = 'default'; tsel.value = 'default'; isel.value = 'default';
+      [sel, tsel, isel].forEach(function(el, i) {
+        el.value = CALS[kept[i]] && !CALS[kept[i]].readonly ? kept[i] : 'default';
+      });
     })
     .catch(function() {});
   // the views wait on this: a request that never answers holds them 4 s,
@@ -526,7 +535,12 @@ document.getElementById('pop-edit').onclick = function() {
   // on its way
   btn.textContent = 'Opening…';
   busy(btn, getJSON('/event.json?id=' + encodeURIComponent(t.id) + '&cal=' + encodeURIComponent(t.cal || '') + '&idx=' + (t.idx || 0)))
-    .then(function(d) { btn.textContent = 'Edit'; hidePop(); openEdit(d, t); },
+    .then(function(d) {
+            btn.textContent = 'Edit';
+            // a form opened while this one was on its way is not overwritten
+            if (back.classList.contains('open')) return;
+            hidePop(); openEdit(d, t);
+          },
           function(e) { btn.textContent = 'Edit'; loadFailed(e); });
 };
 document.addEventListener('click', function(e) {
@@ -2176,8 +2190,11 @@ function formState() {
       : (el.type === 'checkbox' || el.type === 'radio') ? el.checked : el.value;
   })]);
 }
+var saving = false, formGen = 0;
 function showModal() {
-  fSave.disabled = false;
+  // Save stays off while another save is out (+finish turns it on)
+  fSave.disabled = saving;
+  formGen++;
   alarmSel.value = ''; alarmInputs('');
   syncTimeLabel();
   modalOpener = document.activeElement;
@@ -2287,6 +2304,12 @@ function openEdit(d, target) {
   colorTouched = false;
   document.getElementById('f-due').value = '';
   document.getElementById('f-done').checked = false;
+  // what another form left: a priority, a birthday's day. A task and a
+  // date set their own below
+  setPriSelect(0);
+  var od = new Date(target.l || Date.now());
+  document.getElementById('f-bmonth').value = od.getMonth() + 1;
+  document.getElementById('f-bday').value = od.getDate();
 
   // edit scope only for a recurring series, always back on "all"
   document.getElementById('edit-scope').classList.toggle('on', editCtx.series);
@@ -2548,13 +2571,15 @@ fSave.onclick = function() {
   // to it and not to someone else's change
   if (!editCtx) body.id = Date.now().toString(36) + Math.random().toString(36).slice(2, 10) + '@' + (CFG.ship || 'calendar');
   var savedId = editCtx ? editCtx.id : body.id, savedAt = Date.now();
+  var gen = formGen;
   var finish = function(ok) {
+    saving = false;
     fSave.disabled = false;
     if (!ok) {
       // the ship did not take it. The form comes back as it was left,
-      // unless another edit has been opened since
+      // unless another form has been opened since: it holds that one now
       toast('Could not save "' + name + '": the ship did not answer');
-      if (!back.classList.contains('open')) {
+      if (!back.classList.contains('open') && gen === formGen) {
         st.textContent = 'not saved: the ship did not answer';
         back.classList.add('open');
       }
@@ -2571,6 +2596,7 @@ fSave.onclick = function() {
   // the form closes and says so at once; the ship is told behind it.
   // Save stays off until the ship has the change
   closeModal();
+  saving = true;
   fSave.disabled = true;
   toast('Saving "' + name + '"…');
   if (cat === 'todo' && state.view === 'tasks') {
