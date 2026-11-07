@@ -359,6 +359,8 @@
           =/  id=@ta  (crip (trip (gs jon 'id')))
           ?:  |(=('' id) =(%default id))  $
           ;<  ~  bind:m  (replace:io c(cals (~(del by cals.c) id)))
+          ;<  ~  bind:m  (unfault-cal './' id)
+          ;<  ~  bind:m  (drop-share './' id)
           $
         ?:  =('config' act)
           =/  ti=@t  (gs jon 'title')
@@ -1567,6 +1569,8 @@
   ;<  ~  bind:m  (dav-write '../' c(cals (~(del by cals.c) id)))
   ;<  rows=json  bind:m  (read-json-grub '../' (sync-file kind))
   ;<  ~  bind:m  (write-json-grub '../' (sync-file kind) [%o (~(del by (omap rows)) id)])
+  ;<  ~  bind:m  (unfault-cal '../' id)
+  ;<  ~  bind:m  (drop-share '../' id)
   (send-json eyre-id (pairs:enjs:format ~[['ok' b+&]]))
 ::  +read-cache: the derived occurrence index, or an empty one
 ++  read-cache
@@ -2921,6 +2925,7 @@
         `(form-body ~[["token" (trip tok)]])
       (pure:(fiber:fiber:nexus ,~) ~)
     ;<  ~  bind:m  (write-json-grub '../' 'google-auth.json' [%o ~])
+    ;<  ~  bind:m  (unfault '../' 'google-auth')
     (send-json eyre-id (pairs:enjs:format ~[['ok' b+&]]))
   ::  calendars.json: the account's calendars, with which are linked
   ?:  ?=([%'calendars.json' ~] rest)
@@ -3169,8 +3174,14 @@
   ;<  ~  bind:m
     ?~  dead  (pure:(fiber:fiber:nexus ,~) ~)
     ;<  cur=json  bind:(fiber:fiber:nexus ,~)  (read-json-grub pre file)
-    %^  write-json-grub  pre  file
-    [%o (roll `(list @t)`dead |=([id=@t acc=_(omap cur)] (~(del by acc) id)))]
+    ;<  ~  bind:(fiber:fiber:nexus ,~)
+      %^  write-json-grub  pre  file
+      [%o (roll `(list @t)`dead |=([id=@t acc=_(omap cur)] (~(del by acc) id)))]
+    =/  gone=(list @t)  dead
+    |-
+    ?~  gone  (pure:(fiber:fiber:nexus ,~) ~)
+    ;<  ~  bind:(fiber:fiber:nexus ,~)  (unfault-cal pre i.gone)
+    $(gone t.gone)
   =/  rows=(list [id=@t row=json])  (skim `(list [id=@t row=json])`all |=([id=@t *] (kind-is c id kind)))
   ?:  =(~ rows)  (pure:m ~)
   ::  Google: nothing to do without a token
@@ -4226,7 +4237,11 @@
   =/  waiting
     |=  row=json
     ?&  ?=([~ %b %.n] (~(get by (omap row)) 'ok'))
-        (lth (sub now-ms (min now-ms (fall (gn row 'at_ms') 0))) 3.600.000)
+        ::  or a day of hourly tries not heard: given up on until the
+        ::  event changes (a guest's ship gone for good costs 30 s a try)
+        ?|  (gte (fall (gn row 'tries') 0) tries-max)
+            (lth (sub now-ms (min now-ms (fall (gn row 'at_ms') 0))) 3.600.000)
+        ==
     ==
   ::  a moved instance rides in its series' object, and our own ship is
   ::  not a guest to send to
@@ -4361,7 +4376,11 @@
     (remote-poke-wait to.j [%& cal-instance %'shares.sig'] body)
   =?  down  !ok  (~(put in down) to.j)
   =/  rows=(map @t json)  (omap (fall (~(get by sent) key.j) [%o ~]))
-  =/  stamp  |=(et=@t (pairs:enjs:format ~[['etag' s+et] ['ok' b+ok] ['at_ms' (numb:enjs:format now-ms)]]))
+  =/  prev=json  (fall (~(get by rows) (scot %p to.j)) [%o ~])
+  =/  stamp
+    |=  et=@t
+    =/  n=@ud  ?:(ok 0 ?.(=(et (gs prev 'etag')) 1 +((fall (gn prev 'tries') 0))))
+    (pairs:enjs:format ~[['etag' s+et] ['ok' b+ok] ['at_ms' (numb:enjs:format now-ms)] ['tries' (numb:enjs:format n)]])
   =.  rows
     ?:  cancel.j
       ::  a cancel not heard stays, to be sent again within the hour
@@ -4629,8 +4648,9 @@
   (dav-write './' c(cals (~(put by cals.c) cid (put-entry:cal u.k u.e(event (put-meta:cal event.u.e mt))))))
 ::  +reply-pass: the guest side's answers a host did not hear, sent again
 ::  an hour on
-::  +reply-tries: how many hourly passes ask a silent host again
-++  reply-tries  24
+::  +tries-max: how many hourly passes ask a silent ship again (an
+::  invitation, an answer to one), as a refusal is
+++  tries-max  24
 ++  reply-pass
   =/  m  (fiber:fiber:nexus ,~)
   ^-  form:m
@@ -4645,7 +4665,7 @@
         (gte (sub now-ms (min now-ms (fall (gn r 'told_ms') 0))) 3.600.000)
         ::  a day of hourly tries, as a refusal gets; a new answer starts
         ::  them again
-        (lth (fall (gn r 'tries') 0) reply-tries)
+        (lth (fall (gn r 'tries') 0) tries-max)
     ==
   ?~  due  (pure:m ~)
   =/  left=(list [key=@t row=json])  due
@@ -4744,16 +4764,7 @@
   =/  road=road:tarball  (cord-to-road:tarball (crip "./shares/{(trip id)}.json"))
   =/  k=(unit cal:cal)  (~(get by cals.c) id)
   ?~  k
-    ;<  base=(unit path)  bind:m  self-base
-    ;<  ~  bind:m
-      ?~  base  (pure:(fiber:fiber:nexus ,~) ~)
-      (set-share-groups u.base id ~)
-    ;<  *  bind:m  (cull-soft:io road)
-    ;<  *  bind:m  (cull-soft:io (cord-to-road:tarball (crip "./shares/{(trip id)}/")))
-    ;<  cur=json  bind:m  (read-json-grub './' 'shares.json')
-    ;<  ~  bind:m  (write-json-grub './' 'shares.json' [%o (~(del by (omap cur)) i.ids)])
-    ;<  wj=json  bind:m  (read-json-grub './' 'share-writes.json')
-    ;<  ~  bind:m  (write-json-grub './' 'share-writes.json' [%o (~(del by (omap wj)) i.ids)])
+    ;<  ~  bind:m  (drop-share './' id)
     $(ids t.ids)
   ;<  cur=(unit view:nexus)  bind:m  (peek-soft:io road ~)
   =/  have=json
@@ -4785,6 +4796,40 @@
 ::  ponytail: every object's text is rendered on each publish; keep the
 ::  text of an unchanged etag from the last one if a big calendar makes
 ::  that slow
+::  +drop-share: a calendar gone (unlinked, unfollowed, deleted) takes
+::  its sharing with it at once: its groups, what was published for its
+::  peers, its rows. Left to +share-pass, a calendar linked again under
+::  the same id before the pass would be published to the old peers
+++  drop-share
+  |=  [pre=@t id=@ta]
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  ;<  cur=json  bind:m  (read-json-grub pre 'shares.json')
+  ?.  (~(has by (omap cur)) id)  (pure:m ~)
+  ;<  base=(unit path)  bind:m  self-base
+  ;<  ~  bind:m
+    ?~  base  (pure:(fiber:fiber:nexus ,~) ~)
+    (set-share-groups u.base id ~)
+  ;<  *  bind:m  (cull-soft:io (cord-to-road:tarball (crip "{(trip pre)}shares/{(trip id)}.json")))
+  ;<  *  bind:m  (cull-soft:io (cord-to-road:tarball (crip "{(trip pre)}shares/{(trip id)}/")))
+  ;<  ~  bind:m  (write-json-grub pre 'shares.json' [%o (~(del by (omap cur)) id)])
+  ;<  wj=json  bind:m  (read-json-grub pre 'share-writes.json')
+  (write-json-grub pre 'share-writes.json' [%o (~(del by (omap wj)) id)])
+::  +unfault-cal: a calendar gone takes its faults with it: no pass of
+::  its would ever clear them
+++  unfault-cal
+  |=  [pre=@t id=@t]
+  =/  m  (fiber:fiber:nexus ,~)
+  ^-  form:m
+  =/  keys=(list @t)
+    %+  turn
+      ^-  (list @t)
+      ~['google-pull/' 'google-pages/' 'google-push/' 'caldav-list/' 'caldav-get/' 'caldav-push/' 'share-push/']
+    |=(p=@t (cat 3 p id))
+  |-
+  ?~  keys  (pure:m ~)
+  ;<  ~  bind:m  (unfault pre i.keys)
+  $(keys t.keys)
 ++  publish-share
   |=  [pre=@t c=calendar:cal id=@ta now=@da]
   =/  m  (fiber:fiber:nexus ,~)
