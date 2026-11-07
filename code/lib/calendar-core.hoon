@@ -575,7 +575,12 @@
 ++  hdr-of
   |=  [headers=(list [@t @t]) name=@t]
   ^-  @t
-  (fall (get-header:http name headers) '')
+  ::  in any case: a server may send ETag where we ask for etag
+  =/  low=tape  (cass (trip name))
+  |-
+  ?~  headers  ''
+  ?:  =(low (cass (trip -.i.headers)))  +.i.headers
+  $(headers t.headers)
 ::  +response-href: an object's href from a <response>, as a path; ~ for
 ::  the collection itself or anything that is not an .ics
 ++  response-href

@@ -238,6 +238,13 @@ def run_stale_edit():
         poke(PEER, PJ, {'action': 'edit-event', 'id': uid, 'home': sid, **ev('peer two', 1795003600000)})
         wait('host: and its second, before any pull', lambda: names(HOST, HJ, CAL) == ['peer two'])
         check('peer: no refusal for its own edits', not [c for c in conflicts(PEER, PJ) if 'refused' in c['why']])
+        # our own push read back is no host change: an edit made while a
+        # pull is on its way still goes in (a pass that pushes first
+        # passes this without testing it; it cannot fail falsely)
+        sync(PEER, PJ)
+        poke(PEER, PJ, {'action': 'edit-event', 'id': uid, 'home': sid, **ev('peer three', 1795003600000)})
+        wait('host: an edit made as a pull reads our push back', lambda: names(HOST, HJ, CAL) == ['peer three'], 120)
+        check('peer: its own push read back is no clash', not [c for c in conflicts(PEER, PJ) if 'both sides' in c['why']])
     finally:
         curl(HOST, HJ, '/apps/calendar/share/revoke', {'id': CAL, 'ship': PEERNAME})
         poke(HOST, HJ, {'action': 'del-calendar', 'id': CAL})

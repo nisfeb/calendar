@@ -3910,19 +3910,40 @@
   ::  1. the network: every changed object's text. No answer ends the
   ::  loop: a late answer would be taken for the next GET's.
   =|  fetched=(list [href=tape etag=@t gone=? body=@t])
+  =|  missed=(list tape)
   =/  failed=?  |
-  =/  todo=(list [href=tape etag=@t gone=?])  changes.u.got
+  ::  an object refused last pass is asked for again by its href (its
+  ::  etag comes off the GET); one the listing names goes by that entry
+  =/  retry=(list tape)
+    (murn (arr:gcal row 'retry') |=(j=json ?.(?=([%s *] j) ~ `(trip p.j))))
+  =/  named=(set tape)  (~(gas in *(set tape)) (turn changes.u.got |=([h=tape *] h)))
+  =/  todo=(list [href=tape etag=@t gone=?])
+    %+  weld  changes.u.got
+    %+  murn  retry
+    |=  h=tape
+    ^-  (unit [tape @t ?])
+    ?:((~(has in named) h) ~ `[h '' |])
   |-
   ?^  todo
     ?:  gone.i.todo  $(todo t.todo, fetched [[href.i.todo '' & ''] fetched])
     ;<  [status=@ud hs=(list [@t @t]) body=@t]  bind:m
       (dav-fetch row %'GET' (crip (weld origin href.i.todo)) ~ ~)
+    ::  no answer keeps the old token: a delete not reached must be
+    ::  listed again. The objects not reached are kept to ask for
     ?:  =(0 status)
-      $(todo ~, failed &)
+      $(todo ~, failed &, missed (weld (murn `(list [href=tape etag=@t gone=?])`todo |=([h=tape * g=?] ?:(g ~ `h))) missed))
+    ::  a retry the remote no longer has went as a delete would
+    ?:  &(=('' etag.i.todo) |(=(404 status) =(410 status)))
+      $(todo t.todo, fetched [[href.i.todo '' & ''] fetched])
     ?.  =(200 status)
-      ::  a miss keeps the old token, so the next pass asks again
-      $(todo t.todo, failed &)
+      ::  a refused object does not hold the token back: the row keeps
+      ::  it, and the next pass asks for it alone
+      $(todo t.todo, missed [href.i.todo missed])
     =/  et=@t  ?:(=('' etag.i.todo) (dav-unquote (hdr-of hs 'etag')) etag.i.todo)
+    ::  a retry our own push has written since is no news
+    =/  own=(unit @t)  (~(get by by-href) (norm-href href.i.todo))
+    ?:  &(=('' etag.i.todo) ?=(^ own) !=('' et) =(et (gs (fall (~(get by ids) u.own) ~) 'etag')))
+      $(todo t.todo)
     $(todo t.todo, fetched [[href.i.todo et | body] fetched])
   ::  2. the calendar, once, read and written with nothing waiting between
   ::  (+edit-cals): the clock first, the conflicts after
@@ -3969,6 +3990,7 @@
         ['error' s+'']
         ['ids' [%o ids.res]]
         ['suppressed' (suppress-json sup2 since)]
+        ['retry' [%a (turn missed |=(h=tape s+(crip h)))]]
     ==
   ;<  ~  bind:m
     ?:  =(k.res k)  (pure:(fiber:fiber:nexus ,~) ~)
@@ -3979,8 +4001,9 @@
   ::  counted, never one line each
   ;<  ~  bind:m  (unfault pre (cat 3 'caldav-list/' id))
   ;<  ~  bind:m
-    ?.  failed  (unfault pre (cat 3 'caldav-get/' id))
-    %:  fault  pre  (cat 3 'caldav-get/' id)  %warning  |
+    ?~  missed  (unfault pre (cat 3 'caldav-get/' id))
+    ::  said once, when an object is refused two passes running
+    %:  fault  pre  (cat 3 'caldav-get/' id)  %warning  (lien `(list tape)`missed |=(h=tape ?=(^ (find ~[h] retry))))
       "some objects of calendar {(trip id)} could not be fetched"
       "the next pass asks for them again"
     ==
@@ -4053,8 +4076,17 @@
         (google-conflict pre id u (~(get by entries.u.k) u) '' (crip "remote refused the push ({(a-co:co status)})"))
       $(changes t.changes)
     =/  new-etag=@t  (dav-unquote (hdr-of hs 'etag'))
+    ::  a server that rewrote what it stored names no etag (RFC 4791
+    ::  5.3.4): one GET learns it, or the next pull would take this write
+    ::  for the remote's, and the next push would go without If-Match.
+    ::  No answer ends the pass, as a PUT's would
+    ;<  [gst=@ud ghs=(list [@t @t]) *]  bind:m
+      ?.  =('' new-etag)  (pure:(fiber:fiber:nexus ,[@ud (list [@t @t]) @t]) [200 ~ ''])
+      (dav-fetch row %'GET' (crip (weld origin href)) ~ ~)
+    =?  new-etag  &(=('' new-etag) =(200 gst))  (dav-unquote (hdr-of ghs 'etag'))
     %=  $
-      changes  t.changes
+      changes  ?:(=(0 gst) ~ t.changes)
+      stopped  =(0 gst)
       ids      (~(put by ids) u (pairs:enjs:format ~[['href' s+(crip href)] ['etag' s+new-etag]]))
     ==
   ;<  ~  bind:m  ?:(stopped (pure:(fiber:fiber:nexus ,~) ~) (unfault pre (cat 3 'caldav-push/' id)))
@@ -5396,6 +5428,11 @@
       =/  al  (alias-object (events:ics (gs o 'ics')) u)
       (put-object k.acc ves.al zone.c u extra.al)
     ?~  put  acc
+    ::  our own write coming back (+ship-push): the host's copy reads here
+    ::  as the text we sent. Nothing new, and a local edit made since is
+    ::  no clash with it: it still goes
+    =/  new=(unit entry:cal)  (~(get by entries.k.u.put) uid.u.put)
+    ?:  &(?=(^ new) =(etag.u.new (gs [%o etags] u)))  acc
     =/  old=(unit entry:cal)  (~(get by entries.k.acc) uid.u.put)
     =?  clashes.acc  &(?=(^ old) (~(has in pending) uid.u.put) !=(k.acc k.u.put))  [[uid.u.put old ''] clashes.acc]
     acc(k k.u.put)
@@ -5465,9 +5502,11 @@
   ;<  now=@da  bind:m  get-time:io
   =/  cal-lane=lane:tarball  [%& base %'calendar.calendar']
   =/  stopped=?  |
-  ::  the row's etags follow what we push: etags are content hashes,
-  ::  so a host that later puts the old content back would otherwise
-  ::  look unchanged against the etag of our last pull and be skipped
+  ::  the row's etags follow what we push, as our text reads back here
+  ::  (the host keeps it in its own words; a pull knows its echo by
+  ::  this). Etags are content hashes, so a host that later puts the old
+  ::  content back would otherwise look unchanged against the etag of
+  ::  our last pull and be skipped
   =/  etags=(map @t json)  (omap (obj:gcal row 'etags'))
   =/  pulled=json  (obj:gcal row 'pulled')
   ::  what went to the host in the last day: a refusal of one is ours to
@@ -5500,7 +5539,14 @@
     =.  etags
       ?:  =(%del what)  (~(del by etags) u)
       =/  e=(unit entry:cal)  (~(get by entries.u.k) u)
-      ?~(e etags (~(put by etags) u s+etag.u.e))
+      ?~  e  etags
+      =/  back=(unit [k=cal:cal =uid:cal])
+        %-  fall  :_  ~
+        %-  mole  |.
+        =/  al  (alias-object (events:ics (gs body 'ics')) u)
+        (put-object u.k ves.al zone.c u extra.al)
+      =/  r=(unit entry:cal)  ?~(back ~ (~(get by entries.k.u.back) uid.u.back))
+      (~(put by etags) u s+?~(r etag.u.e etag.u.r))
     $(changes t.changes, sent (~(put by sent) u (numb:enjs:format (da-to-ms now))))
   ;<  ~  bind:m  ?:(stopped (pure:(fiber:fiber:nexus ,~) ~) (unfault pre (cat 3 'share-push/' id)))
   =/  mark=@ud  ?:(stopped since seq.u.k)
