@@ -252,6 +252,14 @@
 ++  max-live  10.000
 ::
 ++  da-to-ms  |=(d=@da `@ud`?:((lth d ~1970.1.1) 0 (div (mul (sub d ~1970.1.1) 1.000) ~s1)))
+::  +ms-json: a moment as unix ms, below zero before 1970 (+da-to-ms
+::  floors there): a birthday from 1950 goes to the page and back as it
+::  came, not as the 1st of January 1970
+++  ms-json
+  |=  d=@da
+  ^-  json
+  ?.  (lth d ~1970.1.1)  (numb:enjs:format (da-to-ms d))
+  [%n (crip (weld "-" (a-co:co (div (mul (sub ~1970.1.1 d) 1.000) ~s1))))]
 ::
 ++  put-ref
   |=  [o=order at=@da r=ref]
@@ -488,7 +496,7 @@
   |=  =recur
   ^-  (list [@t json])
   :~  ['kind' s+name.kind.recur]
-      ['start_ms' (numb:enjs:format (da-to-ms start.recur))]
+      ['start_ms' (ms-json start.recur)]
       ['args' [%o args.recur]]
   ==
 ::  +event-json: full event breakdown for the edit form — the
@@ -511,7 +519,7 @@
       ==
     ::
         %todo
-      :~  ['due_ms' ?~(due.e ~ (numb:enjs:format (da-to-ms u.due.e)))]
+      :~  ['due_ms' ?~(due.e ~ (ms-json u.due.e))]
           ['done_ms' ?~(done.e ~ (numb:enjs:format (da-to-ms u.done.e)))]
           ['done' b+?=(^ done.e)]
           ['priority' (numb:enjs:format (meta-priority m))]
@@ -521,7 +529,7 @@
       =/  fin-fields=(list [@t json])
         ?-  -.fin.e
           %dur  ~[['fin' s+'dur'] ['dur_min' (numb:enjs:format (div d.fin.e ~m1))]]
-          %to   ~[['fin' s+'to'] ['end_ms' (numb:enjs:format (da-to-ms end.fin.e))]]
+          %to   ~[['fin' s+'to'] ['end_ms' (ms-json end.fin.e)]]
         ==
       ;:  weld
         (recur-json recur.e)

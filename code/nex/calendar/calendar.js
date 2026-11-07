@@ -121,8 +121,11 @@ function loadCals() {
       CALS = {};
       var sel = document.getElementById('f-cal'), tsel = document.getElementById('task-cal'), isel = document.getElementById('imp-cal');
       // an open form keeps the calendar it shows: saved, a menu reset to
-      // default would move the event there (off Google, if it was there)
-      var kept = [sel.value, tsel.value, isel.value];
+      // default would move the event there (off Google, if it was there).
+      // An edit opened before the first list has no option to show, so
+      // its event's own calendar is the one kept
+      var editing = back.classList.contains('open') && editCtx && editCtx.home;
+      var kept = [editing ? editCtx.home : sel.value, tsel.value, isel.value];
       sel.innerHTML = ''; tsel.innerHTML = ''; isel.innerHTML = '';
       (list || []).forEach(function(c) {
         c.color = safeColor(c.color);

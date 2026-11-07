@@ -210,10 +210,18 @@
             ?:  |(!(key-ok u) &(?=(^ home) !=(cid id.u.home) !(~(has by entries.u.k) u)))
               ;<  ~  bind:m  (tell u 'another calendar of the host holds this UID' (gs jon 'ics'))
               $
+            ::  one object, and not one another object here holds the UID of
+            ::  under its own name
+            ?.  (one-object ves0)
+              ;<  ~  bind:m  (tell u 'one object at a time: one UID, one event without a RECURRENCE-ID' (gs jon 'ics'))
+              $
+            ?:  (uid-held u.k u ?:(=('' real) u real))
+              ;<  ~  bind:m  (tell u 'another object of this calendar has this UID' (gs jon 'ics'))
+              $
             ::  base: the host's version the peer last pulled. An edit made
             ::  here (or by another peer) since is not the peer's to write
             ::  over; its own last write through here is (+share-base-ok)
-            ?.  (share-base-ok writes cid u u.src (gs jon 'base') (~(get by entries.u.k) u))
+            ?.  (share-base-ok writes cid u u.src (gs jon 'base') (cur-tag u.k u))
               ;<  ~  bind:m  (tell u 'it changed on the host since you last pulled it' (gs jon 'ics'))
               $
             =/  put=(unit [k=cal:cal =uid:cal])  (fall (mole |.((put-object u.k ves.al zone.c u extra.al))) ~)
@@ -230,7 +238,7 @@
             $
           ?:  =('share-del' act)
             =/  u=@t  (gs jon 'uid')
-            ?.  (share-base-ok writes cid u u.src (gs jon 'base') (~(get by entries.u.k) u))
+            ?.  (share-base-ok writes cid u u.src (gs jon 'base') (cur-tag u.k u))
               ;<  ~  bind:m  (tell u 'it changed on the host since you last pulled it; the delete was not made' '')
               $
             =/  k2=cal:cal  (del-object u.k u)
@@ -244,6 +252,16 @@
         =/  named=@ta  (crip (trip (gs jon 'cal')))
         =/  home=@ta  (crip (trip (gs jon 'home')))
         =/  owner=@ta  (fall (bind (locate c home (gs jon 'id')) head) '')
+        ::  an id more than one calendar holds, and no home to say which:
+        ::  refused, not taken as whichever the map lists first (a delete
+        ::  would go out to that copy's remote). The page names home
+        =/  eid=@t  (gs jon 'id')
+        ?:  ?&  =('' home)  !=('' eid)
+                !?=(?(%'add-event' %'add-calendar' %'edit-calendar' %'del-calendar' %'config') act)
+                (gth (lent (skim ~(val by cals.c) |=(k=cal:cal (~(has by entries.k) eid)))) 1)
+            ==
+          ;<  ~  bind:m  (refuse './' act eid '' "more than one calendar holds this id; name the one meant in home")
+          $
         ?:  |(&(!=('' named) (ship-read-only c named)) &(!=('' owner) (ship-read-only c owner)))
           ;<  ~  bind:m  (refuse './' act (gs jon 'id') '' "the calendar is shared with you read-only")
           $
@@ -1331,8 +1349,19 @@
             =/  groups=(map @t (list vevent:ics))
               %-  ~(run by (roll ves |=([ve=vevent:ics acc=(map @t (list vevent:ics))] ?:(=('' uid.ve) acc (~(put by acc) uid.ve [ve (fall (~(get by acc) uid.ve) ~)])))))
               flop
+            ::  UIDs objects here hold under another name (a client PUT
+            ::  under a name not its UID): an import is not a second one
+            =/  aliased=(set @t)
+              %-  ~(gas in *(set @t))
+              %+  murn  ~(val by entries.k)
+              |=(e=entry:cal (bind (get-prop:ics props.e 'X-GRUBBERY-UID') tail))
             %+  roll  ~(tap by groups)
             |=  [[u=@t group=(list vevent:ics)] acc=_[k=k imported=0 skipped=0]]
+            ?:  &((~(has in aliased) u) !(~(has by entries.k.acc) u))  acc(skipped +(skipped.acc))
+            ::  a second event without a RECURRENCE-ID for one UID (an export
+            ::  of two calendars that share it) is not taken: counted
+            =/  masters=@ud  (lent (skip group |=(v=vevent:ics ?=(^ (dav-rid v)))))
+            =?  skipped.acc  (gth masters 1)  (add skipped.acc (dec masters))
             ::  an object this side cannot read is skipped, not a crash
             =/  put=(unit [k=cal:cal =uid:cal])  (fall (mole |.((put-object k.acc group zone.c u ~))) ~)
             ?~  put  acc(skipped +(skipped.acc))
@@ -1878,6 +1907,8 @@
   ?~  ves  (send-text eyre-id 400 'calendar: no VEVENT or VTODO in the body')
   =/  parent=(unit vevent:ics)  (lead-of ves)
   ?~  parent  (send-text eyre-id 400 'calendar: no VEVENT or VTODO in the body')
+  ?.  (one-object ves)
+    (send-text eyre-id 400 'calendar: one object per resource: one UID, one event without a RECURRENCE-ID (RFC 4791 4.1)')
   ::  the object lives at the name the client PUT it to (+alias-object);
   ::  its own UID must not be another object's here
   =/  u=uid:cal  uid.res
@@ -1905,7 +1936,7 @@
     (send-text eyre-id 412 'calendar: the object changed; fetch it again')
   ::  after the preconditions: a client editing a stale copy hears 412,
   ::  and fetches again
-  ?:  (lien ~(tap by entries.u.k) |=([key=@t e=entry:cal] &(!=(key u) !(dav-is-child e) =(new-uid (own-uid key e)))))
+  ?:  (uid-held u.k u new-uid)
     (send-text eyre-id 403 'calendar: another object here has this UID (no-uid-conflict)')
   ?:  &(?=(^ existing) !(dav-is-child u.existing) !=(new-uid (own-uid u u.existing)))
     (send-text eyre-id 403 'calendar: a PUT cannot change an object\'s UID (no-uid-conflict)')
@@ -1926,6 +1957,27 @@
   (pure:m ~)
 ++  lead-of  lead-of:core
 ++  alias-object  alias-object:core
+::  +one-object: the VEVENTs of one iCalendar object (RFC 4791 4.1):
+::  one UID among them, and at most one without a RECURRENCE-ID. A second
+::  master, or another UID, would be lost or hung on the first, silently
+++  one-object
+  |=  ves=(list vevent:ics)
+  ^-  ?
+  ?~  ves  &
+  =/  u=@t  uid.i.ves
+  ?&  (levy `(list vevent:ics)`ves |=(v=vevent:ics =(u uid.v)))
+      (lte (lent (skip `(list vevent:ics)`ves |=(v=vevent:ics ?=(^ (dav-rid v))))) 1)
+  ==
+::  +uid-held: whether another top-level object of k than key has the UID
+::  real, under its own name or one a client kept aside (X-GRUBBERY-UID)
+++  uid-held
+  |=  [k=cal:cal key=@t real=@t]
+  ^-  ?
+  %+  lien  ~(tap by entries.k)
+  |=  [n=@t e=entry:cal]
+  ?:  |(=(n key) (dav-is-child e))  |
+  =/  p=(unit prop:ics)  (get-prop:ics props.e 'X-GRUBBERY-UID')
+  =(real ?~(p n v.u.p))
 ::  +put-object: one iCalendar object's VEVENTs into a calendar: the one
 ::  without a RECURRENCE-ID is the parent, the others its overrides, and
 ::  the old override set goes. ~ when there is no parent or it cannot
@@ -2185,6 +2237,8 @@
     ?.  (~(has by cals.c) id.res)
       (send-text eyre-id 404 'calendar: no such calendar')
     ;<  ~  bind:m  (dav-write '../' c(cals (~(del by cals.c) id.res)))
+    ;<  ~  bind:m  (unfault-cal '../' id.res)
+    ;<  ~  bind:m  (drop-share '../' id.res)
     (send-simple:srv eyre-id [[204 ~] ~])
   ?:  &(?=(%object -.res) (ship-read-only c id.res))
     (send-text eyre-id 403 'calendar: this calendar is shared with you read-only')
@@ -4155,6 +4209,13 @@
   |=  [c=calendar:cal id=@ta now=@da]
   ^-  json
   =/  k=cal:cal  (fall (~(get by cals.c) id) fresh-cal:cal)
+  ::  each parent's moved instances, gathered once (+share-tag)
+  =/  kids=(map uid:cal (list entry:cal))
+    %+  roll  ~(val by entries.k)
+    |=  [e=entry:cal acc=(map uid:cal (list entry:cal))]
+    =/  p=(unit uid:cal)  (parent-of:cal e)
+    ?~  p  acc
+    (~(put by acc) u.p [e (fall (~(get by acc) u.p) ~)])
   %-  pairs:enjs:format
   :~  ['seq' (numb:enjs:format seq.k)]
       ['name' s+name.props.k]
@@ -4168,7 +4229,7 @@
       ?:  (dav-is-child e)  ~
       =/  ics=(unit @t)  (dav-object-ics c id u now)
       ?~  ics  ~
-      `[u (pairs:enjs:format ~[['etag' s+etag.e] ['ics' s+u.ics]])]
+      `[u (pairs:enjs:format ~[['etag' s+(share-tag:core e (fall (~(get by kids) u) ~))] ['ics' s+u.ics]])]
   ==
 ::  +share-pass: the host side. Every shared calendar's file follows its
 ::  calendar, rebuilt when its seq, name or color moved. A shared
@@ -4378,7 +4439,10 @@
     %-  pairs:enjs:format
     :~  ['action' s+'invite']
         ['uid' s+uid]
-        ['ics' s+(fall (dav-object-ics c cid.u.w uid now) '')]
+        ::  the object under the uid it is sent as: a name a client kept
+        ::  aside (X-GRUBBERY-UID) would be the UID in it, and a guest
+        ::  takes only an object naming the uid it came under
+        ['ics' s+(fall (dav-object-ics (unalias c cid.u.w uid) cid.u.w uid now) '')]
         ['name' s+(meta-str:cal mt 'name')]
         :-  'start_ms'
         %-  numb:enjs:format
@@ -4420,6 +4484,16 @@
     (~(put by rows) (scot %p to.j) (stamp ?~(w '' tag.u.w)))
   =.  sent  ?:(=(~ rows) (~(del by sent) key.j) (~(put by sent) key.j [%o rows]))
   $(left t.left)
+::  +unalias: c with entry u of calendar cid under its own key as its UID
+++  unalias
+  |=  [c=calendar:cal cid=@ta u=@t]
+  ^-  calendar:cal
+  =/  k=(unit cal:cal)  (~(get by cals.c) cid)
+  ?~  k  c
+  =/  e=(unit entry:cal)  (~(get by entries.u.k) u)
+  ?~  e  c
+  =/  e2=entry:cal  u.e(props (skip props.u.e |=([key=@t *] =('X-GRUBBERY-UID' key))))
+  c(cals (~(put by cals.c) cid u.k(entries (~(put by entries.u.k) u e2))))
 ::  +invite-tag: what a guest is sent again on: the event and its moved
 ::  instances, less the guests' answers and the Google stamps a push
 ::  writes
@@ -5158,6 +5232,11 @@
   ;<  ~  bind:m  (ug-set (group-name id 'read') readers (sy ~[file folder]) ~)
   (ug-set (group-name id 'edit') editors (sy ~[file folder]) (sy ~[cal-road]))
 ++  share-base-ok  share-base-ok:core
+::  +cur-tag: an object's share tag here, ~ for one we do not hold
+++  cur-tag
+  |=  [k=cal:cal u=@t]
+  ^-  (unit @t)
+  (bind (~(get by entries.k) u) |=(e=entry:cal (share-tag:core e (kids-of:cal k u))))
 ::  +note-share-write: what a peer's accepted write left here, for its
 ::  next edit's +share-base-ok. share-writes.json holds cal -> uid ->
 ::  peer -> etag, only for uids the calendar still has.
@@ -5171,7 +5250,7 @@
     |=([v=@t *] (~(has by entries.k) v))
   =?  rows  (~(has by entries.k) u)
     =/  e=entry:cal  (~(got by entries.k) u)
-    (~(put by rows) u [%o (~(put by (omap (obj:gcal [%o rows] u))) (scot %p peer) s+etag.e)])
+    (~(put by rows) u [%o (~(put by (omap (obj:gcal [%o rows] u))) (scot %p peer) s+(share-tag:core e (kids-of:cal k u)))])
   (write-json-grub './' 'share-writes.json' [%o (~(put by (omap writes)) cid [%o rows])])
 ::  +queue-refusal: a refused share edit, to be said back to the peer
 ::  with the object it sent (the peer logs that, whatever its own copy is

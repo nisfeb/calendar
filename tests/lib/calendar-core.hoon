@@ -127,7 +127,7 @@
 ::
 ++  test-share-base-ok
   =/  writes=json  (obj ~[['c' (obj ~[['u' (obj ~[['~zod' s+'H1']])]])]])
-  =/  cur  |=(t=@t `(unit entry:cal)``[(ev 'x') 'u' t 0 ~ ~])
+  =/  cur  |=(t=@t `(unit @t)``t)
   ;:  weld
     ::  no base: a new object, or a peer on older code
     (expect !>((share-base-ok:core writes %c 'u' ~zod '' (cur 'H9'))))
@@ -902,5 +902,27 @@
     ::  a field its pull saved is still the pass's to change
     =/  pulled  (obj ~[['sync_token' s+'t2'] ['mode' s+'edit'] ['retry_ms' (numb:enjs:format 5)]])
     (expect-eq !>(out) !>((row-merge:core ~[was pulled] out pulled)))
+  ==
+::  a share's version leaves out what a push to Google stamps, and the
+::  order of the moved instances; a real change moves it
+++  test-share-tag
+  =/  e=entry:cal  (ent 'x' 'x@test')
+  =/  stamped=entry:cal  e(props ~[['X-GOOGLE-ETAG' '"9"'] ['X-GRUBBERY-KIDS' '0v1']])
+  =/  k1=entry:cal  (ent 'one' 'x@test#1')
+  =/  k2=entry:cal  (ent 'two' 'x@test#2')
+  ;:  weld
+    (expect-eq !>((share-tag:core e ~)) !>((share-tag:core stamped ~)))
+    (expect-eq !>((share-tag:core e ~[k1 k2])) !>((share-tag:core e ~[k2 k1])))
+    (expect !>(!=((share-tag:core e ~) (share-tag:core (ent 'y' 'x@test') ~))))
+    (expect !>(!=((share-tag:core e ~) (share-tag:core e ~[k1]))))
+  ==
+::  a moment before 1970 goes out below zero and comes back as it went:
+::  a birthday from 1950 is not moved to 1970 by an edit
+++  test-moment-before-1970
+  =/  j  (obj ~[['start_ms' (ms-json:cal ~1950.3.15..12.00.00)] ['due_ms' (ms-json:cal ~2026.11.2)]])
+  ;:  weld
+    (expect-eq !>(`~1950.3.15..12.00.00) !>((gm:core j 'start_ms')))
+    (expect-eq !>(`~2026.11.2) !>((gm:core j 'due_ms')))
+    (expect-eq !>(~) !>((gm:core (obj ~[['start_ms' s+'x']]) 'start_ms')))
   ==
 --

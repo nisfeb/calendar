@@ -61,6 +61,9 @@
   |=  [c=calendar:cal want=(unit @ta) home=@ta id=@ta ev=event:cal]
   ^-  calendar:cal
   =/  got=(unit [cid=@ta e=entry:cal])  (locate c home id)
+  ::  a moved instance goes with its series or not at all: alone in
+  ::  another calendar, its series would still skip it here
+  =?  want  &(?=(^ got) ?=(^ (parent-of:cal e.u.got)))  ~
   ::  a move onto a UID the calendar already holds is refused: it would
   ::  overwrite that entry, and push the overwrite to its remote
   =/  to=(unit @ta)  (target-of c want home id)
@@ -634,13 +637,26 @@
 ::  host keeps a peer's object in its own words, so its etag is one the
 ::  peer never sees). No when the host deleted it since.
 ++  share-base-ok
-  |=  [writes=json cid=@ta u=@t peer=@p base=@t cur=(unit entry:cal)]
+  |=  [writes=json cid=@ta u=@t peer=@p base=@t cur=(unit @t)]
   ^-  ?
   ?:  =('' base)  &
   ?~  cur  |
-  ?|  =(etag.u.cur base)
-      =(etag.u.cur (gs (obj:gcal (obj:gcal writes cid) u) (scot %p peer)))
+  ?|  =(u.cur base)
+      =(u.cur (gs (obj:gcal (obj:gcal writes cid) u) (scot %p peer)))
   ==
+::  +share-tag: an object's version as its peers see it (cur above, and
+::  the etag a share publishes): the event and its moved instances, less
+::  the Google stamps and the kids' hash, which a push to Google moves.
+::  A peer's edit made over a stamp is no edit over a change. The kids
+::  are a set, so their order is no version
+++  share-tag
+  |=  [e=entry:cal kids=(list entry:cal)]
+  ^-  @t
+  =/  bare
+    |=  x=entry:cal
+    :+  event.x  alarms.x
+    (skip props.x |=([key=@t *] |(=("X-GOOGLE-" (scag 9 (trip key))) =('X-GRUBBERY-KIDS' key))))
+  (scot %uv (sham [(bare e) (silt (turn kids bare))]))
 ::  +new-id-ok: an id a client picked for a new event: text a key can
 ::  hold (no slash, no #, which names an override child, no control
 ::  characters, at most 255 bytes) that no calendar holds yet
@@ -766,6 +782,22 @@
   (rush p.u.j dem)
 ::
 ++  ms-to-da  |=(ms=@ud `@da`(add ~1970.1.1 (div (mul ms ~s1) 1.000)))
+::  +gm: a moment from unix ms under key k, below zero before 1970
+::  (+ms-json:cal)
+++  gm
+  |=  [jon=json k=@t]
+  ^-  (unit @da)
+  ?.  ?=([%o *] jon)  ~
+  =/  j=(unit json)  (~(get by p.jon) k)
+  ?.  ?=([~ %n *] j)  ~
+  =/  t=tape  (trip p.u.j)
+  ?.  ?=([%'-' *] t)  (bind (rush p.u.j dem) ms-to-da)
+  =/  n=(unit @ud)  (rush (crip t.t) dem)
+  ?~  n  ~
+  =/  back=@dr  (div (mul u.n ~s1) 1.000)
+  ::  no earlier than time's start (the bunt of @da is 2000, not that)
+  ?:  (gth back `@`~1970.1.1)  ~
+  `(sub ~1970.1.1 back)
 ++  da-to-ms  da-to-ms:cal
 ::
 ++  ms-arg
@@ -1025,7 +1057,7 @@
   ^-  (unit recur:cal)
   =/  kind=@t  (gs jon 'kind')
   ?:  =('' kind)  ~
-  =/  start=(unit @da)  (bind (gn jon 'start_ms') ms-to-da)
+  =/  start=(unit @da)  (gm jon 'start_ms')
   ?~  start  ~
   =/  args=(map @t json)
     =/  a=(unit json)  (~(get jo:json-utils jon) /args)
@@ -1055,7 +1087,7 @@
     `[%date u.mo u.dy meta]
   ::  todo: a task, due (optional) and done (optional) as moments
   ?:  =('todo' cat)
-    `[%todo (bind (gn jon 'due_ms') ms-to-da) (bind (gn jon 'done_ms') ms-to-da) meta]
+    `[%todo (gm jon 'due_ms') (bind (gn jon 'done_ms') ms-to-da) meta]
   ::  timed / allday both wrap a recur
   =/  rec=(unit recur:cal)  (parse-recur jon)
   ?~  rec  ~
@@ -1086,7 +1118,7 @@
   =/  =fin:cal
     =/  f=@t  (gs jon 'fin')
     ?:  =('to' f)
-      =/  ed=@da  (fall (bind (gn jon 'end_ms') ms-to-da) *@da)
+      =/  ed=@da  (fall (gm jon 'end_ms') *@da)
       ::  a repeating event's end is a length, as ICS reads one: an end
       ::  moment would stretch every occurrence to it
       ?:  =(%once name.kind.u.rec)  [%to ed]
