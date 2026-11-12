@@ -97,6 +97,9 @@
           [%fall %& [/ %'shares.json'] [[/ %json] [%o ~]]]
           [%fall %| /shares empty-dir:loader]
           [%fall %& [/ %'shares.sig'] [[/ %sig] ~]]
+          ::  groups.json: the /public road +lay-inbox-road names for the
+          ::  shell
+          [%stay %& [/ %'groups.json']]
           ::  refusals.json: refused share edits the sync fiber still has
           ::  to tell their peers about (+send-refusals)
           [%fall %& [/ %'refusals.json'] [[/ %json] [%a ~]]]
@@ -1418,7 +1421,9 @@
       ==
     --
 |%
-++  srv  ~(. http-res:io [%| 1 %& ~ %'main.sig'])
+::  develop's http-res is a core, the dist kernel's a door whose road is
+::  unused: taken bare, it builds on both (version 43)
+++  srv  http-res:io
 ::  +rise-later: a fiber that crashed goes on after a while by itself (a
 ::  %sig poke no one sends used to be the only way back). A crash that
 ::  comes again waits longer each time, 1, 2, 4 and up to 60 minutes (the
@@ -4154,7 +4159,6 @@
 ::  ---- sharing a calendar with a ship ----
 ++  cal-instance  cal-instance:core
 ++  ug-base  ug-base:core
-++  public-grp  public-grp:core
 ++  group-name  group-name:core
 ::  +ug-read-weir: a group's how
 ++  ug-read-weir
@@ -4177,31 +4181,28 @@
   ;<  ~  bind:m  (over:io [%& %& gdir %'how.weir'] [[/ %weir] weir])
   (pure:m ~)
 ::  +lay-inbox-road: our shares.sig takes pokes from any ship, through
-::  the /public group's weir — the same shape lattice uses for share
-::  notices. Quiet when the roads are refused: sharing is optional.
+::  the /public group — the same shape lattice uses for share notices.
+::  The road goes in our own groups.json, relative to our root, and the
+::  shell derives the /public group from it once the owner grants it.
+::  That is develop's way; our dist kernel's reg-how compat wrote the
+::  same file, so one source runs on both (version 43). Written only
+::  when it differs: the sync fiber lays it on every pass, and each
+::  write has the shell derive every group again.
 ++  lay-inbox-road
   =/  m  (fiber:fiber:nexus ,~)
   ^-  form:m
-  ;<  base=(unit path)  bind:m  self-base
-  ?~  base  (pure:m ~)
-  ;<  old=weir:nexus  bind:m  (ug-read-weir public-grp)
-  =/  road=road:tarball  [%& %& u.base %'shares.sig']
-  ?:  (~(has in poke.old) road)  (unfault './' 'road/inbox')
-  ;<  reg=(unit tang)  bind:m  (reg-register-at-soft:io [u.base %'shares.sig'])
-  ?^  reg
-    %:  fault  './'  'road/inbox'  %warning  &
-      "the registry road is refused, so other ships cannot send edits to calendars shared with them"
-      "grant /sys/ames/registry at /apps/grubbery/permits, then reload the calendar"
+  ;<  cur=json  bind:m  (read-json-grub './' 'groups.json')
+  =/  pub=json
+    %-  pairs:enjs:format
+    :~  ['make' a+~]
+        ['poke' a+~[s+'/shares.sig']]
+        ['peek' a+~]
     ==
-  ::  the registry names a group by its short name and takes only OUR
-  ::  roads: a %how replaces every road under our prefix in that group
-  ::  and leaves the other apps' roads alone
-  ;<  err=(unit tang)  bind:m  (reg-how-soft:io /public [~ (sy road ~) ~])
-  ?^  err
-    %:  fault  './'  'road/inbox'  %warning  &
-      "the share inbox road could not be laid in the public group, so other ships cannot send edits"
-      "grant /sys/ames/usergroups at /apps/grubbery/permits, then reload the calendar"
-    ==
+  =/  obj=(map @t json)  ?.(?=([%o *] cur) ~ p.cur)
+  =/  new=json  [%o (~(put by obj) '/public' pub)]
+  ;<  ~  bind:m
+    ?:  =(new cur)  (pure:m ~)
+    (write-json-grub './' 'groups.json' new)
   (unfault './' 'road/inbox')
 ++  ship-read-only  ship-read-only:core
 ::  +build-share-json: what a peer sees of one calendar
