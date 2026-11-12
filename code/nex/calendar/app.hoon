@@ -136,7 +136,7 @@
         ;<  ~  bind:m  check-roads
         ::  any ship may poke our share inbox: the road rides on /public
         ;<  ~  bind:m  lay-inbox-road
-        (http-dispatch:io %cal)
+        http-dispatch:io
           ::
           ::  /calendar.calendar: poke CRUD on events
           ::
