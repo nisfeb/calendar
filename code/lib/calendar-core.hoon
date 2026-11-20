@@ -600,8 +600,6 @@
 ++  norm-href  |=(h=tape ^-(tape (fall (dav-href-path h) h)))
 ::  the calendar desk's instance lives at the same path on every ship
 ++  cal-instance  `path`/apps/shell/desks/'calendar.desk'/desk/data/'calendar.calendar_app'
-++  ug-base  `path`/sys/ames/usergroups
-++  public-grp  `path`/sys/ames/usergroups/'public.grp'
 ::  +group-name: a usergroup per shared calendar and mode; the id is
 ::  made safe for a term
 ++  group-name
