@@ -23,11 +23,12 @@ cleared, refused, through an ICS export and import) and `lead_min`.
 Cleans up.
 """
 import sys, json, time, subprocess, base64, urllib.request, urllib.error
+import kernel
 
 SHIP, JAR, USER, PW = sys.argv[1:5]
 CAL = SHIP + '/apps/calendar'
 DAV = CAL + '/dav/cal/'
-POKE = SHIP + '/grubbery/api/poke/apps/shell.shell/desks/calendar.desk/desk/data/calendar.calendar_app/calendar.calendar?blot=/json'
+POKE = SHIP + '/grubbery/api/poke' + kernel.app(SHIP, JAR) + '/calendar.calendar?blot=/json'
 AUTH = 'Basic ' + base64.b64encode(('%s:%s' % (USER, PW)).encode()).decode()
 fails = []
 

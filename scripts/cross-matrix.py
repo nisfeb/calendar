@@ -6,8 +6,9 @@ CalDAV calendar (both directions). With FAKE_URL as a sixth argument, a
 Google calendar shared onward too; that part rewires the host's Google
 client to the fake, so it refuses a host with a real client set up."""
 import json, subprocess, sys, time
+import kernel
 HOST, HJ, PEER, PJ, PEERNAME = sys.argv[1:6]
-P = '/apps/shell.shell/desks/calendar.desk/desk/data/calendar.calendar_app'
+P = kernel.app(HOST, HJ)
 fails = []
 def curl(host, jar, path, body=None, timeout=90):
     cmd = ['curl', '-s', '-m', str(timeout), '-b', jar, host + path]

@@ -28,13 +28,13 @@ pier=$(cd "$1" && pwd) || exit 2
 B=${2%/}; JAR=$3
 here=$(cd "$(dirname "$0")" && pwd)
 CODE=$(cd "${4:-$here/../code}" && pwd) || exit 2
-D=/grubbery/ball/apps/shell.shell/desks/calendar.desk/desk
+D=$(cd "$here" && python3 -c 'import sys,kernel; print(kernel.desk(sys.argv[1], sys.argv[2]))' "$B" "$JAR")/desk
 I=$D/data/calendar.calendar_app
 serf=$(pgrep -f "work --snap-dir $pier( |$)" | head -1)
 [[ -n "$serf" ]] || { echo "no worker for $pier" >&2; exit 2; }
 ticks() { awk '{print $14+$15}' "/proc/$serf/stat"; }
-# -L: a raw read answers with a redirect to the kernel's file route
-get() { curl -sL -m 60 -b "$JAR" "$B$1"; }
+get() { curl -s -m 60 -b "$JAR" "$B$1"; }
+peek() { get "/grubbery/api/peek$1"; }
 snap() {
   mkdir -p "$1"
   for r in calendars.json events.json feeds.json config.json share/shares.json google.json \
@@ -45,7 +45,7 @@ snap() {
 work=$(mktemp -d)
 keep=0
 trap '(( keep )) || rm -rf "$work"' EXIT
-bang() { get "$I?info=1" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("bang") is None and not any(c.get("bang") for c in d["children"]))'; }
+bang() { get "/grubbery/api/bang$I/" | python3 -c 'import json,sys; print(json.load(sys.stdin)["banged"] == 0)'; }
 [[ "$(bang)" == True ]] || { echo "the previous release is banged already; fix that first" >&2; exit 2; }
 snap "$work/before"
 t0=$(date +%s)
@@ -59,10 +59,10 @@ grep -qE '^  /calendar-dev/code/' "$work/deploy.log" ||
 # old code runs (a desk that does not follow the dev tree never does)
 stamp=$(sed -n 's/.*version.json = \([^ ]*\).*/\1/p' "$work/deploy.log" | tail -n 1)
 for i in $(seq 1 60); do
-  [[ "$(get "$D/code/version.json?raw=1")" == *"\"$stamp\""* ]] && break
+  [[ "$(peek "$D/code/version.json")" == *"\"$stamp\""* ]] && break
   sleep 10
 done
-[[ "$(get "$D/code/version.json?raw=1")" == *"\"$stamp\""* ]] ||
+[[ "$(peek "$D/code/version.json")" == *"\"$stamp\""* ]] ||
   { echo "FAIL: the desk never took version $stamp (does it follow /calendar-dev/code?)"; exit 1; }
 t1=$(date +%s)
 fail=0; hot=0
@@ -75,9 +75,9 @@ done
 code=$(curl -s -o /dev/null -w '%{http_code}' -m 30 -b "$JAR" "$B/apps/calendar")
 [[ "$code" == 200 ]] || { echo "FAIL: /apps/calendar answered $code"; fail=1; }
 ack=$(curl -s -o /dev/null -w '%{http_code}' -m 30 -b "$JAR" -H 'content-type: application/json' \
-  -d '{"action":"noop"}' "$B/grubbery/api/poke${I#/grubbery/ball}/calendar.calendar?blot=/json")
+  -d '{"action":"noop"}' "$B/grubbery/api/poke$I/calendar.calendar?blot=/json")
 [[ "$ack" == 200 ]] || { echo "FAIL: a poke answered $ack"; fail=1; }
-get "$I/rise.json?raw=1" | python3 -c '
+peek "$I/rise.json" | python3 -c '
 import json,sys
 t0, t1 = int(sys.argv[1])*1000, int(sys.argv[2])*1000
 rows=json.load(sys.stdin)

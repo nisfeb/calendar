@@ -14,12 +14,13 @@ in the same turn of the page; a save the ship refuses says why. Cleans up.
     usage: page-matrix.py SHIP_URL COOKIE_JAR      (e.g. http://localhost:8121 /tmp/rux.jar)
 """
 import sys, os, json, time, subprocess, datetime, zoneinfo
+import kernel
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from marionette import Firefox
 
 SHIP, JAR = sys.argv[1].rstrip('/'), sys.argv[2]
 CAL = SHIP + '/apps/calendar'
-POKE = SHIP + '/grubbery/api/poke/apps/shell.shell/desks/calendar.desk/desk/data/calendar.calendar_app/calendar.calendar?blot=/json'
+POKE = SHIP + '/grubbery/api/poke' + kernel.app(SHIP, JAR) + '/calendar.calendar?blot=/json'
 DAY = 86400000
 fails = []
 

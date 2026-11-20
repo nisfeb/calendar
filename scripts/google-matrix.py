@@ -15,10 +15,11 @@ Google client to the fake and unlinks every Google calendar, so it
 refuses a ship that has a real client set up.
 """
 import sys, json, time, subprocess
+import kernel
 
 SHIP, JAR, FAKE = sys.argv[1:4]
 CAL = SHIP + '/apps/calendar'
-POKE = '/apps/shell.shell/desks/calendar.desk/desk/data/calendar.calendar_app'
+POKE = kernel.app(SHIP, JAR)
 fails = 0
 
 

@@ -15,10 +15,11 @@ calendar over 3 times that. Takes about two minutes; the first change
 after a reload builds the cache whole, so it runs one change first.
 """
 import datetime as dt, json, random, subprocess, sys, tempfile, time
+import kernel
 
 BASE, JAR = sys.argv[1].rstrip('/'), sys.argv[2]
 N1, NS = (int(sys.argv[3]), int(sys.argv[4])) if len(sys.argv) > 4 else (1300, 100)
-POKE = BASE + '/grubbery/api/poke/apps/shell.shell/desks/calendar.desk/desk/data/calendar.calendar_app/calendar.calendar?blot=/json'
+POKE = BASE + '/grubbery/api/poke' + kernel.app(BASE, JAR) + '/calendar.calendar?blot=/json'
 fails = []
 
 

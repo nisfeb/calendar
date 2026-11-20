@@ -16,11 +16,12 @@ and the kernel's mark for trunk. Takes up to eight minutes: the fiber ticks
 on 5-minute marks. Exits 1 on a failure.
 """
 import sys, os, json, time, threading, subprocess, uuid, urllib.request
+import kernel
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 BASE, JAR = sys.argv[1].rstrip('/'), sys.argv[2]
 PORT = int(sys.argv[3]) if len(sys.argv) > 3 else 8195
-APP = '/apps/shell.shell/desks/calendar.desk/desk/data/calendar.calendar_app'
+APP = kernel.app(BASE, JAR)
 POKE = BASE + '/grubbery/api/poke' + APP + '/calendar.calendar?blot=/json'
 DEVICE = 'cal-e2e'
 posts = []

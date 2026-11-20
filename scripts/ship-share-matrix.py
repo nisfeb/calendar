@@ -12,8 +12,9 @@ change after that by the host's index and the one object that moved.
 Last, writes into another calendar while pulls land are all kept.
 PEERNAME is the peer's @p as the host names it (e.g. ~reb)."""
 import json, subprocess, sys, time
+import kernel
 HOST, HJ, PEER, PJ, PEERNAME = sys.argv[1:6]
-P = '/apps/shell.shell/desks/calendar.desk/desk/data/calendar.calendar_app'
+P = kernel.app(HOST, HJ)
 CAL = 'ssm'
 fails = []
 KEEP = []
@@ -183,8 +184,8 @@ def run_refusal():
         # 2. the host made the share read-only; the peer has not heard yet
         hs = shares(HOST, HJ)['shares']
         hs[CAL] = {PEERNAME: 'read'}
-        subprocess.run(['curl', '-s', '-m', '60', '-b', HJ, '-X', 'POST', '-H', 'content-type: application/json', '-d', json.dumps(hs),
-                        HOST + '/grubbery/api/over' + P + '/shares.json?blot=/json'], capture_output=True)
+        subprocess.run(['curl', '-s', '-m', '60', '-b', HJ, '-X', 'PUT', '-H', 'content-type: application/json', '-d', json.dumps(hs),
+                        HOST + '/grubbery/api/make' + P + '/shares.json?force=1&blot=/json'], capture_output=True)
         check('peer: still thinks it may edit', shares(PEER, PJ)['accepted'].get(sid, {}).get('mode') == 'edit')
         poke(PEER, PJ, {'action': 'add-event', 'cal': sid, **ev('peer while read', 1795300000000)})
         wait('peer: the edit is pushed, refused, and logged with its copy',

@@ -11,13 +11,14 @@ an event added on the ship shows up through sync-collection.
 Every check runs; exits non-zero if any failed. Cleans up what it made.
 """
 import sys, datetime, json, subprocess, time
+import kernel
 import caldav
 from caldav.elements import dav
 
 BASE, USER, PW = sys.argv[1:4]
 SHIP = sys.argv[4] if len(sys.argv) > 4 else None
 JAR = sys.argv[5] if len(sys.argv) > 5 else None
-POKE = '/apps/shell.shell/desks/calendar.desk/desk/data/calendar.calendar_app'
+POKE = kernel.app(SHIP, JAR) if SHIP else None
 fails = 0
 
 

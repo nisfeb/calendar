@@ -29,7 +29,7 @@ On the host that runs the ship:
 scripts/unwedge.sh <pier> <tmux-pane> <http-port> <login-code>
 ```
 
-It sends ^C whenever the serf has been pegged for two seconds, logs in and grants the roads versions 18 and 19 declared through the explorer in the gaps (the Permits page grants any added since), then stops interrupting and waits for the desk to report version 20. Rerunning it is safe. Get the login code with `+code` in the dojo; the line may take a few interrupts to be answered.
+It sends ^C whenever the serf has been pegged for two seconds, logs in and grants the roads versions 18 and 19 declared in the gaps (the Permits page grants any added since). On a kernel with the shell at `/apps/shell` it grants them with one `approve-weir` POST to `/apps/grubbery/permits`; on an older one, through the explorer, then stops interrupting and waits for the desk to report version 20. Rerunning it is safe. Get the login code with `+code` in the dojo; the line may take a few interrupts to be answered.
 
 ### By hand
 
