@@ -428,6 +428,65 @@
     (expect-eq !>('cal-az09-------read') !>((group-name:core 'az09-AZ_.~' 'read')))
   ==
 ::
+::  the /calendar/ groups come from shares.json alone: the read group
+::  has every ship, the edit group only the editors, with the poke road
+::  to the calendar; roads are relative to our root
+++  test-cal-groups
+  =/  shares=json
+    %-  obj
+    :~  ['work' (obj ~[['~zod' s+'read'] ['~nec' s+'edit'] ['nobody' s+'read']])]
+        ['home.b' (obj ~[['~bus' s+'read']])]
+        ['empty' (obj ~)]
+    ==
+  =/  peek-of
+    |=  id=@t
+    ^-  json
+    a+~[s+(crip "/shares/{(trip id)}.json") s+(crip "/shares/{(trip id)}/")]
+  =/  grp
+    |=  [who=(list @t) poke=(list json) id=@t]
+    ^-  json
+    %-  obj
+    :~  ['members' a+(turn who |=(s=@t s+s))]
+        ['make' a+~]
+        ['poke' a+poke]
+        ['peek' (peek-of id)]
+    ==
+  =/  want=json
+    %-  obj
+    :~  ['cal-work-read' (grp ~['~nec' '~zod'] ~ 'work')]
+        ['cal-work-edit' (grp ~['~nec'] ~[s+'/calendar.calendar'] 'work')]
+        ['cal-home-b-read' (grp ~['~bus'] ~ 'home.b')]
+    ==
+  ;:  weld
+    (expect-eq !>(want) !>((cal-groups:core shares)))
+    ::  nothing shared: no groups
+    (expect-eq !>(`json`[%o ~]) !>((cal-groups:core [%o ~])))
+    (expect-eq !>(`json`[%o ~]) !>((cal-groups:core ~)))
+  ==
+::
+::  each writer of groups.json puts only its own key: /public and any
+::  other key stand when /calendar/ is laid, and the other way round
+++  test-put-groups
+  =/  pub=json
+    (obj ~[['make' a+~] ['poke' a+~[s+'/shares.sig']] ['peek' a+~]])
+  =/  other=json  (obj ~[['peek' a+~[s+'/x.json']]])
+  =/  shares=json  (obj ~[['work' (obj ~[['~zod' s+'read']])]])
+  =/  cur=json  (obj ~[['/public' pub] ['/other' other]])
+  =/  got=json  (put-cal-groups:core cur shares)
+  =/  only=json  (obj ~[['/calendar/' (cal-groups:core shares)]])
+  ;:  weld
+    (expect-eq !>((obj ~[['/public' pub] ['/other' other] ['/calendar/' (cal-groups:core shares)]])) !>(got))
+    ::  laid again, nothing changes, so nothing is written
+    (expect-eq !>(got) !>((put-cal-groups:core got shares)))
+    (expect-eq !>(got) !>((put-inbox-road:core got)))
+    ::  the last share gone, the key stays, empty
+    (expect-eq !>((obj ~[['/public' pub] ['/other' other] ['/calendar/' [%o ~]]])) !>((put-cal-groups:core got [%o ~])))
+    ::  /public laid on a file with only /calendar/ keeps it
+    (expect-eq !>((obj ~[['/calendar/' (cal-groups:core shares)] ['/public' pub]])) !>((put-inbox-road:core only)))
+    ::  a file that is not an object starts over
+    (expect-eq !>((obj ~[['/public' pub]])) !>((put-inbox-road:core s+'junk')))
+  ==
+::
 ++  test-read-only-and-kinds
   =/  sh
     |=  r=(unit @t)

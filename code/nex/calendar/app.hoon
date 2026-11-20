@@ -97,8 +97,8 @@
           [%fall %& [/ %'shares.json'] [[/ %json] [%o ~]]]
           [%fall %| /shares empty-dir:loader]
           [%fall %& [/ %'shares.sig'] [[/ %sig] ~]]
-          ::  groups.json: the /public road +lay-inbox-road names for the
-          ::  shell
+          ::  groups.json: our facts for the shell's usergroups, the
+          ::  /public road and the /calendar/ groups (+lay-groups)
           [%stay %& [/ %'groups.json']]
           ::  refusals.json: refused share edits the sync fiber still has
           ::  to tell their peers about (+send-refusals)
@@ -137,8 +137,6 @@
         ::  the roads the main fiber asks softly: the timer, the clock, and
         ::  the web binding, which it makes here. A refusal is recorded
         ;<  ~  bind:m  check-roads
-        ::  any ship may poke our share inbox: the road rides on /public
-        ;<  ~  bind:m  lay-inbox-road
         http-dispatch:io
           ::
           ::  /calendar.calendar: poke CRUD on events
@@ -612,6 +610,10 @@
         ;<  *  bind:m  (keep:io /cal cal-road ~)
         ::  a refusal queued in the calendar's fiber wakes a pass at once
         ;<  *  bind:m  (keep:io /refusals (cord-to-road:tarball './refusals.json') ~)
+        ::  a share made or revoked lays our groups again at once
+        ;<  *  bind:m  (keep:io /shares (cord-to-road:tarball './shares.json') ~)
+        ::  on the rise, so groups the shell dropped come back
+        ;<  ~  bind:m  lay-groups
         =|  pulled=@da
         ::  the calendar as the last pass began: news of a write that
         ::  pass already saw (a pull writes once a page, and each write is
@@ -622,8 +624,11 @@
         =/  tick=@dr  (mul ~m1 (max 1 (fall (gn cfg 'tick_min') 5)))
         ;<  now=@da  bind:m  get-time:io
         ;<  ~  bind:m  (set-timer:io /tick (max now (add pulled tick)))
-        ;<  what=$@(%poke [%news =wire])  bind:m  (take-any ~[/cal /refusals])
+        ;<  what=$@(%poke [%news =wire])  bind:m  (take-any ~[/cal /refusals /shares])
         ;<  ~  bind:m  (cancel-timer:io /tick)
+        ?:  ?=([%news [%shares *]] what)
+          ;<  ~  bind:m  lay-groups
+          $
         =/  pull=?  =(%poke what)
         ;<  c0=calendar:cal  bind:m  (read-cal './')
         ::  the events (cache-ver) and each calendar's props (a rename, a
@@ -642,8 +647,8 @@
         ;<  ~  bind:m  talon-pass
         ;<  ~  bind:m  send-refusals
         ;<  ~  bind:m  (sync-pass %ship pull)
-        ::  a grant approved after the rise: the inbox road lands here
-        ;<  ~  bind:m  lay-inbox-road
+        ::  a grant approved after the rise: the groups land here
+        ;<  ~  bind:m  lay-groups
         ?.  pull  $
         ;<  now=@da  bind:m  get-time:io
         $(pulled now)
@@ -4158,48 +4163,23 @@
   ==
 ::  ---- sharing a calendar with a ship ----
 ++  cal-instance  cal-instance:core
-++  ug-base  ug-base:core
 ++  group-name  group-name:core
-::  +ug-read-weir: a group's how
-++  ug-read-weir
-  |=  gdir=path
-  =/  m  (fiber:fiber:nexus ,weir:nexus)
-  ^-  form:m
-  ;<  hv=(unit view:nexus)  bind:m  (peek-soft:io [%& %& gdir %'how.weir'] ~)
-  ?~  hv  (pure:m *weir:nexus)
-  ?.  ?=([%file *] u.hv)  (pure:m *weir:nexus)
-  (pure:m (fall (mole |.(;;(weir:nexus (sang-noun:tarball sang.u.hv)))) *weir:nexus))
-::  +ug-set: a group's members and its weir, written whole
-++  ug-set
-  |=  [gname=@t ships=(set @p) pk=(set road:tarball) pok=(set road:tarball)]
-  =/  m  (fiber:fiber:nexus ,~)
-  ^-  form:m
-  =/  gdir=path  (snoc ug-base (crip (weld (trip gname) ".grp")))
-  ;<  old=weir:nexus  bind:m  (ug-read-weir gdir)
-  =/  =weir:nexus  [make.old pok pk]
-  ;<  ~  bind:m  (over:io [%& %& gdir %'who.ships'] [[/ %ships] ships])
-  ;<  ~  bind:m  (over:io [%& %& gdir %'how.weir'] [[/ %weir] weir])
-  (pure:m ~)
-::  +lay-inbox-road: our shares.sig takes pokes from any ship, through
-::  the /public group — the same shape lattice uses for share notices.
-::  The road goes in our own groups.json, relative to our root, and the
-::  shell derives the /public group from it once the owner grants it.
-::  That is develop's way; our dist kernel's reg-how compat wrote the
-::  same file, so one source runs on both (version 43). Written only
-::  when it differs: the sync fiber lays it on every pass, and each
-::  write has the shell derive every group again.
-++  lay-inbox-road
+++  put-cal-groups  put-cal-groups:core
+++  put-inbox-road  put-inbox-road:core
+::  +lay-groups: our groups.json, the facts the shell derives our groups
+::  from (it owns /sys/ames/usergroups and undoes any write there).
+::  /public lets any ship poke our shares.sig, the same shape lattice
+::  uses for share notices; /calendar/ holds a read and an edit group per
+::  shared calendar, made whole from shares.json. Only the sync fiber
+::  calls this (on its rise, on each pass, and when shares.json changes),
+::  so two writes never cross. Written only when it differs: each write
+::  has the shell derive every group again.
+++  lay-groups
   =/  m  (fiber:fiber:nexus ,~)
   ^-  form:m
   ;<  cur=json  bind:m  (read-json-grub './' 'groups.json')
-  =/  pub=json
-    %-  pairs:enjs:format
-    :~  ['make' a+~]
-        ['poke' a+~[s+'/shares.sig']]
-        ['peek' a+~]
-    ==
-  =/  obj=(map @t json)  ?.(?=([%o *] cur) ~ p.cur)
-  =/  new=json  [%o (~(put by obj) '/public' pub)]
+  ;<  shares=json  bind:m  (read-json-grub './' 'shares.json')
+  =/  new=json  (put-cal-groups (put-inbox-road cur) shares)
   ;<  ~  bind:m
     ?:  =(new cur)  (pure:m ~)
     (write-json-grub './' 'groups.json' new)
@@ -4889,11 +4869,6 @@
       ==
     $(ids t.ids)
   ;<  ~  bind:m  (publish-share './' c id now)
-  ;<  ~  bind:m
-    ?:  folded  (pure:(fiber:fiber:nexus ,~) ~)
-    ;<  base=(unit path)  bind:(fiber:fiber:nexus ,~)  self-base
-    ?~  base  (pure:(fiber:fiber:nexus ,~) ~)
-    (set-share-groups u.base id (omap (obj:gcal shares i.ids)))
   $(ids t.ids)
 ::  +publish-share: a shared calendar as its peers read it. The whole file,
 ::  <id>.json (every object's text: a first pull, a big change, a peer on
@@ -4913,10 +4888,6 @@
   ^-  form:m
   ;<  cur=json  bind:m  (read-json-grub pre 'shares.json')
   ?.  (~(has by (omap cur)) id)  (pure:m ~)
-  ;<  base=(unit path)  bind:m  self-base
-  ;<  ~  bind:m
-    ?~  base  (pure:(fiber:fiber:nexus ,~) ~)
-    (set-share-groups u.base id ~)
   ;<  *  bind:m  (cull-soft:io (cord-to-road:tarball (crip "{(trip pre)}shares/{(trip id)}.json")))
   ;<  *  bind:m  (cull-soft:io (cord-to-road:tarball (crip "{(trip pre)}shares/{(trip id)}/")))
   ;<  ~  bind:m  (write-json-grub pre 'shares.json' [%o (~(del by (omap cur)) id)])
@@ -5117,8 +5088,8 @@
     ::  2. the share file and folder, now
     ;<  now=@da  bind:m  get-time:io
     ;<  ~  bind:m  (publish-share '../' c id now)
-    ::  3. the groups: read-only ships and editing ships
-    ;<  ~  bind:m  (set-share-groups u.base id mine)
+    ::  3. the groups follow shares.json: the sync fiber lays them on
+    ::  its news (+lay-groups)
     ::  4. the offer, to the peer's inbox
     ;<  told=?  bind:m
       %^  remote-poke-wait  u.shp
@@ -5136,15 +5107,13 @@
     =/  id=@ta  (crip (trip (gs jon 'id')))
     =/  shp=(unit @p)  (slaw %p (gs jon 'ship'))
     ?~  shp  (send-text eyre-id 400 'calendar: bad ship name')
-    ;<  base=(unit path)  bind:m  self-base
-    ?~  base  (send-text eyre-id 500 'calendar: cannot find where this app is installed')
     ;<  shares=json  bind:m  (read-json-grub '../' 'shares.json')
     =/  all=(map @t json)  ?:(?=([%o *] shares) p.shares ~)
     =/  mine=(map @t json)  =/(j (~(get by all) id) ?:(?=([~ %o *] j) p.u.j ~))
     =.  mine  (~(del by mine) (scot %p u.shp))
+    ::  the groups follow, on the sync fiber's news (+lay-groups)
     ;<  ~  bind:m
       (write-json-grub '../' 'shares.json' [%o ?:(=(~ mine) (~(del by all) id) (~(put by all) id [%o mine]))])
-    ;<  ~  bind:m  (set-share-groups u.base id mine)
     ::  the last peer gone, what was published for peers goes too
     ;<  ~  bind:m
       ?.  =(~ mine)  (pure:(fiber:fiber:nexus ,~) ~)
@@ -5213,25 +5182,6 @@
     ;<  ~  bind:m  (google-prod '../')
     (send-json eyre-id (pairs:enjs:format ~[['ok' b+&]]))
   (send-text eyre-id 404 'calendar: no such share route')
-::  +set-share-groups: the two groups of one calendar, from its record
-++  set-share-groups
-  |=  [base=path id=@ta mine=(map @t json)]
-  =/  m  (fiber:fiber:nexus ,~)
-  ^-  form:m
-  =/  file=road:tarball  [%& %& (snoc base %shares) (crip "{(trip id)}.json")]
-  ::  and the folder a peer reads a change from (+publish-share)
-  =/  folder=road:tarball  [%& %| (snoc (snoc base %shares) id)]
-  =/  cal-road=road:tarball  [%& %& base %'calendar.calendar']
-  =/  readers=(set @p)
-    %-  ~(gas in *(set @p))
-    %+  murn  ~(tap by mine)
-    |=([s=@t v=json] ?:(?=([%s *] v) (slaw %p s) ~))
-  =/  editors=(set @p)
-    %-  ~(gas in *(set @p))
-    %+  murn  ~(tap by mine)
-    |=([s=@t v=json] ?:(&(?=([%s *] v) =('edit' p.v)) (slaw %p s) ~))
-  ;<  ~  bind:m  (ug-set (group-name id 'read') readers (sy ~[file folder]) ~)
-  (ug-set (group-name id 'edit') editors (sy ~[file folder]) (sy ~[cal-road]))
 ++  share-base-ok  share-base-ok:core
 ::  +cur-tag: an object's share tag here, ~ for one we do not hold
 ++  cur-tag
@@ -5887,19 +5837,14 @@
           (line '/sys/iris/' 'fetch the Google calendar feeds you add, by their secret address. Refuse this and feeds are unavailable; your own events are unaffected')
           (line '/sys/gall/' 'send a reminder to your phones through trunk, tell another ship you shared a calendar with it, and send it your edits to a calendar it shared with you. Refuse this and sharing with ships is unavailable; everything else works')
           (line '/sys/ames/registry' 'let the ships you share a calendar with read it. Refuse this and sharing with ships is unavailable')
-          (line '/sys/ames/usergroups/' 'keep one group per shared calendar: the ships that may read it, and whether they may edit it')
       ==
       :-  'peek'
       :-  %a
       :~  (line '/sys/link/' 'look up where this app is installed, so the page can address its own writer. Refuse this and the page cannot save events')
           (line '/code/mar/clay/trunk/' 'see whether this ship can hand trunk a reminder for your phones. Refuse this and reminders reach browsers only')
-          (line '/sys/ames/usergroups/' 'see which ships a calendar is shared with')
           (line '/sys/ames/ships/' 'read a calendar another ship shared with you, and keep it current. Refuse this and calendars shared with you are unavailable')
       ==
-      :-  'make'
-      :-  %a
-      :~  (line '/sys/ames/usergroups/' 'make the group for a calendar the first time it is shared')
-      ==
+      ['make' a+~]
   ==
 ++  migrate-kinds  migrate-kinds:core
 ++  migrate-rules  migrate-rules:core
