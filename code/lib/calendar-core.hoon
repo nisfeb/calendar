@@ -611,6 +611,66 @@
     %+  turn  (trip id)
     |=(c=@t ?:(|(&((gte c 'a') (lte c 'z')) &((gte c '0') (lte c '9')) =('-' c)) c '-'))
   (crip "cal-{safe}-{(trip mode)}")
+::  +cal-groups: the /calendar/ key of our groups.json, made whole from
+::  shares.json. The shell runs these groups for us under /calendar/.
+::  Per shared calendar, a read group (every ship it is shared with) and
+::  an edit group (the ships that may edit). Roads are relative to our
+::  root. A calendar shared with no ship has no groups.
+++  cal-groups
+  |=  shares=json
+  ^-  json
+  :-  %o
+  %-  ~(gas by *(map @t json))
+  %-  zing
+  %+  turn  ~(tap by (omap shares))
+  |=  [cid=@t mine=json]
+  ^-  (list [@t json])
+  =/  id=@ta  (crip (trip cid))
+  =/  ships=(list [s=@t mode=@t])
+    %+  murn  ~(tap by (omap mine))
+    |=  [s=@t v=json]
+    ^-  (unit [s=@t mode=@t])
+    ?.  ?=([%s *] v)  ~
+    =/  p=(unit @p)  (slaw %p s)
+    ?~  p  ~
+    `[(scot %p u.p) p.v]
+  =/  readers=(list @t)  (sort (turn ships head) aor)
+  =/  editors=(list @t)
+    (sort (murn ships |=([s=@t mode=@t] ?.(=('edit' mode) ~ `s))) aor)
+  ::  the whole file, and the folder a peer reads a change from
+  =/  peek=json
+    a+~[s+(crip "/shares/{(trip id)}.json") s+(crip "/shares/{(trip id)}/")]
+  =/  grp
+    |=  [who=(list @t) poke=(list json)]
+    ^-  json
+    %-  pairs:enjs:format
+    :~  ['members' a+(turn who |=(s=@t s+s))]
+        ['make' a+~]
+        ['poke' a+poke]
+        ['peek' peek]
+    ==
+  %+  weld
+    ?~(readers ~ [(group-name id 'read') (grp readers ~)]~)
+  ?~(editors ~ [(group-name id 'edit') (grp editors ~[s+'/calendar.calendar'])]~)
+::  +put-cal-groups: our groups.json with its /calendar/ key made from
+::  shares.json. Every other key stays as it was. The key stands even
+::  with nothing shared, so what the app asks the owner for holds still.
+++  put-cal-groups
+  |=  [cur=json shares=json]
+  ^-  json
+  [%o (~(put by (omap cur)) '/calendar/' (cal-groups shares))]
+::  +put-inbox-road: our groups.json with its /public key: any ship may
+::  poke our shares.sig. Every other key stays as it was.
+++  put-inbox-road
+  |=  cur=json
+  ^-  json
+  =/  pub=json
+    %-  pairs:enjs:format
+    :~  ['make' a+~]
+        ['poke' a+~[s+'/shares.sig']]
+        ['peek' a+~]
+    ==
+  [%o (~(put by (omap cur)) '/public' pub)]
 ::  +ship-read-only: a calendar shared with us read-only takes no edits here
 ++  ship-read-only
   |=  [c=calendar:cal id=@ta]
