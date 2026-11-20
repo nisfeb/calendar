@@ -3,9 +3,10 @@
 Tasks (VTODO): the poke API, the listings, export/import, and CalDAV
 (a client's todos() and events() through comp-filter, done via STATUS)."""
 import sys, json, subprocess, time, datetime
+import kernel
 import caldav
 HOST, JAR, BASE, USER, PW = sys.argv[1:6]
-P = '/apps/shell.shell/desks/calendar.desk/desk/data/calendar.calendar_app'
+P = kernel.app(HOST, JAR)
 fails = []
 def curl(path, body=None, raw=None, timeout=90):
     cmd = ['curl', '-s', '-m', str(timeout), '-b', JAR, HOST + path]

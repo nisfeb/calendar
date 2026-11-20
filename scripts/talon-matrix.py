@@ -13,10 +13,12 @@ the calendar's answer path granted, and "calendar (through grubbery)"
 switched on at /apps/trunk (TESTING.md). It refuses a ship whose trunk
 is older."""
 import sys, json, subprocess, time, re
+import kernel
 
 SHIP, JAR = sys.argv[1].rstrip('/'), sys.argv[2]
-POKE = SHIP + '/grubbery/api/poke/apps/shell.shell/desks/calendar.desk/desk/data/calendar.calendar_app/calendar.calendar?blot=/json'
-ROOMS = SHIP + '/grubbery/api/file/apps/shell.shell/desks/calendar.desk/desk/data/calendar.calendar_app/talon-rooms.json'
+APP = kernel.app(SHIP, JAR)
+POKE = SHIP + '/grubbery/api/poke' + APP + '/calendar.calendar?blot=/json'
+ROOMS = SHIP + '/grubbery/api/peek' + APP + '/talon-rooms.json'
 fails = []
 
 

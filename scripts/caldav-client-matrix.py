@@ -10,9 +10,10 @@ instance crosses; nothing echoes; a stale If-Match is logged as a
 conflict. Cleans up. Every check runs; non-zero if any failed.
 """
 import sys, json, time, subprocess
+import kernel
 
 SRC, SJ, FOL, FJ = sys.argv[1:5]
-POKE = '/apps/shell.shell/desks/calendar.desk/desk/data/calendar.calendar_app'
+POKE = kernel.app(SRC, SJ)
 fails = 0
 
 

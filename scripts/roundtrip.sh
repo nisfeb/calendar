@@ -7,8 +7,9 @@
 # The gate for phase 2: what goes out comes back identical.
 #   usage: roundtrip.sh HOST JAR   (JAR = a curl cookie jar for the ship)
 set -uo pipefail
-H=$1; J=$2; B=$H/apps/calendar; P=/apps/shell.shell/desks/calendar.desk/desk/data/calendar.calendar_app
+H=$1; J=$2; B=$H/apps/calendar
 D=$(dirname "$0")
+P=$(cd "$D" && python3 -c 'import sys,kernel; print(kernel.app(sys.argv[1], sys.argv[2]))' "$H" "$J")
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 poke() { curl -s -m 60 -b "$J" -X POST -H 'content-type: application/json' -d "$1" -o /dev/null "$H/grubbery/api/poke$P/calendar.calendar?blot=/json"; }
 has() { curl -s -m 60 -b "$J" "$B/calendars.json" | grep -q "\"id\":\"$1\""; }

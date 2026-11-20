@@ -9,7 +9,7 @@ The calendar is tested on two fleet sets from [hoon-development](https://github.
 | HTTP | http://localhost:8121 (the `public` line of `~/fleet/piers/rux/.http.ports`) |
 | dojo | `tmux attach -t fleet`, window `rux` |
 | grubbery | the dev platform's pin (hoon-development `platform/grubbery.ref`) |
-| calendar | a dev desk at `/apps/shell.shell/desks/calendar.desk`, the same path as on ricsul, following `/calendar-dev/code` in the ball |
+| calendar | a dev desk at `/apps/shell/desks/calendar.desk` (`/apps/shell.shell/...` on a kernel from before the shell moved), the same path as on ricsul, following `/calendar-dev/code` in the ball |
 | test desk | `%calendar-test`, mounted, set up for the kit |
 
 Below, `F=~/software/personal/hoon-development/fleet/fleet` and `U=~/software/personal/hoon-development/bridge/u`. Set `FLEET_WHO` to your session's name so claims know who is asking.
@@ -63,7 +63,7 @@ $F reset calendar v33
 
 A reset brings back the sessions the snapshot holds, so a jar minted after it stops working: mint a new one. Use `localhost` in every URL, since a jar minted for localhost is not sent to 127.0.0.1. `roundtrip.sh` imports its fixture first on a ship with no events. The ship-to-ship gates run on the pair below. The Google gates need `scripts/fake-google.py`, and the CalDAV ones `scripts/dav-proxy.py` and a venv with `caldav` (docs/caldav.md).
 
-`weir-check.sh` and `quiet-check.sh` find the dojo's tmux pane from the king's terminal. If quiet-check cannot, name it: `QUIET_PANE=fleet:rux`.
+`weir-check.sh` and `quiet-check.sh` find the dojo's tmux pane from the king's terminal. If quiet-check cannot, name it: `QUIET_PANE=fleet:rux`. They refuse and grant roads through `scripts/permit.py`, which posts the shell's `approve-weir`. The scripts find the calendar through `scripts/kernel.py`, which asks `GET /grubbery/api/peek/apps/` whether the shell is at `/apps/shell` or `/apps/shell.shell`.
 
 ## Deploying a change to ~rux
 
@@ -71,7 +71,7 @@ A reset brings back the sessions the snapshot holds, so a jar minted after it st
 scripts/dev-deploy.py http://localhost:8121 /tmp/rux.jar
 ```
 
-It writes the files of `code/` that differ into `/calendar-dev/code` and stamps that tree's `version.json` with a dev version, which makes the desk pull: about 30 s for a few files, 11 min for all 621. It refuses any ship that is not on localhost. A release that adds a road needs approving again: `--approve` posts the instance's own `weir.json` as `granted` to `/apps/grubbery/permits` (`approve-weir`), then reloads its permits. Without `granted` this kernel grants an empty weir.
+It writes the files of `code/` that differ into `/calendar-dev/code` (`PUT /grubbery/api/make`, with `?force=1` over a file that is there) and stamps that tree's `version.json` with a dev version, which makes the desk pull: under a minute for a few files, about two for all 621. It refuses any ship that is not on localhost. `--wait` waits for the desk to take the stamp, then fails if anything under the desk is banged (`GET /grubbery/api/bang`). A release that adds a road needs approving again: `--approve` posts the instance's own `weir.json` as `granted` to `/apps/grubbery/permits` (`approve-weir`), then reloads its permits. Without `granted` this kernel grants an empty weir.
 
 How a calendar snapshot is made from the golden: `dev-deploy.py ... --add` (which also POSTs `/apps/grubbery/desks/add`), then `--approve`, then the test desk.
 
@@ -117,8 +117,8 @@ These work as far as anyone has looked by hand, but nothing here would catch the
 ```sh
 $U calendar our
 $U calendar kids /calendar-dev/code                     # files in a ball dir
-$U calendar file /apps/shell.shell/desks/calendar.desk/version.json
-$U calendar kids /apps/shell.shell/desks/calendar.desk/desk/data/calendar.calendar_app
+$U calendar file /apps/shell/desks/calendar.desk/version.json
+$U calendar kids /apps/shell/desks/calendar.desk/desk/data/calendar.calendar_app
 ```
 
 `u` guards its subcommands. A raw `.^` in an expression that misses kills every thread on the ship: check a path with `kids` first. Never point u, the fleet commands or these scripts at a ship outside `calendar` and `calendar-pair`.

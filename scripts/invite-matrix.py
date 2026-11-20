@@ -9,9 +9,10 @@ the guest names on it; taking the guest
 off, or deleting the event, takes the copy and the invitation away.
 Cleans up. HOSTNAME and GUESTNAME are the ships' @p (e.g. ~bes ~reb)."""
 import sys, json, subprocess, time
+import kernel
 
 HOST, HJ, GUEST, GJ, HOSTNAME, GUESTNAME = sys.argv[1:7]
-P = '/apps/shell.shell/desks/calendar.desk/desk/data/calendar.calendar_app'
+P = kernel.app(HOST, HJ)
 fails = []
 
 

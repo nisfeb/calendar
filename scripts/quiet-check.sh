@@ -31,7 +31,8 @@
 set -uo pipefail
 pier=$(cd "$1" && pwd) || exit 2; B=${2%/}; JAR=$3; shift 3
 here=$(cd "$(dirname "$0")" && pwd)
-I=/grubbery/ball/apps/shell.shell/desks/calendar.desk/desk/data/calendar.calendar_app
+I=$(cd "$here" && python3 -c 'import sys,kernel; print(kernel.app(sys.argv[1], sys.argv[2]))' "$B" "$JAR")
+permit() { python3 "$here/permit.py" "$B" "$JAR" "$@"; }
 WAIT=${QUIET_WAIT:-60}
 # the console pane: QUIET_PANE (e.g. fleet:rux) when it is not found by the
 # king's tty. The king is the pier's worker's parent
@@ -41,27 +42,26 @@ pane=${QUIET_PANE:-$(tmux list-panes -a -F '#{pane_tty} #{session_name}:#{window
   awk -v t="$(readlink "/proc/$king/fd/0" 2>/dev/null)" '$1==t{print $2}')}
 [[ -n "$pane" ]] || { echo "no tmux pane found for $pier" >&2; exit 2; }
 cap=$(mktemp); up=$(mktemp); uc=''
-post() { curl -s -o /dev/null -m 120 -b "$JAR" --data-urlencode action="$1" "${@:2}" "$B$I"; }
-road() { post "$1" --data-urlencode category=poke --data-urlencode road-path="$2"; }
+road() { permit "$1" poke "$2"; }
 # the record is read through the kernel's route, which answers with the
 # calendar's own web road refused
-fault() { curl -sL -m 60 -b "$JAR" "$B$I/outcomes.json?raw=1" | python3 -c 'import json,sys
+fault() { curl -s -m 60 -b "$JAR" "$B/grubbery/api/peek$I/outcomes.json" | python3 -c 'import json,sys
 try: print("yes" if sys.argv[1] in json.load(sys.stdin).get("faults", {}) else "no")
 except Exception: print("unreadable")' "$1"; }
-finish() { tmux pipe-pane -t "$pane"; road add-weir-road /sys/behn/; road add-weir-road /sys/eyre/; post reload-nexus; rm -f "$up"; }
+finish() { tmux pipe-pane -t "$pane"; road grant /sys/behn/; road grant /sys/eyre/; permit reload; rm -f "$up"; }
 trap finish EXIT
 tmux pipe-pane -o -t "$pane" "cat >> $cap"
 mark() { sleep 1; printf '\n### %s\n' "$1" >> "$cap"; }
 
-mark reload;      post reload-nexus; sleep "$WAIT"
+mark reload;      permit reload; sleep "$WAIT"
 if (( $# )); then
   mark upgrade; "$here/upgrade-check.sh" "$pier" "$B" "$JAR" "$1" > "$up" 2>&1; uc=$?
   grep -E 'FAIL|^ok:|nothing to upgrade|rise.json|routes:|captures kept' "$up"
 fi
-mark refuse;      road del-weir-road /sys/behn/; post reload-nexus; sleep "$WAIT"; r1=$(fault road/behn)
-mark grant;       road add-weir-road /sys/behn/; post reload-nexus; sleep "$WAIT"; g1=$(fault road/behn)
-mark refuseweb;   road del-weir-road /sys/eyre/; post reload-nexus; sleep "$WAIT"; r2=$(fault road/eyre)
-mark grantweb;    road add-weir-road /sys/eyre/; post reload-nexus; sleep "$WAIT"; g2=$(fault road/eyre)
+mark refuse;      road refuse /sys/behn/; permit reload; sleep "$WAIT"; r1=$(fault road/behn)
+mark grant;       road grant /sys/behn/;  permit reload; sleep "$WAIT"; g1=$(fault road/behn)
+mark refuseweb;   road refuse /sys/eyre/; permit reload; sleep "$WAIT"; r2=$(fault road/eyre)
+mark grantweb;    road grant /sys/eyre/;  permit reload; sleep "$WAIT"; g2=$(fault road/eyre)
 mark end
 tmux pipe-pane -t "$pane"
 

@@ -13,11 +13,12 @@ Needs firefox on the PATH and a route to Mozilla's push service. Takes up
 to eight minutes: the fiber ticks on 5-minute marks. Exits 1 on a failure.
 """
 import sys, os, json, time, subprocess
+import kernel
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from marionette import Firefox
 
 BASE, JAR = sys.argv[1].rstrip('/'), sys.argv[2]
-POKE = BASE + '/grubbery/api/poke/apps/shell.shell/desks/calendar.desk/desk/data/calendar.calendar_app/calendar.calendar?blot=/json'
+POKE = BASE + '/grubbery/api/poke' + kernel.app(BASE, JAR) + '/calendar.calendar?blot=/json'
 
 
 def poke(body):
